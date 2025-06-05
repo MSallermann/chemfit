@@ -2,9 +2,9 @@
 Installation
 #######################
 
-========================
+=============================
 Installing the SCME 2.0 code
-========================
+=============================
 
 **Important:** To use this package you need a working installation of the SCME 2.0 code.
 
