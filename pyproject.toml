@@ -1,0 +1,15 @@
+[project]
+name = "SCMEFitting"
+description = "A package to support fitting the parameters of the SCME code."
+version = "0.1.0"
+dependencies = ["numpy", "ase", "nevergrad"]
+requires-python = ">= 3.9"
+authors = [{ name = "Moritz Sallermann", email = "mos19@hi.is" }]
+license-files = ["LICEN[CS]E*"]
+
+[project.urls]
+Repository = "https://github.com/MSallermann/SCMEFitting"
+
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
