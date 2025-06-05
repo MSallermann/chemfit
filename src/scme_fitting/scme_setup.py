@@ -1,4 +1,3 @@
-import pyscme
 from pyscme.parameters import parameter_H2O
 from pyscme.scme_calculator import SCMECalculator
 from pyscme.expansions import (
@@ -247,7 +246,7 @@ def check_water_is_in_OHH_order(atoms: Atoms, OH_distance_tol: float = 2.0) -> b
     """
     n_atoms = len(atoms)
     if n_atoms % 3 != 0:
-        raise ValueError("Total atoms not divisible by 3 for water molecules")
+        raise ValueError("Total atoms not divisible by 3")
 
     good = True
     for i in range(n_atoms // 3):

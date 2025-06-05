@@ -11,7 +11,6 @@ from pathlib import Path
 import json
 import abc
 import logging
-from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
