@@ -1,8 +1,8 @@
-import scme_objective_function
-import combined_objective_function
-import plot_utils
+from scme_fitting.scme_objective_function import EnergyObjectiveFunction
+from scme_fitting.combined_objective_function import CombinedObjectiveFunction
+import scme_fitting.plot_utils
 from .scme_setup import SCMEParams
-import utils
+import scme_fitting.utils
 
 from pathlib import Path
 import pyscme
@@ -15,19 +15,17 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
-class MultiEnergyObjectiveFunction(
-    combined_objective_function.CombinedObjectiveFunction
-):
+class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
     def __init__(
         self,
         default_scme_params: SCMEParams,
         parametrization_key: str,
         path_to_scme_expansions: Optional[Path],
         tag_list: list[str],
-        weight_list: Optional[list[float]],
         path_to_reference_configuration_list: list[Path],
         reference_energy_list: list[float],
-        divide_by_n_atoms: bool,
+        divide_by_n_atoms: bool = False,
+        weight_list: Optional[list[float]] = None,
         plot_initial: bool = False,
     ):
         self.path_to_scme_expansions = path_to_scme_expansions
@@ -41,7 +39,7 @@ class MultiEnergyObjectiveFunction(
             tag_list, path_to_reference_configuration_list, reference_energy_list
         ):
             ob_funcs.append(
-                scme_objective_function.EnergyObjectiveFunction(
+                EnergyObjectiveFunction(
                     default_scme_params=default_scme_params,
                     parametrization_key=parametrization_key,
                     path_to_scme_expansions=path_to_scme_expansions,
@@ -60,7 +58,7 @@ class MultiEnergyObjectiveFunction(
         initial_params: dict[str, float],
         optimal_params: dict[str, float],
     ):
-        output_folder = utils.next_free_folder(folder_name)
+        output_folder = scme_fitting.utils.next_free_folder(Path(folder_name))
         output_folder.mkdir(exist_ok=True)
 
         print(f"Output folder: {output_folder}")
@@ -76,10 +74,14 @@ class MultiEnergyObjectiveFunction(
             "date": pyscme.version.date(),
         }
 
-        utils.dump_dict_to_file(output_folder / "meta.json", meta)
-        utils.dump_dict_to_file(output_folder / "initial_params.json", initial_params)
-        utils.dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
-        utils.dump_dict_to_file(
+        scme_fitting.utils.dump_dict_to_file(output_folder / "meta.json", meta)
+        scme_fitting.utils.dump_dict_to_file(
+            output_folder / "initial_params.json", initial_params
+        )
+        scme_fitting.utils.dump_dict_to_file(
+            output_folder / "optimal_params.json", optimal_params
+        )
+        scme_fitting.utils.dump_dict_to_file(
             output_folder / "default_params.json", dict(self.default_scme_params)
         )
 
@@ -117,8 +119,8 @@ class MultiEnergyObjectiveFunction(
 
         energies_scme_df.to_csv(output_folder / "energies_scme.csv")
 
-        plot_utils.plot_energies_and_residuals(
+        scme_fitting.plot_utils.plot_energies_and_residuals(
+            df=energies_scme_df,
             output_folder=output_folder,
-            energies_scme_df=energies_scme_df,
             plot_initial=self.plot_initial,
         )
