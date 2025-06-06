@@ -22,7 +22,9 @@ def plot_progress_curve(progress: List[float], outpath: Path) -> None:
 
 
 def plot_energies_and_residuals(
-    df: pd.DataFrame, output_folder: Path, plot_initial: bool = True
+    df: pd.DataFrame,
+    output_folder: Path,
+    plot_initial: bool = True,
 ) -> None:
     """
     Given a DataFrame with columns:
@@ -31,6 +33,7 @@ def plot_energies_and_residuals(
       - 'energy_initial'
       - 'energy_fitted'
       - 'n_atoms'
+      - 'ob_value'
     Create two PNGs in output_folder:
       1. energy per atom vs. tag (reference, fitted, and optionally initial)
       2. residuals = |reference - fitted| / n_atoms vs. tag
@@ -38,6 +41,7 @@ def plot_energies_and_residuals(
     The files are saved as:
       output_folder / "plot_energy.png"
       output_folder / "plot_residuals.png"
+      output_folder / "plot_objective.png"
     """
     tags = df["tag"]
     energy_ref = df["energy_reference"] / df["n_atoms"]
@@ -77,8 +81,30 @@ def plot_energies_and_residuals(
     )
     ax.set_xticks(range(n))
     ax.set_xticklabels(tags, rotation=90)
-    ax.set_ylabel("|pred – target| [eV] / n_atoms")
+    ax.set_ylabel("|pred - target| [eV] / n_atoms")
     ax.legend()
     fig.tight_layout()
     fig.savefig(output_folder / "plot_residuals.png", dpi=300)
+    plt.close()
+
+    # Plot objective function
+    ob_values = np.abs(df["ob_value"])
+    avg_ob = np.mean(ob_values)
+
+    plt.close()
+    ax = plt.gca()
+    fig = plt.gcf()
+    ax.plot(
+        tags,
+        ob_values,
+        marker="o",
+        color="black",
+        label=f"objective_function (mean = {avg_ob:.2e})",
+    )
+    ax.set_xticks(range(n))
+    ax.set_xticklabels(tags, rotation=90)
+    ax.set_ylabel("objective_function")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(output_folder / "plot_objective_function.png", dpi=300)
     plt.close()
