@@ -11,5 +11,7 @@ SCMEFitting documentation
    :caption: Contents:
 
    src/installation
-   src/usage
+   src/usage/general.rst
+   src/usage/fitting.rst
+   src/development/development.rst
    src/api/modules

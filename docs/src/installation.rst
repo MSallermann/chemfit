@@ -22,23 +22,10 @@ Installing the SCMEFitting package
 
 The installation of the SCMEFitting package is simple. The dependencies (**except SCME 2.0**) are installed automatically.
 
------------------
-Quick
------------------
 Execute this command in your terminal (and activate your preferred virtual environment before)
 
 .. code-block:: bash
 
     pip install git+https://github.com/MSallermann/SCMEFitting.git
 
-
-
------------------
-For development
------------------
-Check out the git repository and perform an editable install
-
-.. code-block:: bash
-
-    git clone git@github.com:MSallermann/SCMEFitting.git
-    pip install -e SCMEFitting
+Alternatively, you can of course check out the repository manually and perform a local pip install.
