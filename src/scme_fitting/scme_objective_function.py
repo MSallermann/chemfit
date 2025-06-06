@@ -29,7 +29,7 @@ class SCMEObjectiveFunction(abc.ABC):
     def __init__(
         self,
         default_scme_params: SCMEParams,
-        parametrization_key: str,
+        parametrization_key: Optional[str],
         path_to_scme_expansions: Optional[Path],
         path_to_reference_configuration: Path,
         tag: Optional[str] = None,
@@ -76,7 +76,7 @@ class SCMEObjectiveFunction(abc.ABC):
 
         # Store parameters for later calculator setup
         self.default_scme_params: SCMEParams = default_scme_params
-        self.parametrization_key: str = parametrization_key
+        self.parametrization_key: Optional[str] = parametrization_key
         self.path_to_scme_expansions: Optional[Path] = path_to_scme_expansions
         self.paths_to_reference_configuration: Path = path_to_reference_configuration
 
@@ -272,7 +272,7 @@ class EnergyObjectiveFunction(SCMEObjectiveFunction):
     def __init__(
         self,
         default_scme_params: SCMEParams,
-        parametrization_key: str,
+        parametrization_key: Optional[str],
         path_to_scme_expansions: Optional[Path],
         path_to_reference_configuration: Path,
         reference_energy: float,
@@ -463,7 +463,7 @@ class DimerDistanceObjectiveFunction(SCMEObjectiveFunction):
                 SCME parameter names to float values to set before relaxation.
 
         Returns:
-            float: Weighted squared difference: weight * (OO_distance – OO_distance_target)^2
+            float: Weighted squared difference: weight * (OO_distance - OO_distance_target)^2
         """
         # Apply new SCME parameters
         self.apply_parameters(parameters)
