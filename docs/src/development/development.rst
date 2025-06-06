@@ -4,6 +4,7 @@ Development
 
 This page contains some pointers for people looking to develop the SCMEFitting package.
 
+
 =============================
 Installation
 =============================
@@ -14,6 +15,7 @@ To ease development, check out the git repository and perform an editable instal
 
     git clone git@github.com:MSallermann/SCMEFitting.git
     pip install -e SCMEFitting
+
 
 =============================
 Running the unit tests

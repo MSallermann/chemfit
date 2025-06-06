@@ -36,7 +36,7 @@ In this simple example we define a quadratic objective function with two degrees
 The builtin objective functions
 ##############################################
 
-The core utility provided by this package are the builtin objective functions. Currently, there are three different provided objective functions:
+The core utility provided by this package are the builtin objective functions. Currently, these are the provied objective functions
 
 :py:class:`scme_fitting.scme_objective_function.EnergyObjectiveFunction`:
     An objective function based on the squared energy difference, given by ``weight * (e_cur - e_target)**2`` 
@@ -47,3 +47,5 @@ The core utility provided by this package are the builtin objective functions. C
 :py:class:`scme_fitting.combined_objective_function.CombinedObjectiveFunction`:
     This is a utility class, used to add several objective functions (optionally weighing) them into a single combined objective function.
 
+:py:class:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction`:
+    This is a utility class derived from CombinedObjectiveFunction. It is used to combine several reference configurations and energies into a single objective function.
