@@ -5,10 +5,15 @@ Fitting
 
 Using the ``EnergyObjectiveFunction``
 ########################################
-To use :py:class:`scme_fitting.scme_objective_function.EnergyObjectiveFunction`, we need (i) a filepath to a reference configuration of atom positions and (ii) a target energy associated to this reference configuration. This energy might for example have been computed from an ab-initio code.
 
-The reference atom positions should be saved in a format, which is parseable by ASE's ``io.read`` function (https://wiki.fysik.dtu.dk/ase/ase/io/io.html#ase.io.read) function.
-**Important**: If the file contains multiple "images" of atoms, the first image will be selected as the reference configuration. 
+:py:class:`scme_fitting.scme_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair. It's main use is to serve as a building block for more complex objective function. See :ref:`dimer_binding` for an example.
+
+If we want to use this objective function in isolation, we need (i) a filepath to a reference configuration of atom positions and (ii) a target energy associated to this reference configuration. This energy might for example have been computed from an ab-initio code.
+
+.. note::
+    The reference atom positions should be saved in a format, which is parseable by ASE's ``io.read`` function (https://wiki.fysik.dtu.dk/ase/ase/io/io.html#ase.io.read) function.
+
+    **Important**: If the file contains multiple "images" of atoms, the **first image** will be selected as the reference configuration. 
 
 From these two pieces of information we can construct an objective function:
 
@@ -45,7 +50,7 @@ Using it is relatively straight forward:
     # Evaluate the objective function
     val = objective_function( {"x" : 1.0, "y" : 1.0} )
 
-
+.. _dimer_binding:
 Fitting a dimer binding curve with ``MultiEnergyObjectiveFunction``
 #####################################################################
 
@@ -63,18 +68,29 @@ It should be quite obvious how to use this function:
     paths, tags, energies = process_csv("./data/energies.csv")
 
 
-**Example data** for a dimer binding curve can be found `here <https://github.com/MSallermann/SCMEFitting/tree/9ffdc77d2c7a5144618b55615ce6211028aedd3c/tests/test_configurations_scme>`_
+**Example data** for a dimer binding curve can be found `here. <https://github.com/MSallermann/SCMEFitting/tree/9ffdc77d2c7a5144618b55615ce6211028aedd3c/tests/test_configurations_scme>`_
 
 
-Two further thing we have to decide are (i) the default parameters of the SCME to be used and (ii) which of these default parameters we want to optimize and what their initial values are (most of the time we will want to set the initial values to the default values). 
+Two further things we have to decide are (i) the default parameters of the SCME to be used and (ii) which of these default parameters we want to optimize and what their initial values are (most of the time we will want to set the initial values to the default values). 
 
-The default parameters are an instance of :py:class:`scme_fitting.scme_setup.SCMEParams` (a pydantic model which encompasses all "user facing" parameters of the SCME 2.0 code), whereas the initial parameters simply are a ``dict[str,float]``. Obviously, the initial parameters are a subset of the default parameters.
+The default parameters are an instance of :py:class:`scme_fitting.scme_setup.SCMEParams` (a Pydantic model which encompasses all "user facing" parameters of the SCME 2.0 code), whereas the initial parameters simply are a ``dict[str,float]``. Obviously, the initial parameters are a subset of the default parameters.
 
-Here is how we might construct these parameters
+Here is how we might construct these parameters using the :py:function:`scme_fitting.utils.create_initial_params` utility function:
+
 .. code-block:: python
 
+    from scme_fitting.utils import create_initial_params
     from scme_fitting.scme_setup import SCMEParams
 
     # we can use the empty constructor to get some default-default params :)
     # change td, just because
     default_params = SCMEParams(td=2.0)
+
+    # These should match members in default_params
+    adjustable_params = ["td", "te", "C6", "C8", "C9"]
+
+    # This creates a dictionary of initial param by fetching 
+    # the corresponding values from the default params
+    # it is essentially the same as
+    #      initial_params = {k: dict(default_params)[k] for k in adjustable_params}
+    initial_params = create_initial_params(adjustable_params, default_params)
