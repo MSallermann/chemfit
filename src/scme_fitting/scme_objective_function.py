@@ -12,7 +12,7 @@ import json
 import abc
 import logging
 
-from ase.optimize import FIRE2
+from ase.optimize import BFGS
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -362,13 +362,14 @@ class DimerDistanceObjectiveFunction(SCMEObjectiveFunction):
     def __init__(
         self,
         default_scme_params: SCMEParams,
-        parametrization_key: str,
-        path_to_scme_expansions: Path,
+        parametrization_key: Optional[str],
+        path_to_scme_expansions: Optional[Path],
         path_to_reference_configuration: Path,
         OO_distance_target: float,
         tag: Optional[str] = None,
         dt: float = 1e-2,
-        fmax: float = 1e-3,
+        fmax: float = 1e-5,
+        max_steps: int = 2000,
         noise_magnitude: float = 0.0,
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
@@ -390,7 +391,7 @@ class DimerDistanceObjectiveFunction(SCMEObjectiveFunction):
         self.OO_distance_target: float = OO_distance_target
 
         self.dt: float = dt
-        self.max_steps: int = 2000
+        self.max_steps: int = max_steps
         self.fmax: float = fmax
         self.n_atoms_required: int = 6  # Two water molecules (3 atoms each)
         self.noise_magnitude: float = noise_magnitude
@@ -413,16 +414,6 @@ class DimerDistanceObjectiveFunction(SCMEObjectiveFunction):
         self, path_to_configuration: Path
     ) -> Atoms:
         """
-        Override to ensure that the loaded Atoms object represents exactly a water dimer
-        (6 atoms). After loading and ordering via the parent method, assert the atom count.
-
-        Args:
-            path_to_configuration: Path
-                Path to an ASE-readable file (e.g., .xyz) containing the dimer geometry.
-
-        Returns:
-            Atoms: ASE Atoms object with SCME calculator attached.
-
         Raises:
             AssertionError: If the loaded Atoms object does not contain exactly 6 atoms.
         """
@@ -430,6 +421,9 @@ class DimerDistanceObjectiveFunction(SCMEObjectiveFunction):
         assert len(atoms) == self.n_atoms_required, (
             f"Expected {self.n_atoms_required} atoms for a water dimer, but got {len(atoms)}."
         )
+
+        # make a copy of the reference positions
+        self.positions_reference = np.array(atoms.positions)
         return atoms
 
     def get_meta_data(self) -> Dict[str, object]:
@@ -465,8 +459,13 @@ class DimerDistanceObjectiveFunction(SCMEObjectiveFunction):
         Returns:
             float: Weighted squared difference: weight * (OO_distance - OO_distance_target)^2
         """
+
         # Apply new SCME parameters
         self.apply_parameters(parameters)
+
+        # Set the positions to the reference and zero out the velocities
+        self.atoms.set_velocities(np.zeros(shape=(len(self.atoms), 3)))
+        self.atoms.set_positions(self.positions_reference)
 
         # Force a recalculation to update forces/energy before adding noise
         self.atoms.calc.calculate(self.atoms)
@@ -477,7 +476,9 @@ class DimerDistanceObjectiveFunction(SCMEObjectiveFunction):
         )
 
         # Run FIRE2 relaxation until convergence
-        optimizer = FIRE2(self.atoms, dt=self.dt)
+        # optimizer = FIRE2(self.atoms, dtmax=self.dt)
+        optimizer = BFGS(self.atoms)  # cf, dtmax=self.dt)
+
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
 
         # Compute the O–O distance (atom indices 0 and 3, allowing periodic images)
