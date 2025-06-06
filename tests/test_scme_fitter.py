@@ -1,15 +1,18 @@
 from scme_fitting.fitter import Fitter
 from scme_fitting.scme_setup import SCMEParams
-from scme_fitting.scme_energy_objective_function import SCMEEnergyObjectiveFunction
-from scme_fitting.combined_objective_function import CombinedObjectiveFunction
-
+from scme_fitting.scme_objective_function import (
+    EnergyObjectiveFunction,
+    DimerDistanceObjectiveFunction,
+)
+from scme_fitting.utils import dump_dict_to_file
+from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
+from scme_fitting.data_utils import process_csv
 import numpy as np
 import logging
 from pathlib import Path
-import matplotlib.pyplot as plt
 
 
-logging.basicConfig(filename="test_scme_fitter.log", level=logging.INFO)
+logging.basicConfig(filename="test_scme_fitter.log", level=logging.DEBUG)
 
 
 def create_scme_fit_data(base_path: Path):
@@ -20,66 +23,101 @@ def create_scme_fit_data(base_path: Path):
     return sorted_paths, energies, tags
 
 
-def test_scme_fitting():
-    base_path = Path(
-        "/home/moritz/SCME/generalized_SCME_interatomic_fit/SCMEFitting/scme_fitting/resources/PBE"
+### Common to all tests
+PATH_TO_CSV = Path(__file__).parent / "test_configurations_scme/energies.csv"
+REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)
+
+DEFAULT_PARAMS = SCMEParams(
+    td=4.780356569608627,
+    Ar_OO=299.5695377280358,
+    Br_OO=-0.14632711560656822,
+    Cr_OO=-2.0071714442805715,
+    r_Br=5.867230272424719,
+    dms=True,
+    qms=True,
+)
+
+ADJUSTABLE_PARAMS = ["td", "Ar_OO", "Br_OO", "Cr_OO", "te", "C6", "C8", "C10"]
+INITIAL_PARAMS = {k: dict(DEFAULT_PARAMS)[k] for k in ADJUSTABLE_PARAMS}
+
+
+def test_single_energy_objective_function():
+    scme_objective_function = EnergyObjectiveFunction(
+        default_scme_params=DEFAULT_PARAMS,
+        path_to_scme_expansions=None,
+        parametrization_key=None,
+        path_to_reference_configuration=REFERENCE_CONFIGS[10],
+        reference_energy=REFERENCE_ENERGIES[10],
+        tag=TAGS[10],
     )
-    paths_to_reference_configurations, reference_energies, tags = create_scme_fit_data(
-        base_path
-    )
-
-    scme_objective_functions = [
-        SCMEEnergyObjectiveFunction(
-            default_scme_params=SCMEParams(),
-            path_to_scme_expansions=None,
-            parametrization_key=None,
-            path_to_reference_configuration=xyz_file,
-            reference_energy=energy,
-            divide_by_n_atoms=True,
-            tag=tag,
-        )
-        for xyz_file, energy, tag in zip(
-            paths_to_reference_configurations, reference_energies, tags
-        )
-    ]
-
-    objective_function = CombinedObjectiveFunction(
-        objective_functions=scme_objective_functions
-    )
-
-    DEFAULT_PARAMS = SCMEParams()
-    ADJUSTABLE_PARAMS = ["td", "Ar_OO", "Br_OO", "Cr_OO", "r_Br"]
-
-    [
-        o.dump_test_configuration("test_configurations_scme")
-        for o in scme_objective_functions
-    ]
 
     fitter = Fitter(
-        objective_function=objective_function,
+        objective_function=scme_objective_function,
     )
-
-    initial_params = {k: dict(DEFAULT_PARAMS)[k] for k in ADJUSTABLE_PARAMS}
 
     optimal_params = fitter.fit_scipy(
-        initial_parameters=initial_params, tol=0, options=dict(maxiter=50, disp=True)
+        initial_parameters=INITIAL_PARAMS, tol=1e-4, options=dict(maxiter=50, disp=True)
     )
 
-    print(f"{initial_params = }")
-    print(f"{optimal_params = }")
+    output_folder = Path("test_output_single_energy")
+    scme_objective_function.dump_test_configuration(output_folder)
 
-    plt.plot(reference_energies, label="reference")
-    plt.plot(
-        [o.get_energy(initial_params) for o in scme_objective_functions],
-        label="initial parameters",
+    dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
+
+
+def test_dimer_distance_objective_function():
+    scme_objective_function = DimerDistanceObjectiveFunction(
+        default_scme_params=DEFAULT_PARAMS,
+        path_to_scme_expansions=None,
+        parametrization_key=None,
+        path_to_reference_configuration=REFERENCE_CONFIGS[5],
+        dt=1,
+        max_steps=500,
+        OO_distance_target=3.2,
+        tag="dimer_distance",
     )
-    plt.plot(
-        [o.get_energy(optimal_params) for o in scme_objective_functions],
-        label="fitted parameters",
+
+    fitter = Fitter(
+        objective_function=scme_objective_function,
     )
-    plt.legend()
-    plt.savefig("fig.png")
+
+    # optimal_params = fitter.fit_nevergrad(initial_parameters=INITIAL_PARAMS, budget=50)
+    optimal_params = fitter.fit_scipy(
+        initial_parameters=INITIAL_PARAMS, tol=1e-4, options=dict(maxiter=50, disp=True)
+    )
+
+    output_folder = Path("test_output_dimer_distance")
+    scme_objective_function.dump_test_configuration(output_folder)
+
+    dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
+
+
+def test_multi_energy_ob_function_fitting():
+    scme_objective_function = MultiEnergyObjectiveFunction(
+        default_scme_params=DEFAULT_PARAMS,
+        path_to_scme_expansions=None,
+        parametrization_key=None,
+        path_to_reference_configuration_list=REFERENCE_CONFIGS,
+        reference_energy_list=REFERENCE_ENERGIES,
+        tag_list=TAGS,
+    )
+
+    fitter = Fitter(
+        objective_function=scme_objective_function,
+    )
+
+    optimal_params = fitter.fit_scipy(
+        initial_parameters=INITIAL_PARAMS, tol=0, options=dict(maxiter=50, disp=True)
+    )
+
+    scme_objective_function.write_output(
+        "test_output_multi_energy",
+        initial_params=INITIAL_PARAMS,
+        optimal_params=optimal_params,
+    )
 
 
 if __name__ == "__main__":
-    test_scme_fitting()
+    test_single_energy_objective_function()
+    test_dimer_distance_objective_function()
+    test_multi_energy_ob_function_fitting()
