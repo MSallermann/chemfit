@@ -14,15 +14,6 @@ from pathlib import Path
 
 logging.basicConfig(filename="test_scme_fitter.log", level=logging.DEBUG)
 
-
-def create_scme_fit_data(base_path: Path):
-    energies = np.loadtxt(base_path / "PES_dimer_c1_PBE.txt")[:, 1]
-    paths = list(base_path.glob("*/CONTCAR"))
-    sorted_paths = sorted(paths, key=lambda p: float(p.parent.name))
-    tags = [p.parent.name for p in sorted_paths]
-    return sorted_paths, energies, tags
-
-
 ### Common to all tests
 PATH_TO_CSV = Path(__file__).parent / "test_configurations_scme/energies.csv"
 REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)

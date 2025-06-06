@@ -46,7 +46,35 @@ Using it is relatively straight forward:
     val = objective_function( {"x" : 1.0, "y" : 1.0} )
 
 
-Dimer binding curve example
-#################################
+Fitting a dimer binding curve with ``MultiEnergyObjectiveFunction``
+#####################################################################
 
-Let's assume you want to find SCME parameters to reproduce a dimer binding curve.
+Let's assume you want to find SCME parameters to reproduce a dimer binding curve. The first step is of course to have all the reference configurations as well as the reference_energies ready.
+
+Generally, it is a good idea to store this information (paths to the reference configurations, reference energies and some identifiers aka tags) in a file somewhere on your computer.
+
+The :py:func:`scme_fitting.data_utils.process_csv` function provides a utility to parse this information from a csv file. 
+
+It should be quite obvious how to use this function:
+
+.. code-block:: python
+
+    from scme_fitting.data_utils import process_csv
+    paths, tags, energies = process_csv("./data/energies.csv")
+
+
+**Example data** for a dimer binding curve can be found `here <https://github.com/MSallermann/SCMEFitting/tree/9ffdc77d2c7a5144618b55615ce6211028aedd3c/tests/test_configurations_scme>`_
+
+
+Two further thing we have to decide are (i) the default parameters of the SCME to be used and (ii) which of these default parameters we want to optimize and what their initial values are (most of the time we will want to set the initial values to the default values). 
+
+The default parameters are an instance of :py:class:`scme_fitting.scme_setup.SCMEParams` (a pydantic model which encompasses all "user facing" parameters of the SCME 2.0 code), whereas the initial parameters simply are a ``dict[str,float]``. Obviously, the initial parameters are a subset of the default parameters.
+
+Here is how we might construct these parameters
+.. code-block:: python
+
+    from scme_fitting.scme_setup import SCMEParams
+
+    # we can use the empty constructor to get some default-default params :)
+    # change td, just because
+    default_params = SCMEParams(td=2.0)
