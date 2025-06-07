@@ -33,7 +33,9 @@ Using the ``CombinedObjectiveFunction``
 Using :py:class:`scme_fitting.combined_objective_function.CombinedObjectiveFunction` directly is likely not needed.
 You are more likely to indirectly use it via the derived class :py:class:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction`.
 
-Using it is relatively straight forward:
+It can still come in handy, when combining different objective functions. 
+
+Its use is demonstrated in the following:
 
 .. code-block:: python
 
@@ -51,46 +53,97 @@ Using it is relatively straight forward:
     val = objective_function( {"x" : 1.0, "y" : 1.0} )
 
 .. _dimer_binding:
+
 Fitting a dimer binding curve with ``MultiEnergyObjectiveFunction``
 #####################################################################
 
-Let's assume you want to find SCME parameters to reproduce a dimer binding curve. The first step is of course to have all the reference configurations as well as the reference_energies ready.
+Let's assume you want to find the optimal SCME parameters to reproduce the energies in a dimer binding curve.
+The first step is of course to have all the reference configurations as well as the reference_energies ready.
 
 Generally, it is a good idea to store this information (paths to the reference configurations, reference energies and some identifiers aka tags) in a file somewhere on your computer.
 
-The :py:func:`scme_fitting.data_utils.process_csv` function provides a utility to parse this information from a csv file. 
-
-It should be quite obvious how to use this function:
+The :py:func:`scme_fitting.data_utils.process_csv` function provides a utility to parse this information from a CSV file:
 
 .. code-block:: python
 
     from scme_fitting.data_utils import process_csv
     paths, tags, energies = process_csv("./data/energies.csv")
 
+Of course, you are free to obtain the list of paths, tags and energies in any other way as well.
 
 **Example data** for a dimer binding curve can be found `here. <https://github.com/MSallermann/SCMEFitting/tree/9ffdc77d2c7a5144618b55615ce6211028aedd3c/tests/test_configurations_scme>`_
 
+Further we have to decide the default parameters of the SCME to be used. 
+The default parameters are an instance of :py:class:`scme_fitting.scme_setup.SCMEParams` (a Pydantic model which encompasses all "user facing" parameters of the SCME 2.0 code).
 
-Two further things we have to decide are (i) the default parameters of the SCME to be used and (ii) which of these default parameters we want to optimize and what their initial values are (most of the time we will want to set the initial values to the default values). 
+Not all of the default parameters will be changed during the optimization, but even if they remain constant they need to have a value ... duh.
 
-The default parameters are an instance of :py:class:`scme_fitting.scme_setup.SCMEParams` (a Pydantic model which encompasses all "user facing" parameters of the SCME 2.0 code), whereas the initial parameters simply are a ``dict[str,float]``. Obviously, the initial parameters are a subset of the default parameters.
-
-Here is how we might construct these parameters using the :py:function:`scme_fitting.utils.create_initial_params` utility function:
+Here is an example of how the default params can be constructed:
 
 .. code-block:: python
 
     from scme_fitting.utils import create_initial_params
     from scme_fitting.scme_setup import SCMEParams
 
-    # we can use the empty constructor to get some default-default params :)
-    # change td, just because
+    # We construct an SCMEParams instance and explicitly change the 'td' setting
+    # (the rest of the parameters will be set to the defaults specified in SCMEParams)
+    default_params = SCMEParams(td=2.0)
+
+.. warning::
+    The code snippet above relies on the defaults set in the :py:class:`scme_fitting.scme_setup.SCMEParams` class.
+    It might be a good idea to (i) review these defaults and (ii) not rely on them as they might be subject to change.
+
+
+..  (ii) which of these parameters we want to optimize and (iii) what their initial values are.
+.. Most of the time we will want to set the initial values to the default values corresponding default values.
+.. , whereas the initial parameters simply are a ``dict[str,float]``.
+.. Obviously, the initial parameters are a subset of the default parameters.
+
+Here is how we might construct these parameters using the :py:func:`scme_fitting.utils.create_initial_params` utility function to initialize the initial parameters.
+
+.. code-block:: python
+
+    from scme_fitting.utils import create_initial_params
+    from scme_fitting.scme_setup import SCMEParams
+
+    # We construct an SCMEParams instance and explicitly change the 'td' setting
+    # (the rest of the parameters will be set to the defaults specified in SCMEParams)
     default_params = SCMEParams(td=2.0)
 
     # These should match members in default_params
-    adjustable_params = ["td", "te", "C6", "C8", "C9"]
+    adjustable_params = ["td", "te", "C6", "C8", "C10"]
 
-    # This creates a dictionary of initial param by fetching 
-    # the corresponding values from the default params
-    # it is essentially the same as
+    # This creates a dictionary of initial params by fetching 
+    # the corresponding values from the default params.
+    # It is essentially equivalent to:
     #      initial_params = {k: dict(default_params)[k] for k in adjustable_params}
     initial_params = create_initial_params(adjustable_params, default_params)
+
+Creating the objective function is now simple
+
+.. code-block:: python
+
+    scme_objective_function = MultiEnergyObjectiveFunction(
+        default_scme_params=default_params,
+        path_to_scme_expansions=None,
+        parametrization_key=None,
+        path_to_reference_configuration_list=paths,
+        reference_energy_list=energies,
+        tag_list=tags,
+    )
+
+
+
+    fitter = Fitter(
+        objective_function=scme_objective_function,
+    )
+
+    optimal_params = fitter.fit_scipy(
+        initial_parameters=INITIAL_PARAMS, tol=0, options=dict(maxiter=50, disp=True)
+    )
+
+    scme_objective_function.write_output(
+        "test_output_multi_energy",
+        initial_params=INITIAL_PARAMS,
+        optimal_params=optimal_params,
+    )
