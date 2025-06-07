@@ -2,7 +2,7 @@
 name = "SCMEFitting"
 description = "A package to support fitting the parameters of the SCME code."
 version = "0.1.0"
-dependencies = ["numpy", "ase", "nevergrad", "pandas", "matplotlib"]
+dependencies = ["numpy", "ase", "nevergrad", "pandas", "matplotlib", "pydantic"]
 requires-python = ">= 3.9"
 authors = [{ name = "Moritz Sallermann", email = "mos19@hi.is" }]
 license-files = ["LICEN[CS]E*"]
