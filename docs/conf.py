@@ -36,6 +36,7 @@ autodoc_default_options = {
     "show-inheritance": True,
     "member-order": "groupwise",  # or 'alphabetical'
 }
+autodoc_mock_imports = ["pyscme"]
 
 templates_path = ["_templates"]
 exclude_patterns = []
