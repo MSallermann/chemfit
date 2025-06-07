@@ -71,16 +71,18 @@ class CombinedObjectiveFunction:
 
         If `obj_funcs` is a single callable, it is appended; if it is a sequence of callables,
         each is appended in order. The `weights` argument must align:
-          - If `weights` is a single float, that same weight is used for each newly added function.
-          - If `weights` is a sequence, its length must match the number of functions being added.
+        - If `weights` is a single float, that same weight is used for each newly added function.
+        - If `weights` is a sequence, its length must match the number of functions being added.
 
         Args:
-            obj_funcs (Callable[[Dict[str, float]], float] or Sequence[Callable[[Dict[str, float]], float]]):
+            obj_funcs (Callable[[Dict[str, float]], float]
+                or Sequence[Callable[[Dict[str, float]], float]]):
                 Either a single objective-function callable or a sequence of such callables. Each callable
                 must accept a `Dict[str, float]` and return a float.
             weights (float or Sequence[float], optional):
                 Either a float (used for every new function) or a sequence of non-negative floats.
-                If a sequence, its length must equal the number of functions in `obj_funcs`. Defaults to 1.0.
+                If a sequence, its length must equal the number of functions in `obj_funcs`.
+                Defaults to 1.0.
 
         Returns:
             Self: The current instance (allows chaining).
@@ -89,6 +91,7 @@ class CombinedObjectiveFunction:
             AssertionError: If `weights` is a sequence but its length does not match the number
                 of functions in `obj_funcs`, or if any provided weight is negative.
         """
+
         # Determine how many new functions are being added
         if isinstance(obj_funcs, ABCSequence) and not callable(obj_funcs):
             funcs_to_add = list(obj_funcs)  # type: ignore[assignment]

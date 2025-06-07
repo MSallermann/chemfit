@@ -28,21 +28,25 @@ def plot_energies_and_residuals(
 ) -> None:
     """
     Given a DataFrame with columns:
+
       - 'tag'
       - 'energy_reference'
       - 'energy_initial'
       - 'energy_fitted'
       - 'n_atoms'
       - 'ob_value'
+    
     Create two PNGs in output_folder:
-      1. energy per atom vs. tag (reference, fitted, and optionally initial)
-      2. residuals = |reference - fitted| / n_atoms vs. tag
+
+        1. energy per atom vs. tag (reference, fitted, and optionally initial)
+        2. residuals = ``|ref - fit| / n_atoms`` vs. tag
 
     The files are saved as:
-      output_folder / "plot_energy.png"
-      output_folder / "plot_residuals.png"
-      output_folder / "plot_objective.png"
+        output_folder / "plot_energy.png"
+        output_folder / "plot_residuals.png"
+        output_folder / "plot_objective.png"
     """
+
     tags = df["tag"]
     energy_ref = df["energy_reference"] / df["n_atoms"]
     energy_fit = df["energy_fitted"] / df["n_atoms"]
