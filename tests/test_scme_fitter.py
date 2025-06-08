@@ -1,13 +1,19 @@
 from scme_fitting.fitter import Fitter
 from scme_fitting.scme_setup import SCMEParams
-from scme_fitting.scme_objective_function import (
+
+from scme_fitting.ase_objective_function import (
     EnergyObjectiveFunction,
     DimerDistanceObjectiveFunction,
 )
+from scme_fitting.scme_objective_function import (
+    SCMECalculatorFactory,
+    SCMEParameterApplier,
+)
+
 from scme_fitting.utils import dump_dict_to_file
+
 from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
 from scme_fitting.data_utils import process_csv
-import numpy as np
 import logging
 from pathlib import Path
 
@@ -34,9 +40,8 @@ INITIAL_PARAMS = {k: dict(DEFAULT_PARAMS)[k] for k in ADJUSTABLE_PARAMS}
 
 def test_single_energy_objective_function():
     scme_objective_function = EnergyObjectiveFunction(
-        default_scme_params=DEFAULT_PARAMS,
-        path_to_scme_expansions=None,
-        parametrization_key=None,
+        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+        param_applier=SCMEParameterApplier(),
         path_to_reference_configuration=REFERENCE_CONFIGS[10],
         reference_energy=REFERENCE_ENERGIES[10],
         tag=TAGS[10],
@@ -58,13 +63,12 @@ def test_single_energy_objective_function():
 
 def test_dimer_distance_objective_function():
     scme_objective_function = DimerDistanceObjectiveFunction(
-        default_scme_params=DEFAULT_PARAMS,
-        path_to_scme_expansions=None,
-        parametrization_key=None,
+        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+        param_applier=SCMEParameterApplier(),
         path_to_reference_configuration=REFERENCE_CONFIGS[5],
-        dt=1,
+        dt=1.0,
         max_steps=500,
-        OO_distance_target=3.2,
+        reference_OO_distance=3.2,
         tag="dimer_distance",
     )
 
@@ -85,9 +89,8 @@ def test_dimer_distance_objective_function():
 
 def test_multi_energy_ob_function_fitting():
     scme_objective_function = MultiEnergyObjectiveFunction(
-        default_scme_params=DEFAULT_PARAMS,
-        path_to_scme_expansions=None,
-        parametrization_key=None,
+        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+        param_applier=SCMEParameterApplier(),
         path_to_reference_configuration_list=REFERENCE_CONFIGS,
         reference_energy_list=REFERENCE_ENERGIES,
         tag_list=TAGS,
@@ -105,6 +108,7 @@ def test_multi_energy_ob_function_fitting():
         "test_output_multi_energy",
         initial_params=INITIAL_PARAMS,
         optimal_params=optimal_params,
+        default_params=dict(DEFAULT_PARAMS),
     )
 
 
