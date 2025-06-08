@@ -16,6 +16,10 @@ class CalculatorFactory(Protocol):
     def __call__(self, atoms: Atoms) -> Any: ...
 
 
+class AtomsPostProcessor(Protocol):
+    def __call__(self, atoms: Atoms) -> Any: ...
+
+
 class ParameterApplier(Protocol):
     def __call__(self, atoms: Atoms, params: Dict[str, float]) -> None: ...
 
@@ -49,6 +53,7 @@ class ASEObjectiveFunction(abc.ABC):
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
         divide_by_n_atoms: bool = False,
+        atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ) -> None:
         """
         Initialize an ASEObjectiveFunction.
@@ -79,6 +84,7 @@ class ASEObjectiveFunction(abc.ABC):
 
         self.calc_factory: CalculatorFactory = calc_factory
         self.param_applier: ParameterApplier = param_applier
+        self.atoms_post_processor: Optional[AtomsPostProcessor] = None
 
         # Assign tag
         self.tag: str = tag if tag is not None else "tag_None"
@@ -180,9 +186,10 @@ class ASEObjectiveFunction(abc.ABC):
 
         atoms = read(path_to_configuration, index=0)
 
-        self.check_atoms(atoms)
-        self.calc_factory(atoms)
+        if self.atoms_post_processor is not None:
+            self.atoms_post_processor(atoms)
 
+        self.calc_factory(atoms)
         return atoms
 
     def get_energy(self, parameters: Dict[str, float]) -> float:
@@ -210,9 +217,6 @@ class ASEObjectiveFunction(abc.ABC):
         self.energy = self.atoms.get_potential_energy()
         logger.debug(f"Calculated energy (tag = {self.tag}): {self.energy}")
         return self.energy
-
-    def check_atoms(self, atoms: Atoms) -> bool:
-        return True
 
     @abc.abstractmethod
     def __call__(self, parameters: Dict[str, float]) -> float:
