@@ -93,22 +93,14 @@ Here is an example of how the default params can be constructed:
     The code snippet above relies on the defaults set in the :py:class:`scme_fitting.scme_setup.SCMEParams` class.
     It might be a good idea to (i) review these defaults and (ii) not rely on them as they might be subject to change.
 
-
-..  (ii) which of these parameters we want to optimize and (iii) what their initial values are.
-.. Most of the time we will want to set the initial values to the default values corresponding default values.
-.. , whereas the initial parameters simply are a ``dict[str,float]``.
-.. Obviously, the initial parameters are a subset of the default parameters.
-
-Here is how we might construct these parameters using the :py:func:`scme_fitting.utils.create_initial_params` utility function to initialize the initial parameters.
+We should now decide which of the parameters we want to optimize in order to approach the reference energies and what their initial value should be. 
+Most of the time we will want to set the initial values to the corresponding default values - but this is not required.
+If we inded want to use the default parameters as initial values we can make use of the function :py:func:`scme_fitting.utils.create_initial_params`.
+The code below demonstrates its use:
 
 .. code-block:: python
 
     from scme_fitting.utils import create_initial_params
-    from scme_fitting.scme_setup import SCMEParams
-
-    # We construct an SCMEParams instance and explicitly change the 'td' setting
-    # (the rest of the parameters will be set to the defaults specified in SCMEParams)
-    default_params = SCMEParams(td=2.0)
 
     # These should match members in default_params
     adjustable_params = ["td", "te", "C6", "C8", "C10"]
@@ -119,7 +111,13 @@ Here is how we might construct these parameters using the :py:func:`scme_fitting
     #      initial_params = {k: dict(default_params)[k] for k in adjustable_params}
     initial_params = create_initial_params(adjustable_params, default_params)
 
-Creating the objective function is now simple
+Lastly, we should decide if we want to use monomer expansions in the style of the generalized SCME code. These are supplied in the form of a path to and HDF5 file (``path_to_scme_expansions`` argument) and a corresponding key to the expansion dataset in this fil  (``parametrization_key`` argument).
+If any of these are ``None``, the generalized SCME will **not** be used.
+
+.. note::
+    The parameters of the monomer expansions can not be adjusted with the SCMEFitting package.
+
+In the code below we elect to not use the generalized SCME.
 
 .. code-block:: python
 
@@ -132,16 +130,20 @@ Creating the objective function is now simple
         tag_list=tags,
     )
 
+Armed with this objective function, we can now perform a fit using the Fitter class
 
+.. code-block:: python
 
     fitter = Fitter(
         objective_function=scme_objective_function,
     )
 
+    # All keyword arguments except `initial_parameters` get forwarded to scipy.minimize
     optimal_params = fitter.fit_scipy(
-        initial_parameters=INITIAL_PARAMS, tol=0, options=dict(maxiter=50, disp=True)
+        initial_parameters=INITIAL_PARAMS, tol=1e-4, options=dict(maxiter=50, disp=True)
     )
 
+    # After the fit, this will write some useful outputs
     scme_objective_function.write_output(
         "test_output_multi_energy",
         initial_params=INITIAL_PARAMS,
