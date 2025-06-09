@@ -1,6 +1,5 @@
 from pathlib import Path
 import json
-from scme_fitting.scme_setup import SCMEParams
 
 
 def next_free_folder(base: Path) -> Path:
@@ -27,6 +26,6 @@ def dump_dict_to_file(file: Path, dictionary: dict) -> None:
 
 
 def create_initial_params(
-    adjustable_params: list[str], default_scme_params: SCMEParams
+    adjustable_params: list[str], default_params: dict
 ) -> dict[str, float]:
-    return {k: dict(default_scme_params)[k] for k in adjustable_params}
+    return {k: dict(default_params)[k] for k in adjustable_params}

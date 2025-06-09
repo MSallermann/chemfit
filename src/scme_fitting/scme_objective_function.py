@@ -31,6 +31,7 @@ class SCMECalculatorFactory:
             atoms = arange_water_in_OHH_order(atoms)
 
         scme_params_copy = self.default_scme_params.model_copy()
+
         setup_calculator(
             atoms,
             scme_params=scme_params_copy,

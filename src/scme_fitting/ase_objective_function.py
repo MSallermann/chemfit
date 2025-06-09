@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 class CalculatorFactory(Protocol):
     """
-    Protocol for a factory that constructs an ASE calculator in-place.
+    Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`
 
     Methods:
         __call__(atoms): Construct a calculator and overwrite atoms.calc.
