@@ -25,7 +25,7 @@ PATH_TO_CSV = Path(__file__).parent / "test_configurations_scme/energies.csv"
 REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)
 
 DEFAULT_PARAMS = SCMEParams(
-    td=4.780356569608627,
+    td=4.7,
     Ar_OO=299.5695377280358,
     Br_OO=-0.14632711560656822,
     Cr_OO=-2.0071714442805715,
@@ -34,7 +34,7 @@ DEFAULT_PARAMS = SCMEParams(
     qms=True,
 )
 
-ADJUSTABLE_PARAMS = ["td", "Ar_OO", "Br_OO", "Cr_OO", "te", "C6", "C8", "C10"]
+ADJUSTABLE_PARAMS = ["td", "te", "C6", "C8", "C10"]
 INITIAL_PARAMS = {k: dict(DEFAULT_PARAMS)[k] for k in ADJUSTABLE_PARAMS}
 
 
@@ -112,6 +112,6 @@ def test_multi_energy_ob_function_fitting():
 
 
 if __name__ == "__main__":
-    test_single_energy_objective_function()
-    test_dimer_distance_objective_function()
+    # test_single_energy_objective_function()
+    # test_dimer_distance_objective_function()
     test_multi_energy_ob_function_fitting()

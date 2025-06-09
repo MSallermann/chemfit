@@ -2,7 +2,8 @@
 Overview
 #######################
 
-The SCMEFitting package helps you tune the free parameters of the “SCME 2.0” code so that ASE-computed potential energies match ab-initio reference values *as close as possible*. **Beyond fitting just the SCME parameters**, it can drive the parameters of any ASE calculator via the same callback machinery.
+The SCMEFitting package helps you tune the free parameters of the "SCME 2.0" code so that ASE-computed potential energies match ab-initio reference values *as close as possible*.
+**Beyond fitting just the SCME parameters**, it can drive the parameters of any ASE calculator via the same callback machinery.
 
 Objective functions
 #######################
@@ -40,7 +41,7 @@ These two backends are
 A minimal ``Fitter`` example
 #############################
 
-Performing a fit with this package is generally involves three steps:
+Performing a fit with this package generally involves three steps:
 
 #. Create an *objective function*. This may be any function or callable object, where the ``__call__`` operator has the signature ``f(params : dict[str, float]) -> float``.
 

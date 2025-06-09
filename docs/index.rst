@@ -6,6 +6,8 @@
 SCMEFitting documentation
 =========================
 
+Welcome to the documentation of ``SCMEFitting``. Please not that it is a work in progress.
+
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
@@ -14,5 +16,6 @@ SCMEFitting documentation
    src/usage/overview.rst
    src/usage/ase_objective_function_api.rst
    src/usage/fitting.rst
+   src/usage/example_scme.rst
    src/development/development.rst
    src/api/modules
