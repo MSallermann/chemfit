@@ -45,7 +45,7 @@ class SCMEParameterApplier:
         """
         Assign SCME parameter values to the attached calculator.
 
-        A
+        Args:
             params : Dict[str, float]
                 Dictionary of SCME parameter names to float values.
 

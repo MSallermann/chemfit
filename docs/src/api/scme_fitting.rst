@@ -13,7 +13,7 @@ Submodules
    scme_fitting.fitter
    scme_fitting.multi_energy_objective_function
    scme_fitting.plot_utils
-   scme_fitting.scme_objective_function
+   scme_fitting.scme_factories
    scme_fitting.scme_setup
    scme_fitting.utils
 

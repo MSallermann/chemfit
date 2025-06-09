@@ -29,7 +29,7 @@ Example: LJ calculator factory
     def construct_lj(atoms: Atoms):
         atoms.calc = LennardJones(rc=2000)
 
-For a more sophisticated example, see :py:class:`scme_fitting.scme_objective_function:SCMECalculatorFactory`
+For a more sophisticated example, see :py:class:`scme_fitting.scme_factories:SCMECalculatorFactory`
 
 
 ParameterApplier
@@ -54,7 +54,7 @@ Example: LJ parameter applier
         atoms.calc.parameters.sigma = params["sigma"]
         atoms.calc.parameters.epsilon = params["epsilon"]
 
-For a more sophisticated example see :py:class:`scme_fitting.scme_objective_function.SCMEParameterApplier`.
+For a more sophisticated example see :py:class:`scme_fitting.scme_factories.SCMEParameterApplier`.
 
 
 Putting it all together

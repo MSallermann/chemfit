@@ -85,6 +85,6 @@ The key point, which makes these classes flexible, is that they take two factory
 SCME factory functions
 ########################
 
-Ready to use implementations of :py:class:`scme_fitting.ase_objective_function.CalculatorFactory` and :py:class:`scme_fitting.ase_objective_function.ParameterApplier` are provided in the :py:mod:`scme_fitting.scme_objective_function` module.
+Ready to use implementations of :py:class:`scme_fitting.ase_objective_function.CalculatorFactory` and :py:class:`scme_fitting.ase_objective_function.ParameterApplier` are provided in the :py:mod:`scme_fitting.scme_factories` module.
 
 These should cover most use cases of fitting parameters in the SCME, but they can *of course* be extended to fit any individual task.

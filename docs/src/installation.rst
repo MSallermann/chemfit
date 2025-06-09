@@ -21,7 +21,7 @@ Alternatively, you can of course check out the repository manually and perform a
     The pip install **does not** install the SCME 2.0 code for you.
 
 .. note::
-    Even **without the SCME code**, you can still use everything this package provides, except the :py:mod:`scme_fitting.scme_objective_function` module.
+    Even **without the SCME code**, you can still use everything this package provides, except the :py:mod:`scme_fitting.scme_factories` module.
 
 =============================
 Installing the SCME 2.0 code
@@ -35,6 +35,6 @@ To use this package with the SCME code, you need a working installation of the S
 
     .. code-block:: python
 
-        import pyscme # must succeed in order to use scme_fitting.scme_objective_function
+        import pyscme # must succeed in order to use scme_fitting.scme_factories
 
     Further, a recent enough version must be installed.

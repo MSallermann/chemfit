@@ -85,11 +85,11 @@ If any of these are ``None``, the generalized SCME will **not** be used.
 Instantiating the factory functors
 ####################################
 
-While it is completely possible to supply your own factory functions, we will use the predefined ones from the :py:mod:`scme_fitting.scme_objective_function` module:
+While it is completely possible to supply your own factory functions, we will use the predefined ones from the :py:mod:`scme_fitting.scme_factories` module:
 
 .. code-block:: python
 
-    from scme_fitting.scme_objective_function import SCMECalculatorFactory, SCMEParameterApplier
+    from scme_fitting.scme_factories import SCMECalculatorFactory, SCMEParameterApplier
 
     calc_factory = SCMECalculatorFactory(
                         default_scme_params=default_params,
@@ -109,7 +109,7 @@ We now simply instantiate the objective function by passing the factory functors
 
     from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
 
-    scme_objective_function = MultiEnergyObjectiveFunction(
+    scme_factories = MultiEnergyObjectiveFunction(
         calc_factory=calc_factory,
         param_applier=param_applier,
         path_to_reference_configuration_list=paths,
@@ -126,7 +126,7 @@ Pass the objective function to an instance of the ``Fitter`` class and write som
 .. code-block:: python
 
     fitter = Fitter(
-        objective_function=scme_objective_function,
+        objective_function=scme_factories,
     )
 
     # All keyword arguments except `initial_parameters` get forwarded to scipy.minimize
@@ -135,7 +135,7 @@ Pass the objective function to an instance of the ``Fitter`` class and write som
     )
 
     # After the fit, this will write some useful outputs
-    scme_objective_function.write_output(
+    scme_factories.write_output(
         "output_dimer_binding",
         initial_params=initial_params,
         optimal_params=optimal_params,

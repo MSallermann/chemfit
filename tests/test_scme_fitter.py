@@ -5,7 +5,7 @@ from scme_fitting.ase_objective_function import (
     EnergyObjectiveFunction,
     DimerDistanceObjectiveFunction,
 )
-from scme_fitting.scme_objective_function import (
+from scme_fitting.scme_factories import (
     SCMECalculatorFactory,
     SCMEParameterApplier,
 )
@@ -39,7 +39,7 @@ INITIAL_PARAMS = {k: dict(DEFAULT_PARAMS)[k] for k in ADJUSTABLE_PARAMS}
 
 
 def test_single_energy_objective_function():
-    scme_objective_function = EnergyObjectiveFunction(
+    scme_factories = EnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
         path_to_reference_configuration=REFERENCE_CONFIGS[10],
@@ -48,7 +48,7 @@ def test_single_energy_objective_function():
     )
 
     fitter = Fitter(
-        objective_function=scme_objective_function,
+        objective_function=scme_factories,
     )
 
     optimal_params = fitter.fit_scipy(
@@ -56,13 +56,13 @@ def test_single_energy_objective_function():
     )
 
     output_folder = Path("test_output_single_energy")
-    scme_objective_function.dump_test_configuration(output_folder)
+    scme_factories.dump_test_configuration(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
 
 
 def test_dimer_distance_objective_function():
-    scme_objective_function = DimerDistanceObjectiveFunction(
+    scme_factories = DimerDistanceObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
         path_to_reference_configuration=REFERENCE_CONFIGS[5],
@@ -73,7 +73,7 @@ def test_dimer_distance_objective_function():
     )
 
     fitter = Fitter(
-        objective_function=scme_objective_function,
+        objective_function=scme_factories,
     )
 
     # optimal_params = fitter.fit_nevergrad(initial_parameters=INITIAL_PARAMS, budget=50)
@@ -82,13 +82,13 @@ def test_dimer_distance_objective_function():
     )
 
     output_folder = Path("test_output_dimer_distance")
-    scme_objective_function.dump_test_configuration(output_folder)
+    scme_factories.dump_test_configuration(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
 
 
 def test_multi_energy_ob_function_fitting():
-    scme_objective_function = MultiEnergyObjectiveFunction(
+    scme_factories = MultiEnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
         path_to_reference_configuration_list=REFERENCE_CONFIGS,
@@ -97,14 +97,14 @@ def test_multi_energy_ob_function_fitting():
     )
 
     fitter = Fitter(
-        objective_function=scme_objective_function,
+        objective_function=scme_factories,
     )
 
     optimal_params = fitter.fit_scipy(
         initial_parameters=INITIAL_PARAMS, tol=0, options=dict(maxiter=50, disp=True)
     )
 
-    scme_objective_function.write_output(
+    scme_factories.write_output(
         "test_output_multi_energy",
         initial_params=INITIAL_PARAMS,
         optimal_params=optimal_params,
