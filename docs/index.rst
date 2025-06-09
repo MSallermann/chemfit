@@ -6,7 +6,7 @@
 SCMEFitting documentation
 =========================
 
-Welcome to the documentation of ``SCMEFitting``. Please not that it is a work in progress.
+Welcome to the documentation of ``SCMEFitting``. Please note that it is a work in progress.
 
 .. toctree::
    :maxdepth: 2
