@@ -63,7 +63,7 @@ From these pieces of information we can construct the objective function:
 
 
 Using the ``MultiEnergyObjectiveFunction``
-#########################################
+##############################################
 
 :py:class:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction` is used in much the same way as it's single energy counterpart.
 The only difference is that, instead of a single configuration/energy pair, it supports multiple - leading to an objective function value of
