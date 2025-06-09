@@ -2,9 +2,7 @@
 Overview
 #######################
 
-The SCMEFitting package's primary function is to aid in optimizing the free parameters of the "SCME 2.0"code by changing a specified set of free parameters until the computed potential energies match ab-initio results.
-
-**Beyond this goal**, the package is written in a flexible manner, which makes it possible to adjust the parameters of any ASE Calculator.
+The SCMEFitting package helps you tune the free parameters of the “SCME 2.0” code so that ASE-computed potential energies match ab-initio reference values *as close as possible*. **Beyond fitting just the SCME parameters**, it can drive the parameters of any ASE calculator via the same callback machinery.
 
 Objective functions
 #######################
