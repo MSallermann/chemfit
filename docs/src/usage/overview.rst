@@ -83,20 +83,9 @@ The key point, which makes these classes flexible, is that they take two factory
     As long as implementations of :py:class:`scme_fitting.ase_objective_function.CalculatorFactory` and :py:class:`scme_fitting.ase_objective_function.ParameterApplier` are provided, the objective functions work with *any* ASE calculator.
 
 
+SCME factory functions
+########################
 
-.. The builtin objective functions
-.. ##############################################
+Ready to use implementations of :py:class:`scme_fitting.ase_objective_function.CalculatorFactory` and :py:class:`scme_fitting.ase_objective_function.ParameterApplier` are provided in the :py:mod:`scme_fitting.scme_objective_function` module.
 
-.. The core utility provided by this package are the builtin objective functions. Currently, these are the provied objective functions
-
-.. :py:class:`scme_fitting.scme_objective_function.EnergyObjectiveFunction`:
-..     An objective function based on the squared energy difference, given by ``weight * (e_cur - e_target)**2`` 
-
-.. :py:class:`scme_fitting.scme_objective_function.DimerDistanceObjectiveFunction`:
-..     An objective function based on the squared Oxygen-Oxygen bond length difference (after relaxation) in a dimer of H2O molecules. Computed as ``weight * (rOO_cur - rOO_target)**2`` 
-
-.. :py:class:`scme_fitting.combined_objective_function.CombinedObjectiveFunction`:
-..     This is a utility class, used to add several objective functions (optionally weighing) them into a single combined objective function.
-
-.. :py:class:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction`:
-..     This is a utility class derived from CombinedObjectiveFunction. It is used to combine several reference configurations and energies into a single objective function.
+These should cover most use cases of fitting parameters in the SCME, but they can *of course* be extended to fit any individual task.
