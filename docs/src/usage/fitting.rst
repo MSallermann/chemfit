@@ -6,8 +6,8 @@ Fitting
 Using the ``EnergyObjectiveFunction``
 ########################################
 
-:py:class:`scme_fitting.scme_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
-It's main use is to serve as a building block for more complex objective functions.
+The class :py:class:`scme_fitting.ase_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
+Its main use is to serve as a building block for more complex objective functions.
 
 This objective function has the form
 
