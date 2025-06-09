@@ -7,7 +7,7 @@ Using the ``EnergyObjectiveFunction``
 ########################################
 
 :py:class:`scme_fitting.scme_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
-It's main use is to serve as a building block for more complex objective functions. See :ref:`dimer_binding` for an example.
+It's main use is to serve as a building block for more complex objective functions.
 
 This objective function has the form
 
