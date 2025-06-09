@@ -35,8 +35,11 @@ autodoc_default_options = {
     "undoc-members": True,
     "show-inheritance": True,
     "member-order": "groupwise",  # or 'alphabetical'
+    "separate" : True,
 }
 autodoc_mock_imports = ["pyscme"]
+
+add_module_names = False
 
 templates_path = ["_templates"]
 exclude_patterns = []
