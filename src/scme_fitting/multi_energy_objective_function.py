@@ -93,7 +93,6 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
     def write_output(
         self,
         folder_name: str,
-        default_params: dict[str, float],
         initial_params: dict[str, float],
         optimal_params: dict[str, float],
     ):
@@ -131,9 +130,6 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         )
         scme_fitting.utils.dump_dict_to_file(
             output_folder / "optimal_params.json", optimal_params
-        )
-        scme_fitting.utils.dump_dict_to_file(
-            output_folder / "default_params.json", dict(default_params)
         )
 
         for o in self.objective_functions:

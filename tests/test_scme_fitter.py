@@ -108,7 +108,6 @@ def test_multi_energy_ob_function_fitting():
         "test_output_multi_energy",
         initial_params=INITIAL_PARAMS,
         optimal_params=optimal_params,
-        default_params=dict(DEFAULT_PARAMS),
     )
 
 

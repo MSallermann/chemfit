@@ -12,6 +12,7 @@ SCMEFitting documentation
 
    src/installation
    src/usage/overview.rst
+   src/usage/ase_objective_function_api.rst
    src/usage/fitting.rst
    src/development/development.rst
    src/api/modules

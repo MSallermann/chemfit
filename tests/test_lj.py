@@ -74,7 +74,6 @@ def test_lj():
 
     ob.write_output(
         "test_lj_output",
-        default_params=initial_params,
         initial_params=initial_params,
         optimal_params=opt_params,
     )
