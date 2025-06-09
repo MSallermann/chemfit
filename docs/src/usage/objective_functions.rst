@@ -1,9 +1,9 @@
-#################
-Fitting
-#################
+##################################
+Predefined objective functions
+##################################
 
 
-Using the ``EnergyObjectiveFunction``
+The ``EnergyObjectiveFunction``
 ########################################
 
 The class :py:class:`scme_fitting.ase_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
@@ -62,7 +62,7 @@ From these pieces of information we can construct the objective function:
     val = objective_function( {"x" : 2.0, "y": 1.0} )
 
 
-Using the ``MultiEnergyObjectiveFunction``
+The ``MultiEnergyObjectiveFunction``
 ##############################################
 
 :py:class:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction` is used in much the same way as it's single energy counterpart.
@@ -113,7 +113,7 @@ It can be used like this
     )
 
 
-Using the ``CombinedObjectiveFunction``
+The ``CombinedObjectiveFunction``
 #########################################
 
 The :py:class:`scme_fitting.combined_objective_function.CombinedObjectiveFunction` class is used to turn a list of individual objective functions into a single objective function which is the (weighted) sum of the individual terms.
