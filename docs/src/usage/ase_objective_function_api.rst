@@ -105,8 +105,39 @@ The following code fits the "sigma" and "epsilon" parameters of the ``LennardJon
     print(opt_params)
 
 
-AtomsPostProcessor
+Optional factories
 ############################
+
+In the following some optional factories, besides **ParameterApplier** and **CalculatorFactory**, are described. 
+These can be used to make the **ASEObjectiveFunction** more flexible.
+
+AtomsFactory
+----------------------
+In the example above, the ``ase.Atoms`` object is created from a path to a configuration file.
+In some cases it might be required to have more fine grained control over the creation of the atoms object.
+For such situations :py:class:`scme_fitting.ase_objective_function.ASEObjectiveFunction` provides the option to pass an implementation 
+of an **AtomsFactory** protocol (defined in :py:class:`scme_fitting.ase_objective_function.AtomsFactory`) in the ``atoms_factory`` argument of the initializer (:py:meth:`scme_fitting.ase_objective_function.ASEObjectiveFunction`).
+
+.. note::
+    Under the hood the ``path_to_reference_configuration`` argument is just a convenient way to construct a :py:class:`scme_fitting.ase_objective_function.PathAtomsFactory`
+
+.. warning::
+    If both ``atoms_factory`` and ``path_to_reference_configuration`` are specified, ``atoms_factory`` takes precedence.
+
+One example, where we might want to specify the ``atoms_factory`` explicitly is when the index of the image in the reference file is not ``0``:
+
+.. code-block:: python
+
+    from scme_fitting.ase_objective_function import EnergyObjectiveFunction, PathAtomsFactory
+
+    # explicitly instantiate the PathAtomsFactory to read the second image in 'atoms.xyz'
+    ob = EnergyObjectiveFunction( 
+        # ... pass all other args
+        atoms_factory = PathAtomsFactory(path="atoms.xyz", index=1) 
+    )
+
+AtomsPostProcessor
+----------------------
 
 An optional **AtomsPostProcessor** runs on the raw Atoms immediately after loading (before the calculator is attached). Its signature is
 
@@ -128,4 +159,4 @@ Example: trivial post-processor
         com = atoms.get_center_of_mass()
         atoms.positions -= com
 
-It is passed to the initializer of :py:class:`scme_fitting.ASEObjectiveFunction`.
+It is passed to the initializer of :py:class:`scme_fitting.ase_objective_function.ASEObjectiveFunction`.
