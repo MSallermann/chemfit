@@ -127,11 +127,12 @@ Pass the objective function to an instance of the ``Fitter`` class and write som
 
     fitter = Fitter(
         objective_function=scme_factories,
+        initial_params = initial_params
     )
 
-    # All keyword arguments except `initial_parameters` get forwarded to scipy.minimize
+    # All keyword arguments get forwarded to scipy.minimize
     optimal_params = fitter.fit_scipy(
-        initial_parameters=initial_params, tol=1e-4, options=dict(maxiter=50, disp=True)
+        tol=1e-4, options=dict(maxiter=50, disp=True)
     )
 
     # After the fit, this will write some useful outputs

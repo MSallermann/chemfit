@@ -56,13 +56,14 @@ In this simple example we define a quadratic objective function with two degrees
 
     from scme_fitting import Fitter
 
+    initial_params = dict(x=0.0, y=0.0)
+
     def ob(params):
         return 2.0 * (params["x"] - 2) ** 2 + 3.0 * (params["y"] + 1) ** 2
 
-    fitter = Fitter(objective_function=ob)
+    fitter = Fitter(objective_function=ob, initial_params=initial_params)
 
-    initial_params = dict(x=0.0, y=0.0)
-    optimal_params = fitter.fit_scipy(initial_parameters=initial_params)
+    optimal_params = fitter.fit_scipy()
 
     # We expect x=2.0 and y=-1.0
     print(f"{optimal_params = }")

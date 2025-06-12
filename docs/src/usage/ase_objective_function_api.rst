@@ -96,11 +96,11 @@ The following code fits the "sigma" and "epsilon" parameters of the ``LennardJon
         reference_energy_list=energies,
     )
 
-    fitter = Fitter(ob)
-
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
-    opt_params = fitter.fit_scipy(initial_params, options=dict(disp=True, tol=1e-5))
+    fitter = Fitter(ob, initial_params)
+
+    opt_params = fitter.fit_scipy( options=dict(disp=True))
 
     print(opt_params)
 

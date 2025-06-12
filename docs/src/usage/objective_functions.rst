@@ -102,9 +102,9 @@ It can be used like this
 
 .. code-block:: python
 
-    initial_params = {"x": 1.0, "y": 1.0}
+    fitter = Fitter(objective_function, initial_params={"x": 1.0, "y": 1.0})
 
-    opt_params = fitter.fit_scipy(initial_params, options=dict(disp=True, tol=1e-5))
+    opt_params = fitter.fit_scipy(options=dict(disp=True, tol=1e-5))
 
     objective_function.write_output(
         "test_my_calculator_output",
