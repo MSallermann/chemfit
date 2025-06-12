@@ -47,13 +47,9 @@ def test_single_energy_objective_function():
         tag=TAGS[10],
     )
 
-    fitter = Fitter(
-        objective_function=scme_factories,
-    )
+    fitter = Fitter(objective_function=scme_factories, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(
-        initial_parameters=INITIAL_PARAMS, tol=1e-4, options=dict(maxiter=50, disp=True)
-    )
+    optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
 
     output_folder = Path("test_output_single_energy")
     scme_factories.dump_test_configuration(output_folder)
@@ -72,14 +68,9 @@ def test_dimer_distance_objective_function():
         tag="dimer_distance",
     )
 
-    fitter = Fitter(
-        objective_function=scme_factories,
-    )
+    fitter = Fitter(objective_function=scme_factories, initial_params=INITIAL_PARAMS)
 
-    # optimal_params = fitter.fit_nevergrad(initial_parameters=INITIAL_PARAMS, budget=50)
-    optimal_params = fitter.fit_scipy(
-        initial_parameters=INITIAL_PARAMS, tol=1e-4, options=dict(maxiter=50, disp=True)
-    )
+    optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
 
     output_folder = Path("test_output_dimer_distance")
     scme_factories.dump_test_configuration(output_folder)
@@ -96,13 +87,9 @@ def test_multi_energy_ob_function_fitting():
         tag_list=TAGS,
     )
 
-    fitter = Fitter(
-        objective_function=scme_factories,
-    )
+    fitter = Fitter(objective_function=scme_factories, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(
-        initial_parameters=INITIAL_PARAMS, tol=0, options=dict(maxiter=50, disp=True)
-    )
+    optimal_params = fitter.fit_scipy(tol=0, options=dict(maxiter=50, disp=True))
 
     scme_factories.write_output(
         "test_output_multi_energy",

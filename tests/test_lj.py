@@ -44,11 +44,10 @@ def test_lj():
         path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
     )
 
-    fitter = Fitter(ob)
-
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
-    opt_params = fitter.fit_scipy(initial_params, options=dict(disp=True, tol=1e-5))
+    fitter = Fitter(ob, initial_params=initial_params)
+    opt_params = fitter.fit_scipy(options=dict(disp=True))
 
     print(opt_params)
 
