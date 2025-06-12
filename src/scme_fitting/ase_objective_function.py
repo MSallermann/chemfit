@@ -1,6 +1,6 @@
 from ase import Atoms
 from ase.io import read, write
-from typing import Optional, Dict, Callable, Union, Protocol, Any
+from typing import Optional, Dict, Callable, Union, Protocol
 from pathlib import Path
 import json
 import abc
@@ -23,18 +23,6 @@ class CalculatorFactory(Protocol):
         ...
 
 
-class AtomsPostProcessor(Protocol):
-    """
-    Protocol for a function that post-processes an ASE Atoms object.
-
-    Methods:
-        __call__(atoms): Performs in-place modifications or checks on the Atoms object.
-    """
-
-    def __call__(self, atoms: Atoms) -> None:  # pragma: no cover
-        ...
-
-
 class ParameterApplier(Protocol):
     """
     Protocol for a function that applies parameters to an ASE calculator.
@@ -47,6 +35,45 @@ class ParameterApplier(Protocol):
         self, atoms: Atoms, params: Dict[str, float]
     ) -> None:  # pragma: no cover
         ...
+
+
+class AtomsPostProcessor(Protocol):
+    """
+    Protocol for a function that post-processes an ASE Atoms object.
+
+    Methods:
+        __call__(atoms): Performs in-place modifications or checks on the Atoms object.
+    """
+
+    def __call__(self, atoms: Atoms) -> None:  # pragma: no cover
+        ...
+
+
+class AtomsFactory(Protocol):
+    """
+    Protocol for a function that creates an ASE Atoms object.
+
+    Methods:
+        __call__(): Creates the atoms object
+    """
+
+    def __call__(self) -> Atoms:  # pragma: no cover
+        ...
+
+
+class PathAtomsFactory:
+    """Implementation of AtomsFactory which reads the atoms from a path."""
+
+    from ase.io import read
+
+    def __init__(self, path: Path, index: Optional[int] = None):
+        self.path = path
+        self.index = index
+
+    def __call__(self) -> Atoms:
+        logger.debug(f"Loading configuration from {self.path}")
+        self.atoms = read(self.path, self.index)
+        return self.atoms
 
 
 class ASEObjectiveFunction(abc.ABC):
@@ -75,11 +102,12 @@ class ASEObjectiveFunction(abc.ABC):
         self,
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
-        path_to_reference_configuration: Path,
+        path_to_reference_configuration: Optional[Path] = None,
         tag: Optional[str] = None,
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
         divide_by_n_atoms: bool = False,
+        atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ) -> None:
         """
@@ -88,15 +116,19 @@ class ASEObjectiveFunction(abc.ABC):
         Args:
             calc_factory: Factory to create an ASE calculator given an `Atoms` object.
             param_applier: Function that applies a dict of parameters to `atoms.calc`.
-            path_to_reference_configuration: Path to an ASE-readable file (e.g., .xyz) containing
+            path_to_reference_configuration: Optional path to an ASE-readable file (e.g., .xyz) containing
                 the molecular configuration. Only the first snapshot is used.
             tag: Optional label for this objective. Defaults to "tag_None" if None.
             weight: Base weight for this objective. Must be non-negative.
             weight_cb: Optional callback that returns a non-negative scaling factor
                 given the `Atoms` object. The base weight is multiplied by this factor.
             divide_by_n_atoms: If True, weight is further divided by the number of atoms.
+            atoms_factory: Optional[AtomsFactory] Optional function to create the Atoms object.
             atoms_post_processor: Optional function to modify or validate the Atoms object
                 immediately after loading and before attaching the calculator.
+
+        **Important**: One of `atoms_factory` or `path_to_reference_configuration` has to be specified.
+        If both are specified `atoms_factory` takes precedence.
 
         Raises:
             AssertionError: If `weight` is negative or if `weight_cb` returns a negative value.
@@ -106,12 +138,21 @@ class ASEObjectiveFunction(abc.ABC):
         self.atoms_post_processor = atoms_post_processor
 
         self.tag = tag or "tag_None"
-        self.paths_to_reference_configuration = path_to_reference_configuration
+
+        # If no custom `atoms_factory` has been supplied, we try to create a `PathAtomsFactory` from the path to the reference configuration
+        if atoms_factory is None:
+            if path_to_reference_configuration is None:
+                raise Exception(
+                    "Neither `path_to_reference_configuration` nor a custom `atoms_factory` has been supplied"
+                )
+            self.atoms_factory = PathAtomsFactory(
+                path_to_reference_configuration, index=0
+            )
+        else:
+            self.atoms_factory = atoms_factory
 
         # Load and prepare Atoms object
-        self.atoms = self.create_atoms_object_from_configuration(
-            path_to_reference_configuration
-        )
+        self.atoms = self.create_atoms_object()
         self.n_atoms = len(self.atoms)
 
         # Validate and apply weight callback
@@ -148,7 +189,6 @@ class ASEObjectiveFunction(abc.ABC):
         name = f"atoms_{self.tag}.xyz"
         return {
             "tag": self.tag,
-            "original_file": str(self.paths_to_reference_configuration),
             "saved_file": name,
             "n_atoms": self.n_atoms,
             "weight": self.weight,
@@ -172,22 +212,18 @@ class ASEObjectiveFunction(abc.ABC):
         with open(path_to_folder / f"meta_{self.tag}.json", "w") as f:
             json.dump(meta_data, f, indent=4)
 
-    def create_atoms_object_from_configuration(
-        self, path_to_configuration: Path
-    ) -> Atoms:
+    def create_atoms_object(self) -> Atoms:
         """
-        Load an ASE Atoms object, optionally post-process it, and attach the calculator.
-
-        Args:
-            path_to_configuration: Path to an ASE-readable structure file (e.g., .xyz).
+        Create the atoms object, check it, optionally post-processes it, and attach the calculator.
 
         Returns:
             Atoms: ASE Atoms object with calculator attached.
         """
-        logger.debug(f"Loading configuration from {path_to_configuration}")
 
-        atoms = read(path_to_configuration, index=0)
+        atoms = self.atoms_factory()
+
         self.check_atoms(atoms)
+
         if self.atoms_post_processor is not None:
             self.atoms_post_processor(atoms)
 
@@ -246,12 +282,13 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         self,
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
-        path_to_reference_configuration: Path,
         reference_energy: float,
+        path_to_reference_configuration: Optional[Path] = None,
         tag: Optional[str] = None,
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
         divide_by_n_atoms: bool = False,
+        atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ):
         """
@@ -266,6 +303,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
             weight: Base weight for the error term.
             weight_cb: Optional weight-scaling callback.
             divide_by_n_atoms: If True, normalize weight by atom count.
+            atoms_factory: Optional function to process the Atoms object after loading.
             atoms_post_processor: Optional function to process the Atoms object after loading.
         """
         self.reference_energy = reference_energy
@@ -277,6 +315,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
             weight=weight,
             weight_cb=weight_cb,
             divide_by_n_atoms=divide_by_n_atoms,
+            atoms_factory=atoms_factory,
             atoms_post_processor=atoms_post_processor,
         )
 
@@ -323,8 +362,8 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         self,
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
-        path_to_reference_configuration: Path,
         reference_OO_distance: float,
+        path_to_reference_configuration: Optional[Path] = None,
         dt: float = 1e-2,
         fmax: float = 1e-5,
         max_steps: int = 2000,
@@ -333,6 +372,7 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
         divide_by_n_atoms: bool = False,
+        atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ):
         """
@@ -351,6 +391,7 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             weight: Base weight for the error term.
             weight_cb: Optional weight-scaling callback.
             divide_by_n_atoms: If True, normalize weight by atom count.
+            atoms_factory: Optional function to create Atoms object.
             atoms_post_processor: Optional function to process the Atoms object after loading.
         """
         self.reference_OO_distance = reference_OO_distance
@@ -366,6 +407,7 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             weight=weight,
             weight_cb=weight_cb,
             divide_by_n_atoms=divide_by_n_atoms,
+            atoms_factory=atoms_factory,
             atoms_post_processor=atoms_post_processor,
         )
         self.positions_reference = np.array(self.atoms.positions)
