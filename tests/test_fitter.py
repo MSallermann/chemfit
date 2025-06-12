@@ -17,7 +17,12 @@ def test_with_square_func():
     obj_func = CombinedObjectiveFunction([cont1, cont2])
 
     initial_params = dict(x=0.0, y=0.0)
-    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
+    fitter = Fitter(
+        objective_function=obj_func,
+        initial_params=initial_params,
+    )
+
+    fitter.bounds = {"x": (-1e1, 1e1), "y": (-1e1, 1e1)}
 
     optimal_params = fitter.fit_scipy()
 
@@ -26,8 +31,13 @@ def test_with_square_func():
     assert np.isclose(optimal_params["y"], -1.0)
 
     optimal_params = fitter.fit_nevergrad(budget=100)
+    print(f"{optimal_params = }")
 
-    print(optimal_params)
+    assert np.isclose(optimal_params["x"], 2.0, atol=1e-2)
+    assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
+
+    optimal_params = fitter.fit_optuna(n_trials=100)
+    print(f"{optimal_params = }")
     assert np.isclose(optimal_params["x"], 2.0, atol=1e-2)
     assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
 

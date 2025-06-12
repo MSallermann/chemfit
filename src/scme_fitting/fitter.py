@@ -91,6 +91,36 @@ class Fitter:
 
         return opt_params
 
+    def fit_optuna(self, n_trials: int, **kwargs) -> Dict:
+        import optuna
+        from optuna.trial import Trial
+
+        for k in self._keys:
+            if k not in self.bounds:
+                raise Exception(
+                    f"Parameter {k} has no bounds specified. The Optuna backends requires bounds for every parameter."
+                )
+
+        def objective(trial: Trial):
+            params = {}
+            # for the very first trial, we use the initial parameters
+            if trial.number == 0:
+                for k, v in self.initial_parameters.items():
+                    params[k] = trial.suggest_float(k, low=v, high=v)
+            else:
+                # else we use the suggest_float mechanism with the specified bounds
+                for k, v in self.initial_parameters.items():
+                    lower, upper = self.bounds[k]
+                    params[k] = trial.suggest_float(k, low=lower, high=upper)
+            return self.objective_function(params)
+
+        study = optuna.create_study(**kwargs)
+        study.optimize(objective, n_trials=n_trials)
+
+        opt_params = study.best_params
+
+        return opt_params
+
     def fit_scipy(self, **kwargs) -> Dict:
         """
         Optimize parameters using SciPy's minimize function.
