@@ -13,7 +13,7 @@ Repository = "https://github.com/MSallermann/SCMEFitting"
 [project.optional-dependencies]
 build_docs = [
     "sphinx",
-    "sphinx_rtd_theme",
+    "furo",
     "sphinxcontrib-napoleon",
     "sphinx-autobuild",
 ]
