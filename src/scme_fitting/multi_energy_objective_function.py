@@ -2,6 +2,8 @@ from scme_fitting.ase_objective_function import (
     EnergyObjectiveFunction,
     CalculatorFactory,
     ParameterApplier,
+    AtomsFactory,
+    AtomsPostProcessor,
 )
 from scme_fitting.combined_objective_function import CombinedObjectiveFunction
 import scme_fitting.plot_utils
@@ -9,7 +11,7 @@ import scme_fitting.utils
 
 from pathlib import Path
 
-from typing import Optional
+from typing import Optional, Union
 import logging
 import pandas as pd
 
@@ -34,11 +36,12 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
         tag_list: list[str],
-        path_to_reference_configuration_list: list[Path],
         reference_energy_list: list[float],
+        path_or_factory_list: list[Union[Path, AtomsFactory]],
         divide_by_n_atoms: bool = False,
         weight_list: Optional[list[float]] = None,
         plot_initial: bool = False,
+        atom_post_processor_list: Optional[list[AtomsPostProcessor]] = None,
     ):
         """
         Initialize a MultiEnergyObjectiveFunction by constructing individual EnergyObjectiveFunctions.
@@ -50,10 +53,10 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         Args:
             tag_list (list[str]):
                 A list of labels (tags) for each reference configuration (e.g., "cluster1", "bulk").
-            path_to_reference_configuration_list (list[Path]):
-                A list of filesystem paths, each pointing to a reference configuration file.
             reference_energy_list (list[float]):
                 A list of target energies corresponding to each reference configuration.
+            path_or_factory_list (list[Union[Path, AtomsFactory]]):
+                A list of filesystem paths, each pointing to a reference configuration file.
             divide_by_n_atoms (bool, default False):
                 If True, energies will be normalized by the number of atoms in each configuration.
             weight_list (Optional[list[float]], optional):
@@ -74,19 +77,40 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
 
         ob_funcs: list[EnergyObjectiveFunction] = []
 
-        for t, p_ref, e_ref in zip(
-            tag_list, path_to_reference_configuration_list, reference_energy_list
+        if atom_post_processor_list is None:
+            atom_post_processor_list = [None] * len(path_or_factory_list)
+
+        for t, p_ref, e_ref, post_proc in zip(
+            tag_list,
+            path_or_factory_list,
+            reference_energy_list,
+            atom_post_processor_list,
         ):
-            ob_funcs.append(
-                EnergyObjectiveFunction(
+            # First try to find out if p_ref is just a path,
+            # or the more general AtomsFactory
+            # depending on which it is, we call the constructor differently
+            if isinstance(p_ref, Path):
+                ob = EnergyObjectiveFunction(
                     calc_factory=self.calc_factory,
                     param_applier=self.param_applier,
                     path_to_reference_configuration=p_ref,
                     reference_energy=e_ref,
                     divide_by_n_atoms=divide_by_n_atoms,
                     tag=t,
+                    atoms_post_processor=post_proc,
                 )
-            )
+            else:
+                ob = EnergyObjectiveFunction(
+                    calc_factory=self.calc_factory,
+                    param_applier=self.param_applier,
+                    atoms_factory=p_ref,
+                    reference_energy=e_ref,
+                    divide_by_n_atoms=divide_by_n_atoms,
+                    tag=t,
+                    atoms_post_processor=post_proc,
+                )
+
+            ob_funcs.append(ob)
 
         super().__init__(ob_funcs, weight_list)
 

@@ -91,7 +91,7 @@ def test_multi_energy_ob_function_fitting():
     scme_factories = MultiEnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
-        path_to_reference_configuration_list=REFERENCE_CONFIGS,
+        path_or_factory_list=REFERENCE_CONFIGS,
         reference_energy_list=REFERENCE_ENERGIES,
         tag_list=TAGS,
     )

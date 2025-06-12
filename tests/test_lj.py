@@ -60,7 +60,7 @@ def test_lj():
         calc_factory=construct_lj,
         param_applier=apply_params_lj,
         tag_list=tags,
-        path_to_reference_configuration_list=paths,
+        path_or_factory_list=paths,
         reference_energy_list=energies,
     )
 
