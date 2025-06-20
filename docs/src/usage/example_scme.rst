@@ -45,7 +45,7 @@ Here is an example of how the default params can be constructed:
     from scme_fitting.scme_setup import SCMEParams
 
     # We construct an SCMEParams instance, explicitly setting some parameters the others are set to the defaults specified in SCMEParams
-    SCMEParams(
+    default_params = SCMEParams(
         Ar_OO=299.5695377280358,
         Br_OO=-0.14632711560656822,
         Cr_OO=-2.0071714442805715,
