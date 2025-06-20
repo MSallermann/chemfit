@@ -17,12 +17,21 @@ def next_free_folder(base: Path) -> Path:
         i += 1
 
 
+class ExtendedJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, Path):
+            return str(o)
+        else:
+            super().default(o)
+
+
 def dump_dict_to_file(file: Path, dictionary: dict) -> None:
     """
     Write `dictionary` as JSON to `file` (with indent=4).
     """
+    file.parent.mkdir(exist_ok=True, parents=True)
     with open(file, "w") as f:
-        json.dump(dictionary, f, indent=4)
+        json.dump(dictionary, f, indent=4, cls=ExtendedJSONEncoder)
 
 
 def create_initial_params(
