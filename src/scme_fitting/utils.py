@@ -4,11 +4,14 @@ import json
 
 def next_free_folder(base: Path) -> Path:
     """
-    If 'base' does not exist, return 'base'. Otherwise attempt 'base_0', 'base_1', etc.
-    until finding a non‐existent Path, then return that.
+    If 'path/to/base' does not exist, return 'path/to/base'. Otherwise attempt 'path/to/base_0', 'path/to/base_1', etc.
+    until finding a non-existent Path, then return that.
     """
+    base = Path(base)
+
     if not base.exists():
         return base
+
     i = 0
     while True:
         candidate = base.with_name(f"{base.name}_{i}")
