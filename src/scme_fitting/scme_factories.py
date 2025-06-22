@@ -32,6 +32,11 @@ class SCMECalculatorFactory:
 
         scme_params_copy = self.default_scme_params.model_copy()
 
+        logger.debug("Setting up calculator")
+        logger.debug(f"    {self.default_scme_params = }")
+        logger.debug(f"    {self.path_to_scme_expansions = }")
+        logger.debug(f"    {self.parametrization_key = }")
+
         setup_calculator(
             atoms,
             scme_params=scme_params_copy,
