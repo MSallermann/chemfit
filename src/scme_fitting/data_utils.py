@@ -1,7 +1,44 @@
 from pathlib import Path
 import pandas as pd
+from typing import Union
+from collections.abc import Sequence
 
-def process_csv(path_to_csv: Path) -> tuple[list[Path], list[str], list[float]]:
+
+def process_csv(
+    paths_to_csv: Union[Path, Sequence[Path]],
+) -> tuple[list[Path], list[str], list[float]]:
+    """Load a dataset CSV and extract file paths, tags, and reference energies.
+    If a list of paths is passed it forwards them one by one to `process_single_csv` and collects
+    the results.
+
+    Args:
+        paths_to_csv (Union[Path, Sequence[Path]]): Either a single path to a CSV for a list of paths
+
+    Returns:
+        tuple[list[Path], list[str], list[float]]:
+        - **paths**: List of resolved `Path` objects to each data file.
+        - **tags**: List of dataset tag strings.
+        - **energies**: List of reference energies as floats.
+    """
+
+    # If it is a single path we just process it
+    if isinstance(paths_to_csv, Path):
+        return process_single_csv(paths_to_csv)
+
+    paths = []
+    tags = []
+    energies = []
+
+    for path_to_csv in paths_to_csv:
+        p, t, e = process_single_csv(path_to_csv)
+        paths += p
+        tags += t
+        energies += e
+
+    return paths, tags, energies
+
+
+def process_single_csv(path_to_csv: Path) -> tuple[list[Path], list[str], list[float]]:
     """Load a dataset CSV and extract file paths, tags, and reference energies.
 
     The CSV must include the following columns:

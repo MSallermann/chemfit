@@ -21,7 +21,10 @@ from pathlib import Path
 logging.basicConfig(filename="test_scme_fitter.log", level=logging.DEBUG)
 
 ### Common to all tests
-PATH_TO_CSV = Path(__file__).parent / "test_configurations_scme/energies.csv"
+PATH_TO_CSV = [
+    Path(__file__).parent / "test_configurations_scme/energies.csv",
+    Path(__file__).parent / "test_configurations_scme/energies2.csv",
+]
 REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)
 
 DEFAULT_PARAMS = SCMEParams(
