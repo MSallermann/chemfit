@@ -1,5 +1,7 @@
 from typing import Sequence, Callable, Optional, Self, Union, Dict
 from collections.abc import Sequence as ABCSequence
+from scme_fitting.sequential_executor import SequentialExecutor
+from concurrent.futures import as_completed
 
 
 class CombinedObjectiveFunction:
@@ -31,6 +33,10 @@ class CombinedObjectiveFunction:
             AssertionError: If `weights` is provided but its length differs from the number of
                 objective functions, or if any weight is negative.
         """
+
+        self.ExecutorCls = SequentialExecutor
+        self.max_workers = 1
+
         # Convert to list internally for mutability
         self.objective_functions: list[Callable[[Dict[str, float]], float]] = list(
             objective_functions
@@ -176,6 +182,9 @@ class CombinedObjectiveFunction:
 
         return cls(total_objective_functions, total_weights)
 
+    def contrib(self, idx, weight, params):
+        return self.objective_functions[idx](params) * weight
+
     def __call__(self, params: Dict[str, float]) -> float:
         """
         Evaluate the combined objective at a given parameter dictionary.
@@ -192,8 +201,14 @@ class CombinedObjectiveFunction:
         """
         total: float = 0.0
 
-        for idx, weight in enumerate(self.weights):
-            p_copy = params.copy()
-            total += self.objective_functions[idx](p_copy) * weight
+        with self.ExecutorCls(max_workers=self.max_workers) as executor:
+            futures = []
+            for idx, weight in enumerate(self.weights):
+                futures.append(
+                    executor.submit(self.contrib, idx=idx, weight=weight, params=params)
+                )
+
+            for f in as_completed(futures):
+                total += f.result()
 
         return total
