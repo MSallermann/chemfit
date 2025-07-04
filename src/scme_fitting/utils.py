@@ -45,13 +45,37 @@ def create_initial_params(
     return {k: dict(default_params)[k] for k in adjustable_params}
 
 
-# groked from here https://stackoverflow.com/a/6027615
-def flatten_dict(dictionary: dict, parent_key: str = "", sep: str = ".") -> dict:
+def iterate_nested_dict(d, subkeys: list[str] = []):
+    """Iterates over a nested dict
+
+    Args:
+        dictionary (dict): The input dictionary
+        subkeys (list[str], optional): The current list of subkeys. Only used for the recursive implementation
+
+    Example:
+        >>> inp = {"a": {"b": 1.0, "c": 2.0, "d": {"e": "test"}}, "f": [1, 2]}
+        >>> for keys, value in iterate_nested_dict(inp):
+        >>>     print(keys, value)
+        >>> ['a', 'b'] 1.0
+            ['a', 'c'] 2.0
+            ['a', 'd', 'e'] test
+            ['f'] [1, 2]
+    """
+
+    for key, value in d.items():
+        if isinstance(value, MutableMapping):
+            yield from iterate_nested_dict(
+                value, subkeys=subkeys + [key]
+            )  # Recursively yield from sub-dictionary
+        else:
+            yield subkeys + [key], value
+
+
+def flatten_dict(dictionary: dict, sep: str = ".") -> dict:
     """Flatten a nested dictionary into a flat dictionary by inserting a separator between sub keys.
 
     Args:
         dictionary (dict): The input dictionary
-        parent_key (str, optional): Thee parent key. Defaults to "". Used for recursive implementation
         separator (str, optional): The separator to insert between keys. Defaults to ".".
 
     Returns:
@@ -63,17 +87,16 @@ def flatten_dict(dictionary: dict, parent_key: str = "", sep: str = ".") -> dict
         >>> print(out)
         >>> {'a.b': 1.0, 'a.c': 2.0, 'a.d.e': 'test', 'f': [1, 2]}
     """
-    items = []
-    for key, value in dictionary.items():
-        new_key = parent_key + sep + key if parent_key else key
-        if isinstance(value, MutableMapping):
-            items.extend(flatten_dict(value, new_key, sep=sep).items())
-        else:
-            items.append((new_key, value))
-    return dict(items)
+    res = {}
+    for keys, value in iterate_nested_dict(dictionary):
+        key_out = sep.join(keys)
+        res[key_out] = value
+    return res
 
 
-def _insert_value(dictionary: dict, keys: list[str], value: Any):
+def set_nested_value(
+    dictionary: dict, keys: list[str], value: Any, subdict_factory=dict
+):
     # Base case: just insert
     if len(keys) <= 1:
         dictionary[keys[0]] = value
@@ -81,8 +104,28 @@ def _insert_value(dictionary: dict, keys: list[str], value: Any):
         # recursion
         first_key = keys[0]
         if first_key not in dictionary:
-            dictionary[first_key] = {}
-        _insert_value(dictionary=dictionary[first_key], keys=keys[1:], value=value)
+            dictionary[first_key] = subdict_factory()
+        set_nested_value(dictionary=dictionary[first_key], keys=keys[1:], value=value)
+
+
+def has_nested_value(dictionary: dict, keys: list[str]):
+    # Base case
+    if len(keys) <= 1:
+        return keys[0] in dictionary
+    else:
+        first_key = keys[0]
+        return get_nested_value(dictionary=dictionary[first_key], keys=keys[1:])
+
+
+def get_nested_value(dictionary: dict, keys: list[str], default=None):
+    # Base case
+    if len(keys) <= 1:
+        return dictionary.get(keys[0], default)
+    else:
+        first_key = keys[0]
+        return get_nested_value(
+            dictionary=dictionary[first_key], keys=keys[1:], default=default
+        )
 
 
 def unflatten_dict(dictionary: dict, sep: str = ".") -> dict:
@@ -104,5 +147,5 @@ def unflatten_dict(dictionary: dict, sep: str = ".") -> dict:
     res = {}
     for key, value in dictionary.items():
         subkeys = key.split(sep)
-        _insert_value(dictionary=res, keys=subkeys, value=value)
+        set_nested_value(dictionary=res, keys=subkeys, value=value)
     return res
