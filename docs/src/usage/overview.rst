@@ -43,7 +43,7 @@ A minimal ``Fitter`` example
 
 Performing a fit with this package generally involves three steps:
 
-#. Create an *objective function*. This may be any function or callable object, where the ``__call__`` operator has the signature ``f(params : dict[str, float]) -> float``.
+#. Create an *objective function*. This may be any function or callable object, where the ``__call__`` operator has the signature ``f(params : dict) -> float``.
 
 #. Create an instance of a :py:class:`scme_fitting.fitter.Fitter` object, giving the objective function in the initializer
 
