@@ -41,7 +41,7 @@ A **ParameterApplier** updates the attached calculator's internal parameters bef
 
     from ase import Atoms
 
-    applier(atoms: ase.Atoms, params: dict[str,float]) -> None
+    applier(atoms: ase.Atoms, params: dict) -> None
 
 
 Example: LJ parameter applier

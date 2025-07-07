@@ -1,6 +1,6 @@
 from ase import Atoms
 from ase.io import read, write
-from typing import Optional, Dict, Callable, Union, Protocol
+from typing import Optional, Callable, Union, Protocol, Any
 from pathlib import Path
 import json
 import abc
@@ -32,7 +32,7 @@ class ParameterApplier(Protocol):
     """
 
     def __call__(
-        self, atoms: Atoms, params: Dict[str, float]
+        self, atoms: Atoms, params: dict
     ) -> None:  # pragma: no cover
         ...
 
@@ -174,12 +174,12 @@ class ASEObjectiveFunction(abc.ABC):
 
         self.weight = weight
 
-    def get_meta_data(self) -> Dict[str, Union[str, int, float]]:
+    def get_meta_data(self) -> dict[str, Union[str, int, float]]:
         """
         Retrieve metadata for this objective function.
 
         Returns:
-            Dict[str, Union[str, int, float]]: Dictionary containing:
+            dict[str, Union[str, int, float]]: Dictionary containing:
                 tag: User-defined label.
                 original_file: Path to the input configuration.
                 saved_file: Filename for writing the atoms.
@@ -231,7 +231,7 @@ class ASEObjectiveFunction(abc.ABC):
 
         return atoms
 
-    def get_energy(self, parameters: Dict[str, float]) -> float:
+    def get_energy(self, parameters: dict) -> float:
         """
         Compute the potential energy for a given set of parameters.
 
@@ -260,7 +260,7 @@ class ASEObjectiveFunction(abc.ABC):
         return True
 
     @abc.abstractmethod
-    def __call__(self, parameters: Dict[str, float]) -> float:
+    def __call__(self, parameters: dict) -> float:
         """
         Compute the objective value given a set of parameters.
 
@@ -319,19 +319,19 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
             atoms_post_processor=atoms_post_processor,
         )
 
-    def get_meta_data(self) -> Dict[str, object]:
+    def get_meta_data(self) -> dict[str, Any]:
         """
         Extend parent metadata with reference energy.
 
         Returns:
-            Dict[str, object]: Metadata from the parent, plus:
+            dict[str, Any]: Metadata from the parent, plus:
                 reference_energy: Target reference energy.
         """
         data = super().get_meta_data()
         data["reference_energy"] = self.reference_energy
         return data
 
-    def __call__(self, parameters: Dict[str, float]) -> float:
+    def __call__(self, parameters: dict) -> float:
         """
         Compute squared-error contribution to the objective:
         (E_computed(parameters) - E_reference)^2 * weight.
@@ -412,21 +412,21 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         )
         self.positions_reference = np.array(self.atoms.positions)
 
-    def get_meta_data(self) -> Dict[str, object]:
+    def get_meta_data(self) -> dict[str, Any]:
         """
         Extend metadata with current and target O-O distances.
 
         Returns:
-            Dict[str, object]: Metadata including:
-                oo_distance: Current relaxed O-O distance.
-                reference_OO_distance: Target O-O distance.
+            dict[str, Any]: Metadata including:
+            oo_distance: Current relaxed O-O distance.
+            reference_OO_distance: Target O-O distance.
         """
         data = super().get_meta_data()
         data["oo_distance"] = getattr(self, "OO_distance", 0.0)
         data["reference_OO_distance"] = self.reference_OO_distance
         return data
 
-    def __call__(self, parameters: Dict[str, float]) -> float:
+    def __call__(self, parameters: dict) -> float:
         """
         Apply parameters, optionally add noise, relax the dimer, and compute error.
 
