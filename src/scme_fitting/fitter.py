@@ -3,10 +3,11 @@ from typing import Callable
 import numpy as np
 from typing import Dict, Optional
 import time
-from scme_fitting.utils import (
-    iterate_nested_dict,
-    set_nested_value,
-    get_nested_value,
+
+from pydictnest import (
+    set_nested,
+    get_nested,
+    items_nested,
     flatten_dict,
     unflatten_dict,
 )
@@ -76,11 +77,11 @@ class Fitter:
 
         # Nevergrad supports nested dictionaries (as long as each key corresponds to a parameter)
         # Therefore, we use `ng.p.Dict` as the subdict factory and everything works, even with nested dictionaries
-        for k, v in iterate_nested_dict(self.initial_parameters):
+        for k, v in items_nested(self.initial_parameters):
             # If `k` is in bounds, fetch the lower and upper bound
             # It `k` is not in bounds just put lower=None and upper=None
-            lower, upper = get_nested_value(self.bounds, k, (None, None))
-            set_nested_value(
+            lower, upper = get_nested(self.bounds, k, (None, None))
+            set_nested(
                 ng_params,
                 k,
                 ng.p.Scalar(v, lower=lower, upper=upper),
