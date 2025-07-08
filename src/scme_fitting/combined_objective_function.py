@@ -188,7 +188,7 @@ class CombinedObjectiveFunction:
         return cls(total_objective_functions, total_weights)
 
     def __call__(
-        self, params: Dict[str, float], idx_slice: slice = slice(None, None, None)
+        self, params: dict, idx_slice: slice = slice(None, None, None)
     ) -> float:
         """
         Evaluate the combined objective at a given parameter dictionary.
@@ -197,7 +197,7 @@ class CombinedObjectiveFunction:
         by its weight, and summed into a single scalar result.
 
         Args:
-            params (Dict[str, float]): A dictionary mapping parameter names (str) to values (float).
+            params (dict): A dictionary mapping parameter names (str) to values (float).
                 A copy is made for each objective function call to guard against in-place modifications.
 
         Returns:
@@ -213,25 +213,3 @@ class CombinedObjectiveFunction:
             total += self.objective_functions[idx](p_copy) * weight
 
         return total
-
-    def call_mpi(self, params: dict) -> float:
-        from mpi4py import MPI
-
-        rank = self.comm.Get_rank()
-        size = self.comm.Get_size()
-
-        # Broadcast the params dict from rank 0 to all ranks
-        # (this frees the worker processes from the loop inside `serve_mpi`)
-        if rank == 0:
-            self.comm.bcast(params, root=0)
-
-        # 2) Figure out which slice of the objective-terms this rank handles
-
-        start, end = list(slice_up_range(self.n_terms(), size))[rank]
-
-        local_total = self.__call__(params, idx_slice=slice(start, end))
-
-        # 4) Sum up all local_totals into a global_total on every rank
-        global_total = self.comm.allreduce(local_total, op=MPI.SUM)
-
-        return global_total

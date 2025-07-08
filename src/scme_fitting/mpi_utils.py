@@ -32,13 +32,25 @@ class MPIContext:
             # Worker loop: wait for params, compute slice+reduce, repeat
             while True:
                 params = self.comm.bcast(None, root=0)
+
                 if params is None:
                     break
-                _ = self.cob.call_mpi(params)  # uses existing slice+allreduce
+
+                start, end = list(slice_up_range(self.cob.n_terms(), self.size))[
+                    self.rank
+                ]
+                local_total = self.cob(params, idx_slice=slice(start, end))
+                # Sum up all local_totals into a global_total on every rank
+                _ = self.comm.allreduce(local_total, op=MPI.SUM)
 
         # Rank 0: return the MPI‐aware evaluate function
         def mpi_evaluate(params: dict):
-            return self.cob.call_mpi(params)
+            self.comm.bcast(params, root=0)
+            start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
+            local_total = self.cob(params, idx_slice=slice(start, end))
+            # Sum up all local_totals into a global_total on every rank
+            global_total = self.comm.allreduce(local_total, op=MPI.SUM)
+            return global_total
 
         return mpi_evaluate
 
