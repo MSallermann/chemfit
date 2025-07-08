@@ -70,7 +70,7 @@ class PathAtomsFactory:
 
     def __call__(self) -> Atoms:
         logger.debug(f"Loading configuration from {self.path}")
-        atoms = read(self.path, self.index)
+        atoms = read(self.path, self.index, parallel=False)
         return atoms
 
 
@@ -151,12 +151,12 @@ class ASEObjectiveFunction(abc.ABC):
 
         # NOTE: You should probably use the `self.atoms` property
         # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
-        self._atoms = None # <- signals that atoms havent been loaded yet
+        self._atoms = None  # <- signals that atoms havent been loaded yet
 
         # NOTE: You should probably use the `self.weight` property
         # The final weight depends on the atoms object which is loaded lazily,
         # therefore we can only find it after the atoms object has been created
-        self._weight = None # <- signals that weights havent been created yet
+        self._weight = None  # <- signals that weights havent been created yet
 
         # This is the initial weight, which is a simple float so we can just assign it
         self.weight_init: float = weight
@@ -367,6 +367,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         Returns:
             float: Weighted squared difference between computed and reference energies.
         """
+
         energy = self.get_energy(parameters)
         error = (energy - self.reference_energy) ** 2
         objective_contribution = error * self.weight
