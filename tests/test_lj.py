@@ -82,16 +82,20 @@ def test_lj_mpi():
         path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
     )
 
-    ob.serve_mpi()
+    with ob.parallel_mpi() as ob_mpi:
+        if rank == 0:
+            initial_params = {"epsilon": 2.0, "sigma": 1.5}
+            bounds = {"epsilon": (0.1, 10), "sigma": (0.5, 3.0)}
+            fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
+            # opt_params = fitter.fit_scipy(options=dict(disp=True))
+            opt_params = fitter.fit_nevergrad(budget=100)
 
     if rank == 0:
-        initial_params = {"epsilon": 2.0, "sigma": 1.5}
-        print(ob(initial_params))
-
-        fitter = Fitter(ob, initial_params=initial_params)
-        opt_params = fitter.fit_scipy(options=dict(disp=True))
-
-    ob.free_workers()
+        ob.write_output(
+            "test_lj_output",
+            initial_params=initial_params,
+            optimal_params=opt_params,
+        )
 
     MPI.Finalize()
 

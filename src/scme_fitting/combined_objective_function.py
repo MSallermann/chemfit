@@ -1,5 +1,6 @@
 from typing import Sequence, Callable, Optional, Self, Union, Dict
 from collections.abc import Sequence as ABCSequence
+from scme_fitting.mpi_utils import MPIContext
 
 
 class CombinedObjectiveFunction:
@@ -49,29 +50,15 @@ class CombinedObjectiveFunction:
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
-    def serve_mpi(self, comm=None):
-        from mpi4py import MPI
+    def parallel_mpi(self):
+        """
+        Context-manager entry-point for MPI-parallel evaluation.
 
-        if comm is None:
-            self.comm = MPI.COMM_WORLD
-        else:
-            self.comm = comm
+        Usage:
+            with ob.parallel_mpi() as mpi_evaluate:
 
-        self.rank = self.comm.Get_rank()
-        self.size = self.comm.Get_size()
-
-        # If I’m a worker, enter the service loop and never return
-        if self.size > 1 and self.rank != 0:
-            while True:
-                params = self.comm.bcast(None, root=0)
-                if params is None:
-                    break
-                # compute & reduce, but discard the return value
-                _ = self.call_mpi(params)
-
-    def free_workers(self):
-        if self.comm.Get_rank() == 0:
-            self.comm.bcast(None, root=0)
+        """
+        return MPIContext(self)
 
     def n_terms(self) -> int:
         """
@@ -215,14 +202,13 @@ class CombinedObjectiveFunction:
             float: The weighted sum of all objective-function evaluations.
         """
 
-        return self.call_mpi(params)
-        # total: float = 0.0
+        total: float = 0.0
 
-        # for idx, weight in enumerate(self.weights):
-        #     p_copy = params.copy()
-        #     total += self.objective_functions[idx](p_copy) * weight
+        for idx, weight in enumerate(self.weights):
+            p_copy = params.copy()
+            total += self.objective_functions[idx](p_copy) * weight
 
-        # return total
+        return total
 
     def call_mpi(self, params: dict) -> float:
         from mpi4py import MPI
