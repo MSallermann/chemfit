@@ -17,6 +17,7 @@ from scme_fitting.data_utils import process_csv
 import logging
 from pathlib import Path
 
+import time
 
 logging.basicConfig(filename="test_scme_fitter.log", level=logging.DEBUG)
 
@@ -99,6 +100,33 @@ def test_multi_energy_ob_function_fitting():
         initial_params=INITIAL_PARAMS,
         optimal_params=optimal_params,
     )
+
+
+def test_multi_energy_ob_function_fitting_mpi():
+    from mpi4py import MPI
+
+    ob = MultiEnergyObjectiveFunction(
+        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+        param_applier=SCMEParameterApplier(),
+        path_or_factory_list=REFERENCE_CONFIGS,
+        reference_energy_list=REFERENCE_ENERGIES,
+        tag_list=TAGS,
+    )
+
+    start = time.time()
+    comm = MPI.COMM_WORLD.Dup()
+    with ob.parallel_mpi(comm) as ob_mpi:
+        if comm.Get_rank() == 0:
+            fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
+            optimal_params = fitter.fit_scipy(
+                tol=0, options=dict(maxiter=50, disp=True)
+            )
+            print(optimal_params)
+    end = time.time()
+
+    print(f"time taken = {end - start} seconds")
+
+    MPI.Finalize()
 
 
 if __name__ == "__main__":
