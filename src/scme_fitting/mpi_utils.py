@@ -38,9 +38,6 @@ class MPIContext:
 
         # Rank 0: return the MPI‐aware evaluate function
         def mpi_evaluate(params: dict):
-            # Broadcast the real params to all ranks
-            # self.comm.bcast(params, root=0)
-            # Perform slice+allreduce via your existing call_mpi
             return self.cob.call_mpi(params)
 
         return mpi_evaluate
