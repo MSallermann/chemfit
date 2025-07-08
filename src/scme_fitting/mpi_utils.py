@@ -1,5 +1,15 @@
 from mpi4py import MPI
 from typing import Optional, Any
+import math
+
+
+def slice_up_range(N: int, n_ranks: int):
+    chunk_size = math.ceil(N / n_ranks)
+
+    for rank in range(n_ranks):
+        start = rank * chunk_size
+        end = min(start + chunk_size, N)
+        yield (start, end)
 
 
 class MPIContext:

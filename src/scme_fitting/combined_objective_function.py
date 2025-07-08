@@ -1,6 +1,6 @@
 from typing import Sequence, Callable, Optional, Self, Union, Dict
 from collections.abc import Sequence as ABCSequence
-from scme_fitting.mpi_utils import MPIContext
+from scme_fitting.mpi_utils import MPIContext, slice_up_range
 
 
 class CombinedObjectiveFunction:
@@ -216,7 +216,6 @@ class CombinedObjectiveFunction:
 
     def call_mpi(self, params: dict) -> float:
         from mpi4py import MPI
-        import math
 
         rank = self.comm.Get_rank()
         size = self.comm.Get_size()
@@ -227,10 +226,8 @@ class CombinedObjectiveFunction:
             self.comm.bcast(params if rank == 0 else None, root=0)
 
         # 2) Figure out which slice of the objective-terms this rank handles
-        N = self.n_terms()
-        chunk_size = math.ceil(N / size)
-        start = rank * chunk_size
-        end = min(start + chunk_size, N)
+
+        start, end = list(slice_up_range(self.n_terms(), size))[rank]
 
         local_total = self.__call__(params, idx_slice=slice(start, end))
 
