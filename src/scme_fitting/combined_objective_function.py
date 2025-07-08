@@ -1,6 +1,6 @@
 from typing import Sequence, Callable, Optional, Self, Union, Dict
 from collections.abc import Sequence as ABCSequence
-from scme_fitting.mpi_utils import MPIContext, slice_up_range
+from scme_fitting import HAS_MPI
 
 
 class CombinedObjectiveFunction:
@@ -58,6 +58,13 @@ class CombinedObjectiveFunction:
             with ob.parallel_mpi() as mpi_evaluate:
 
         """
+        if not HAS_MPI:
+            raise Exception(
+                "You need to install `mpi4py` to use this feature. \n You may use `pip install scme_fitting[mpi]`"
+            )
+
+        from scme_fitting.mpi_utils import MPIContext
+
         return MPIContext(self, comm=comm)
 
     def n_terms(self) -> int:
