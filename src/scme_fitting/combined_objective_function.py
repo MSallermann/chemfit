@@ -50,7 +50,7 @@ class CombinedObjectiveFunction:
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
-    def parallel_mpi(self):
+    def parallel_mpi(self, comm=None):
         """
         Context-manager entry-point for MPI-parallel evaluation.
 
@@ -58,7 +58,7 @@ class CombinedObjectiveFunction:
             with ob.parallel_mpi() as mpi_evaluate:
 
         """
-        return MPIContext(self)
+        return MPIContext(self, comm=comm)
 
     def n_terms(self) -> int:
         """
@@ -223,7 +223,7 @@ class CombinedObjectiveFunction:
         # Broadcast the params dict from rank 0 to all ranks
         # (this frees the worker processes from the loop inside `serve_mpi`)
         if rank == 0:
-            self.comm.bcast(params if rank == 0 else None, root=0)
+            self.comm.bcast(params, root=0)
 
         # 2) Figure out which slice of the objective-terms this rank handles
 
