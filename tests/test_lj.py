@@ -97,6 +97,9 @@ def test_lj_mpi():
             optimal_params=opt_params,
         )
 
+        assert np.isclose(opt_params["epsilon"], eps)
+        assert np.isclose(opt_params["sigma"], sigma)
+
     MPI.Finalize()
 
 
