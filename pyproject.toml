@@ -1,8 +1,16 @@
 [project]
 name = "SCMEFitting"
 description = "A package to support fitting the parameters of the SCME code."
-version = "0.1.0"
-dependencies = ["numpy", "ase", "nevergrad", "pandas", "matplotlib", "pydantic"]
+version = "0.2.0"
+dependencies = [
+    "numpy",
+    "ase",
+    "nevergrad",
+    "pandas",
+    "matplotlib",
+    "pydantic",
+    "pydictnest",
+]
 requires-python = ">= 3.9"
 authors = [{ name = "Moritz Sallermann", email = "mos19@hi.is" }]
 license-files = ["LICEN[CS]E*"]
@@ -11,12 +19,7 @@ license-files = ["LICEN[CS]E*"]
 Repository = "https://github.com/MSallermann/SCMEFitting"
 
 [project.optional-dependencies]
-build_docs = [
-    "sphinx",
-    "furo",
-    "sphinxcontrib-napoleon",
-    "sphinx-autobuild",
-]
+build_docs = ["sphinx", "furo", "sphinxcontrib-napoleon", "sphinx-autobuild"]
 
 [build-system]
 requires = ["setuptools >= 77.0.3"]

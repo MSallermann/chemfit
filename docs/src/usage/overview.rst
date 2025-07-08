@@ -8,21 +8,21 @@ The SCMEFitting package helps you tune the free parameters of the "SCME 2.0" cod
 Objective functions
 #######################
 
-An objective function (for the sake of this package) is any function (or object implementing a ``__call__`` operator) which supports the call signature (``A(params : dict[str,float]) -> float``).
+An objective function (for the sake of this package) is any function (or object implementing a ``__call__`` operator) which supports the call signature (``A(params : dict) -> float``).
 
 See the following code for two example implementations of the ``ob(x) = 2 * x^2`` objective function, first as a regular function and second as a functor object:
 
 .. code-block:: python
 
     # 'A' is an objective function [ob(x) = 2.0 * x^2]
-    def A(params : dict[str,float]) -> float:
+    def A(params : dict) -> float:
         return 2.0 * params["x"]**2
 
     class BFunctor:
         def __init__(self, f : float):
             self.f = f
 
-        def __call__(self, params : dict[str,float]) -> float:
+        def __call__(self, params : dict) -> float:
             return self.f * params["x"]**2
 
     # `B` is also an objective function [ob(x) = 2.0 * x^2]
@@ -43,7 +43,7 @@ A minimal ``Fitter`` example
 
 Performing a fit with this package generally involves three steps:
 
-#. Create an *objective function*. This may be any function or callable object, where the ``__call__`` operator has the signature ``f(params : dict[str, float]) -> float``.
+#. Create an *objective function*. This may be any function or callable object, where the ``__call__`` operator has the signature ``f(params : dict) -> float``.
 
 #. Create an instance of a :py:class:`scme_fitting.fitter.Fitter` object, giving the objective function in the initializer
 
@@ -72,7 +72,7 @@ In this simple example we define a quadratic objective function with two degrees
 ASE objective functions
 ########################
 
-The core functionality is provided by the :py:class:`scme_fitting.ase_objective_function`. This is an abstract base class, where deriving classes have to implement the ``__call__(params : dict[str,float]) -> float`` operator. This operator should compute an objective function value for one reference configuration, which in a later fit would then be minimized.
+The core functionality is provided by the :py:class:`scme_fitting.ase_objective_function`. This is an abstract base class, where deriving classes have to implement the ``__call__(params : dict) -> float`` operator. This operator should compute an objective function value for one reference configuration, which in a later fit would then be minimized.
 
 Some implementations of this objective function are provided (see the classes in :py:mod:`scme_fitting.ase_objective_function`).
 

@@ -14,6 +14,7 @@ Welcome to the documentation of ``SCMEFitting``. Please note that it is a work i
 
    src/installation
    src/usage/overview.rst
+   src/usage/fitter.rst
    src/usage/ase_objective_function_api.rst
    src/usage/objective_functions.rst
    src/usage/example_scme.rst

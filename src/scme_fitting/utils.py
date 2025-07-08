@@ -1,5 +1,7 @@
 from pathlib import Path
 import json
+from collections.abc import MutableMapping
+from typing import Any
 
 
 def next_free_folder(base: Path) -> Path:
