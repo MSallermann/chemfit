@@ -61,5 +61,40 @@ def test_lj():
     assert np.isclose(opt_params["sigma"], sigma)
 
 
+def test_lj_mpi():
+    from mpi4py import MPI
+
+    comm = MPI.COMM_WORLD
+    rank = comm.Get_rank()
+
+    ### Construct the objective function on *all* ranks
+    eps = 1.0
+    sigma = 1.0
+
+    r_min = 2 ** (1 / 6) * sigma
+    r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
+
+    ob = MultiEnergyObjectiveFunction(
+        calc_factory=construct_lj,
+        param_applier=apply_params_lj,
+        tag_list=[f"lj_{r:.2f}" for r in r_list],
+        reference_energy_list=[e_lj(r, eps, sigma) for r in r_list],
+        path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
+    )
+
+    ob.serve_mpi()
+
+    if rank == 0:
+        initial_params = {"epsilon": 2.0, "sigma": 1.5}
+        print(ob(initial_params))
+
+        fitter = Fitter(ob, initial_params=initial_params)
+        opt_params = fitter.fit_scipy(options=dict(disp=True))
+
+    ob.free_workers()
+
+    MPI.Finalize()
+
+
 if __name__ == "__main__":
-    test_lj()
+    test_lj_mpi()

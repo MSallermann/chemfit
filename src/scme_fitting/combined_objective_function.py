@@ -49,6 +49,30 @@ class CombinedObjectiveFunction:
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
+    def serve_mpi(self, comm=None):
+        from mpi4py import MPI
+
+        if comm is None:
+            self.comm = MPI.COMM_WORLD
+        else:
+            self.comm = comm
+
+        self.rank = self.comm.Get_rank()
+        self.size = self.comm.Get_size()
+
+        # If I’m a worker, enter the service loop and never return
+        if self.size > 1 and self.rank != 0:
+            while True:
+                params = self.comm.bcast(None, root=0)
+                if params is None:
+                    break
+                # compute & reduce, but discard the return value
+                _ = self.call_mpi(params)
+
+    def free_workers(self):
+        if self.comm.Get_rank() == 0:
+            self.comm.bcast(None, root=0)
+
     def n_terms(self) -> int:
         """
         Return the number of objective terms.
@@ -190,10 +214,42 @@ class CombinedObjectiveFunction:
         Returns:
             float: The weighted sum of all objective-function evaluations.
         """
-        total: float = 0.0
 
-        for idx, weight in enumerate(self.weights):
+        return self.call_mpi(params)
+        # total: float = 0.0
+
+        # for idx, weight in enumerate(self.weights):
+        #     p_copy = params.copy()
+        #     total += self.objective_functions[idx](p_copy) * weight
+
+        # return total
+
+    def call_mpi(self, params: dict) -> float:
+        from mpi4py import MPI
+        import math
+
+        rank = self.comm.Get_rank()
+        size = self.comm.Get_size()
+
+        # Broadcast the params dict from rank 0 to all ranks
+        # (this frees the worker processes from the loop inside `serve_mpi`)
+        if rank == 0:
+            self.comm.bcast(params if rank == 0 else None, root=0)
+
+        # 2) Figure out which slice of the objective-terms this rank handles
+        N = self.n_terms()
+        chunk_size = math.ceil(N / size)
+        start = rank * chunk_size
+        end = min(start + chunk_size, N)
+
+        # 3) Each rank computes its local partial sum
+        local_total = 0.0
+        for i in range(start, end):
+            # copy params to protect against in-place modifications
             p_copy = params.copy()
-            total += self.objective_functions[idx](p_copy) * weight
+            local_total += self.objective_functions[i](p_copy) * self.weights[i]
 
-        return total
+        # 4) Sum up all local_totals into a global_total on every rank
+        global_total = self.comm.allreduce(local_total, op=MPI.SUM)
+
+        return global_total
