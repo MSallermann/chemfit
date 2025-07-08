@@ -31,9 +31,7 @@ class ParameterApplier(Protocol):
         __call__(atoms, params): Applies a parameter dictionary to `atoms.calc` in-place.
     """
 
-    def __call__(
-        self, atoms: Atoms, params: dict
-    ) -> None:  # pragma: no cover
+    def __call__(self, atoms: Atoms, params: dict) -> None:  # pragma: no cover
         ...
 
 
@@ -72,8 +70,8 @@ class PathAtomsFactory:
 
     def __call__(self) -> Atoms:
         logger.debug(f"Loading configuration from {self.path}")
-        self.atoms = read(self.path, self.index)
-        return self.atoms
+        atoms = read(self.path, self.index)
+        return atoms
 
 
 class ASEObjectiveFunction(abc.ABC):
@@ -151,28 +149,23 @@ class ASEObjectiveFunction(abc.ABC):
         else:
             self.atoms_factory = atoms_factory
 
-        # Load and prepare Atoms object
-        self.atoms = self.create_atoms_object()
-        self.n_atoms = len(self.atoms)
+        # NOTE: You should probably use the `self.atoms` property
+        # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
+        self._atoms = None # <- signals that atoms havent been loaded yet
 
-        # Validate and apply weight callback
-        if weight < 0:
+        # NOTE: You should probably use the `self.weight` property
+        # The final weight depends on the atoms object which is loaded lazily,
+        # therefore we can only find it after the atoms object has been created
+        self._weight = None # <- signals that weights havent been created yet
+
+        # This is the initial weight, which is a simple float so we can just assign it
+        self.weight_init: float = weight
+
+        if self.weight_init < 0:
             raise AssertionError("Weight must be non-negative.")
+
         self.weight_cb = weight_cb
-        if weight_cb is not None:
-            scale = weight_cb(self.atoms)
-            if scale < 0:
-                raise AssertionError(
-                    "Weight callback must return a non-negative scaling factor."
-                )
-            weight *= scale
-
-        # Normalize by atom count if requested
         self.divide_by_n_atoms = divide_by_n_atoms
-        if divide_by_n_atoms:
-            weight /= self.n_atoms
-
-        self.weight = weight
 
     def get_meta_data(self) -> dict[str, Union[str, int, float]]:
         """
@@ -230,6 +223,38 @@ class ASEObjectiveFunction(abc.ABC):
         self.calc_factory(atoms)
 
         return atoms
+
+    @property
+    def atoms(self):
+        """Check if the atoms have been created already and if not create them"""
+        if self._atoms is None:
+            self._atoms = self.create_atoms_object()
+        return self._atoms
+
+    @property
+    def n_atoms(self):
+        """The number of atoms in the atoms object."""
+        return len(self.atoms)
+
+    @property
+    def weight(self):
+        """The weight."""
+
+        if self._weight is None:
+            self._weight = self.weight_init
+            if self.weight_cb is not None:
+                scale = self.weight_cb(self.atoms)
+                if scale < 0:
+                    raise AssertionError(
+                        "Weight callback must return a non-negative scaling factor."
+                    )
+                self._weight *= scale
+
+            # Normalize by atom count if requested
+            if self.divide_by_n_atoms:
+                self._weight /= self.n_atoms
+
+        return self._weight
 
     def get_energy(self, parameters: dict) -> float:
         """
