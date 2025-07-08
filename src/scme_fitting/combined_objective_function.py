@@ -187,7 +187,9 @@ class CombinedObjectiveFunction:
 
         return cls(total_objective_functions, total_weights)
 
-    def __call__(self, params: Dict[str, float]) -> float:
+    def __call__(
+        self, params: Dict[str, float], idx_slice: slice = slice(None, None, None)
+    ) -> float:
         """
         Evaluate the combined objective at a given parameter dictionary.
 
@@ -204,7 +206,9 @@ class CombinedObjectiveFunction:
 
         total: float = 0.0
 
-        for idx, weight in enumerate(self.weights):
+        idx_list = range(self.n_terms())
+
+        for idx, weight in zip(idx_list[idx_slice], self.weights[idx_slice]):
             p_copy = params.copy()
             total += self.objective_functions[idx](p_copy) * weight
 
@@ -228,12 +232,7 @@ class CombinedObjectiveFunction:
         start = rank * chunk_size
         end = min(start + chunk_size, N)
 
-        # 3) Each rank computes its local partial sum
-        local_total = 0.0
-        for i in range(start, end):
-            # copy params to protect against in-place modifications
-            p_copy = params.copy()
-            local_total += self.objective_functions[i](p_copy) * self.weights[i]
+        local_total = self.__call__(params, idx_slice=slice(start, end))
 
         # 4) Sum up all local_totals into a global_total on every rank
         global_total = self.comm.allreduce(local_total, op=MPI.SUM)
