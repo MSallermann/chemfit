@@ -40,8 +40,8 @@ class MPIContext:
                     self.rank
                 ]
                 local_total = self.cob(params, idx_slice=slice(start, end))
-                # Sum up all local_totals into a global_total on every rank
-                _ = self.comm.allreduce(local_total, op=MPI.SUM)
+                # Sum up all local_totals into a global_total on the master rank
+                _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
 
         # Rank 0: return the MPI‐aware evaluate function
         def mpi_evaluate(params: dict):
@@ -49,7 +49,7 @@ class MPIContext:
             start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
             local_total = self.cob(params, idx_slice=slice(start, end))
             # Sum up all local_totals into a global_total on every rank
-            global_total = self.comm.allreduce(local_total, op=MPI.SUM)
+            global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
             return global_total
 
         return mpi_evaluate
