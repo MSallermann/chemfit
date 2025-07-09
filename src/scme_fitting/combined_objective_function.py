@@ -14,14 +14,14 @@ class CombinedObjectiveFunction:
 
     def __init__(
         self,
-        objective_functions: Sequence[Callable[[Dict[str, float]], float]],
+        objective_functions: Sequence[Callable[[dict], float]],
         weights: Optional[Sequence[float]] = None,
     ) -> None:
         """
         Initialize a CombinedObjectiveFunction.
 
         Args:
-            objective_functions (Sequence[Callable[[Dict[str, float]], float]]):
+            objective_functions (Sequence[Callable[[dict], float]]):
                 A sequence of callables. Each callable must accept a dictionary mapping parameter
                 names (str) to values (float) and return a float.
             weights (Sequence[float], optional):
@@ -79,8 +79,8 @@ class CombinedObjectiveFunction:
     def add(
         self,
         obj_funcs: Union[
-            Sequence[Callable[[Dict[str, float]], float]],
-            Callable[[Dict[str, float]], float],
+            Sequence[Callable[[dict], float]],
+            Callable[[dict], float],
         ],
         weights: Union[Sequence[float], float] = 1.0,
     ) -> Self:
@@ -93,10 +93,10 @@ class CombinedObjectiveFunction:
         - If `weights` is a sequence, its length must match the number of functions being added.
 
         Args:
-            obj_funcs (Callable[[Dict[str, float]], float]
-                or Sequence[Callable[[Dict[str, float]], float]]):
+            obj_funcs (Callable[dDict], float]
+                or Sequence[Callable[[dict], float]]):
                 Either a single objective-function callable or a sequence of such callables. Each callable
-                must accept a `Dict[str, float]` and return a float.
+                must accept a `dict` and return a float.
             weights (float or Sequence[float], optional):
                 Either a float (used for every new function) or a sequence of non-negative floats.
                 If a sequence, its length must equal the number of functions in `obj_funcs`.
