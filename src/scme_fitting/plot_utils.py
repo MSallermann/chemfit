@@ -2,10 +2,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from pathlib import Path
-from typing import List
 
 
-def plot_progress_curve(progress: List[float], outpath: Path) -> None:
+def plot_progress_curve(progress: list[float], outpath: Path) -> None:
     """
     Save a semilog plot of the objective values (progress) versus iteration index.
     """
@@ -35,7 +34,7 @@ def plot_energies_and_residuals(
       - 'energy_fitted'
       - 'n_atoms'
       - 'ob_value'
-    
+
     Create two PNGs in output_folder:
 
         1. energy per atom vs. tag (reference, fitted, and optionally initial)

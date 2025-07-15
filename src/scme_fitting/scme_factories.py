@@ -4,7 +4,6 @@ from .scme_setup import (
     arrange_water_in_OHH_order,
 )
 from ase import Atoms
-from typing import Dict
 from pathlib import Path
 import logging
 

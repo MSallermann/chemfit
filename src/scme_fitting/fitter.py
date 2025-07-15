@@ -17,28 +17,23 @@ logger = logging.getLogger(__name__)
 
 class Fitter:
     """
-    Fits parameters by minimizing a weighted sum of individual contribution functions.
-
-    The Fitter class allows users to define an objective function callback that computes
-    individual contributions to a global objective based on an index and a parameter set.
-    It then aggregates these contributions with optional weights, and offers an interface
-    to optimize the parameters using SciPy.
+    Fits parameters by minimizing an objective function.
     """
 
     def __init__(
         self,
-        objective_function: Callable[[Dict[str, float]], float],
-        initial_params: Dict[str, float],
-        bounds: Optional[Dict[str, tuple[float, float]]] = None,
+        objective_function: Callable[[dict], float],
+        initial_params: dict,
+        bounds: Optional[dict] = None,
     ):
         """
-        Initialize a Fitter instance.
-
-        Parameters
-        ----------
-        objective_function : Callable[[Dict[str, float]], float]
-            A callback function that, given a parameter dict,
-            returns a float which is the value of the objective function to be minimized.
+        Args:
+           objective_function (Callable[[dict], float]):
+               The objective function to be minimized.
+            initial_params (dict):
+                Initial values of the parameters
+            bound (Optional[dict]):
+                Dictionary of parameter bounds
         """
 
         self.objective_function = objective_function
