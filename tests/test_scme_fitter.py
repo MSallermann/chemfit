@@ -1,5 +1,4 @@
 from scme_fitting.fitter import Fitter
-from scme_fitting.scme_setup import SCMEParams
 
 from scme_fitting.ase_objective_function import (
     EnergyObjectiveFunction,
@@ -16,9 +15,12 @@ from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFun
 from scme_fitting.data_utils import process_csv
 import logging
 from pathlib import Path
+from ase.units import Bohr, Hartree
+
+from pydictnest import set_nested, get_nested
 
 
-logging.basicConfig(filename="test_scme_fitter.log", level=logging.DEBUG)
+logging.basicConfig(filename="./output/test_scme_fitter.log", level=logging.INFO)
 
 ### Common to all tests
 PATH_TO_CSV = [
@@ -27,18 +29,48 @@ PATH_TO_CSV = [
 ]
 REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)
 
-DEFAULT_PARAMS = SCMEParams(
-    td=4.7,
-    Ar_OO=299.5695377280358,
-    Br_OO=-0.14632711560656822,
-    Cr_OO=-2.0071714442805715,
-    r_Br=5.867230272424719,
-    dms=True,
-    qms=True,
-)
 
-ADJUSTABLE_PARAMS = ["td", "te", "C6", "C8", "C10"]
-INITIAL_PARAMS = {k: dict(DEFAULT_PARAMS)[k] for k in ADJUSTABLE_PARAMS}
+DEFAULT_PARAMS = {
+    "dispersion": {
+        "td": 7.5548 * Bohr,
+        "rc": 8.0 / Bohr,
+        "C6": 46.4430e0,
+        "C8": 1141.7000e0,
+        "C10": 33441.0000e0,
+    },
+    "repulsion": {
+        "Ar_OO": 8149.63 / Hartree,
+        "Br_OO": -0.5515,
+        "Cr_OO": -3.4695 * Bohr,
+        "r_Br": 1.0 / Bohr,
+        "td": 7.5548 * Bohr,
+        "rc": 7.5 / Bohr,
+    },
+    "electrostatic": {
+        "te": 1.2 / Bohr,
+        "rc": 9.0 / Bohr,
+        "NC": [1, 2, 1],
+        "scf_convcrit": 1e-8,
+        "max_iter_scf": 500,
+    },
+    "dms": True,
+    "qms": True,
+}
+
+ADJUSTABLE_PARAMS = [
+    "repulsion.td",
+    "electrostatic.te",
+    "dispersion.C6",
+    "dispersion.C8",
+    "dispersion.C10",
+]
+
+
+INITIAL_PARAMS = {}
+for k in ADJUSTABLE_PARAMS:
+    keys = k.split(".")
+    val = get_nested(DEFAULT_PARAMS, keys)
+    set_nested(INITIAL_PARAMS, keys, val)
 
 
 def test_single_energy_objective_function():
@@ -54,7 +86,7 @@ def test_single_energy_objective_function():
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
 
-    output_folder = Path("test_output_single_energy")
+    output_folder = Path("./output/single_energy")
     scme_factories.dump_test_configuration(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
@@ -75,7 +107,7 @@ def test_dimer_distance_objective_function():
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
 
-    output_folder = Path("test_output_dimer_distance")
+    output_folder = Path("./output/multi_energy")
     scme_factories.dump_test_configuration(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
@@ -95,7 +127,7 @@ def test_multi_energy_ob_function_fitting():
     optimal_params = fitter.fit_scipy(tol=0, options=dict(maxiter=50, disp=True))
 
     scme_factories.write_output(
-        "test_output_multi_energy",
+        "./output/multi_energy",
         initial_params=INITIAL_PARAMS,
         optimal_params=optimal_params,
     )

@@ -6,115 +6,10 @@ from pyscme.expansions import (
 )
 from pathlib import Path
 from ase import Atoms
-from ase.units import Bohr, Hartree
-import numpy as np
-from ase.constraints import FixBondLengths
 import logging
-from pydantic import BaseModel
 from ase.geometry import find_mic
 
 from typing import Optional, List
-
-
-# SCME_COMMIT = "274aa6fa4881bcb662d12a8c80488fa103a55fd2"
-# assert pyscme.version.commit() == SCME_COMMIT
-
-__FOLDER__ = Path(__file__).parent.resolve()
-
-
-def get_rotation_matrix():
-    rand = np.random.random(size=(3, 3))
-    Q, R = np.linalg.qr(rand)
-    return Q
-
-
-def get_random_h2o_molecule(theta=1.821207441224783, roh=0.9519607159623009):
-    """Gives a water-molecule with random orientation and the oxygen at the origin"""
-
-    pos = np.zeros(shape=(3, 3))
-
-    # first row is the oxygen, so we leave it alone
-    # second row is the first hydrogen, we place it at (roh, 0, 0)
-    pos[1, :] = [roh, 0, 0]
-
-    # third row is the second hydrogen, we place it at (sin(theta)*roh, cos(theta)*roh, 0)
-    pos[2, :] = [np.cos(theta) * roh, np.sin(theta) * roh, 0]
-
-    # lastly we multiply with a random rotation matrix
-    pos = pos @ get_rotation_matrix()
-
-    # return the transposed positions
-    return pos
-
-
-def setup_monomer() -> Atoms:
-    h2o = get_random_h2o_molecule()
-    atoms = Atoms(symbols="OHH", positions=h2o, pbc=[False, False, False])
-    return atoms
-
-
-def setup_dimer(oo_distance: float) -> Atoms:
-    h2o_1 = get_random_h2o_molecule()
-    h2o_2 = get_random_h2o_molecule() + oo_distance
-
-    positions = np.vstack((h2o_1, h2o_2))
-    atoms = Atoms(symbols="OHHOHH", positions=positions, pbc=[False, False, False])
-
-    return atoms
-
-
-def move_dimer_apart(atoms: Atoms, target_oo_distance: float):
-    assert len(atoms) == 6
-
-    oo_vector = atoms.get_distance(0, 3, vector=True, mic=False)
-    current_oo_distance = np.linalg.norm(oo_vector)
-
-    move_by = (
-        (target_oo_distance - current_oo_distance) * oo_vector / current_oo_distance
-    )
-
-    atoms.positions[3:] += move_by
-
-
-def constrain_dimer(atoms: Atoms):
-    atoms.set_constraint(FixBondLengths(pairs=[[0, 3]]))
-
-
-class SCMEParams(BaseModel):
-    te: float = 1.2 / Bohr
-    td: float = 7.5548 * Bohr
-
-    Ar_OO: float = 8149.63 / Hartree
-    Br_OO: float = -0.5515
-    Cr_OO: float = -3.4695 * Bohr
-
-    Ar_OH: float = 0.0  # 100.0
-    Br_OH: float = 0.0  # -0.5
-    Cr_OH: float = 0.0  # -3.5 * Bohr
-
-    Ar_HH: float = 0.0  # 50.0
-    Br_HH: float = 0.0  # -0.5
-    Cr_HH: float = 0.0  # -3.5 * Bohr
-
-    r_Br: float = 1.0 / Bohr
-
-    rc_Disp: float = 8.0 / Bohr
-    rc_Core: float = 7.5 / Bohr
-    rc_Elec: float = 9.0 / Bohr
-
-    C6: float = 46.4430e0
-    C8: float = 1141.7000e0
-    C10: float = 33441.0000e0
-
-    w_rc_Elec: float = 2.0 / Bohr
-    w_rc_Core: float = 2.0 / Bohr
-    w_rc_Disp: float = 2.0 / Bohr
-
-    max_iter_scf: int = 100
-    scf_convcrit: float = 1e-8
-    dms: bool = False
-    qms: bool = False
-    NC: list[int] = [0, 0, 0]
 
 
 def setup_expansions(
@@ -162,17 +57,14 @@ def setup_expansions(
     calc.scme.quad_quad_polarizability_expansion = quad_quad_expansion
 
 
-DEFAULT_PARAMS = SCMEParams()
-
-
 def setup_calculator(
     atoms: Atoms,
-    scme_params: SCMEParams,
+    params: dict,
     path_to_scme_expansions: Optional[Path],
     parametrization_key: str,
 ) -> SCMECalculator:
-    atoms.calc = SCMECalculator(atoms, **dict(scme_params))
-    parameter_H2O.Assign_parameters_H20(atoms.calc.scme)
+    atoms.calc = SCMECalculator(atoms, **params)
+    parameter_H2O.Assign_parameters_H2O(atoms.calc.scme)
 
     if parametrization_key is not None and path_to_scme_expansions is not None:
         setup_expansions(
@@ -184,7 +76,7 @@ def setup_calculator(
     return atoms.calc
 
 
-def arange_water_in_OHH_order(atoms: Atoms) -> Atoms:
+def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
     """
     Reorder atoms so each water molecule appears as O, H, H.
 

@@ -52,7 +52,7 @@ def test_lj():
     print(opt_params)
 
     ob.write_output(
-        "test_lj_output",
+        "./output/lj",
         initial_params=initial_params,
         optimal_params=opt_params,
     )
