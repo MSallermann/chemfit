@@ -27,20 +27,19 @@ PATH_TO_CSV = [
 ]
 REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)
 
-
 DEFAULT_PARAMS = {
     "dispersion": {
-        "td": 7.5548 * Bohr,
+        "td": 4.7,
         "rc": 8.0 / Bohr,
         "C6": 46.4430e0,
         "C8": 1141.7000e0,
         "C10": 33441.0000e0,
     },
     "repulsion": {
-        "Ar_OO": 8149.63 / Hartree,
-        "Br_OO": -0.5515,
-        "Cr_OO": -3.4695 * Bohr,
-        "r_Br": 1.0 / Bohr,
+        "Ar_OO": 299.5695377280358,
+        "Br_OO": -0.14632711560656822,
+        "Cr_OO": -2.0071714442805715,
+        "r_Br": 5.867230272424719,
         "rc": 7.5 / Bohr,
     },
     "electrostatic": {
@@ -57,10 +56,10 @@ DEFAULT_PARAMS = {
 INITIAL_PARAMS = {
     "electrostatic": {"te": 2.0},
     "dispersion": {
-        "td": 7.5548 * Bohr,
-        "C6": 40.0,
-        "C8": 800,
-        "C10": 30000,
+        "td": 4.7,
+        "C6": 46.4430e0,
+        "C8": 1141.7000e0,
+        "C10": 33441.0000e0,
     },
 }
 
