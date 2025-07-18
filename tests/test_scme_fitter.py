@@ -16,6 +16,7 @@ from scme_fitting.data_utils import process_csv
 import logging
 from pathlib import Path
 from ase.units import Bohr, Hartree
+import numpy as np
 
 logging.basicConfig(filename="./output/test_scme_fitter.log", level=logging.INFO)
 
@@ -40,7 +41,6 @@ DEFAULT_PARAMS = {
         "Br_OO": -0.5515,
         "Cr_OO": -3.4695 * Bohr,
         "r_Br": 1.0 / Bohr,
-        "td": 7.5548 * Bohr,
         "rc": 7.5 / Bohr,
     },
     "electrostatic": {
@@ -55,14 +55,51 @@ DEFAULT_PARAMS = {
 }
 
 INITIAL_PARAMS = {
-    "repulsion": {"td": 2.0},
     "electrostatic": {"te": 2.0},
     "dispersion": {
+        "td": 7.5548 * Bohr,
         "C6": 40.0,
         "C8": 800,
         "C10": 30000,
     },
 }
+
+
+def test_factories():
+    from ase import Atoms
+
+    atoms = Atoms()
+    calc_factory = SCMECalculatorFactory(DEFAULT_PARAMS, None, None)
+    calc_factory(atoms)
+
+    def check_if_params_applied(params: dict):
+        for k, v_in in params.get("dispersion", {}).items():
+            v_out = getattr(atoms.calc.scme.dispersion_params, k)
+            print(k, v_in, v_out)
+            assert np.all(np.isclose(v_in, v_out))
+
+        for k, v_in in params.get("repulsion", {}).items():
+            v_out = getattr(atoms.calc.scme.repulsion_params, k)
+            print(k, v_in, v_out)
+            assert np.all(np.isclose(v_in, v_out))
+
+        for k, v_in in params.get("electrostatic", {}).items():
+            v_out = getattr(atoms.calc.scme.electrostatic_params, k)
+            print(k, v_in, v_out)
+            assert np.all(np.isclose(v_in, v_out))
+
+        for k, v_in in params.items():
+            if isinstance(v_in, dict):
+                continue
+            v_out = getattr(atoms.calc.scme, k)
+            assert np.all(np.isclose(v_in, v_out))
+
+    check_if_params_applied(DEFAULT_PARAMS)
+
+    param_applier = SCMEParameterApplier()
+    param_applier(atoms, INITIAL_PARAMS)
+
+    check_if_params_applied(INITIAL_PARAMS)
 
 
 def test_single_energy_objective_function():
@@ -125,6 +162,7 @@ def test_multi_energy_ob_function_fitting():
         output_folder,
         initial_params=INITIAL_PARAMS,
         optimal_params=optimal_params,
+        plot_initial=True,
     )
 
 

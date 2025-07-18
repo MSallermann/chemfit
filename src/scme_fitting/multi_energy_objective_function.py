@@ -40,7 +40,6 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         path_or_factory_list: list[Union[Path, AtomsFactory]],
         divide_by_n_atoms: bool = False,
         weight_list: Optional[list[float]] = None,
-        plot_initial: bool = False,
         atom_post_processor_list: Optional[list[AtomsPostProcessor]] = None,
     ):
         """
@@ -62,8 +61,6 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
             weight_list (Optional[list[float]], optional):
                 A list of non-negative floats specifying the combination weight for each
                 EnergyObjectiveFunction. If None, all weights default to 1.0.
-            plot_initial (bool, default False):
-                If True, initial energies (before fitting) will be plotted when writing output.
 
         Raises:
             AssertionError: If lengths of `tag_list`, `path_to_reference_configuration_list`, and
@@ -72,8 +69,6 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
 
         self.calc_factory = calc_factory
         self.param_applier = param_applier
-
-        self.plot_initial = plot_initial
 
         ob_funcs: list[EnergyObjectiveFunction] = []
 
@@ -119,6 +114,7 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         folder_name: str,
         initial_params: dict[str, float],
         optimal_params: dict[str, float],
+        plot_initial: bool = False,
     ):
         """
         Generate output files and plots summarizing fitting results.
@@ -136,6 +132,8 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
             optimal_params (dict[str, float]):
                 Parameter values after fitting; saved to "optimal_params.json" and used to compute
                 fitted energies.
+            plot_initial (bool): If `True` the curves will also be plotted for the initial parameters
+
 
         Raises:
             IOError: If creating directories or writing files fails.
@@ -193,5 +191,5 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         scme_fitting.plot_utils.plot_energies_and_residuals(
             df=energies_df,
             output_folder=output_folder,
-            plot_initial=self.plot_initial,
+            plot_initial=plot_initial,
         )
