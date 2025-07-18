@@ -141,7 +141,7 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
             IOError: If creating directories or writing files fails.
         """
         output_folder = scme_fitting.utils.next_free_folder(Path(folder_name))
-        output_folder.mkdir(exist_ok=True)
+        output_folder.mkdir(exist_ok=True, parents=True)
 
         print(f"Output folder: {output_folder}")
         logger.info(f"Output folder: {output_folder}")

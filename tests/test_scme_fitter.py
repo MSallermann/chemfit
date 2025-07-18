@@ -17,9 +17,6 @@ import logging
 from pathlib import Path
 from ase.units import Bohr, Hartree
 
-from pydictnest import set_nested, get_nested
-
-
 logging.basicConfig(filename="./output/test_scme_fitter.log", level=logging.INFO)
 
 ### Common to all tests
@@ -57,20 +54,15 @@ DEFAULT_PARAMS = {
     "qms": True,
 }
 
-ADJUSTABLE_PARAMS = [
-    "repulsion.td",
-    "electrostatic.te",
-    "dispersion.C6",
-    "dispersion.C8",
-    "dispersion.C10",
-]
-
-
-INITIAL_PARAMS = {}
-for k in ADJUSTABLE_PARAMS:
-    keys = k.split(".")
-    val = get_nested(DEFAULT_PARAMS, keys)
-    set_nested(INITIAL_PARAMS, keys, val)
+INITIAL_PARAMS = {
+    "repulsion": {"td": 2.0},
+    "electrostatic": {"te": 2.0},
+    "dispersion": {
+        "C6": 40.0,
+        "C8": 800,
+        "C10": 30000,
+    },
+}
 
 
 def test_single_energy_objective_function():
@@ -86,7 +78,8 @@ def test_single_energy_objective_function():
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
 
-    output_folder = Path("./output/single_energy")
+    output_folder = Path(__file__).parent / "output/single_energy"
+
     scme_factories.dump_test_configuration(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
@@ -107,7 +100,7 @@ def test_dimer_distance_objective_function():
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
 
-    output_folder = Path("./output/multi_energy")
+    output_folder = Path(__file__).parent / "output/dimer_distance"
     scme_factories.dump_test_configuration(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
@@ -126,8 +119,10 @@ def test_multi_energy_ob_function_fitting():
 
     optimal_params = fitter.fit_scipy(tol=0, options=dict(maxiter=50, disp=True))
 
+    output_folder = Path(__file__).parent / "output/multi_energy"
+
     scme_factories.write_output(
-        "./output/multi_energy",
+        output_folder,
         initial_params=INITIAL_PARAMS,
         optimal_params=optimal_params,
     )

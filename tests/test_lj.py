@@ -4,6 +4,7 @@ import numpy as np
 
 from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
 from scme_fitting.fitter import Fitter
+from pathlib import Path
 
 
 class LJAtomsFactory:
@@ -51,8 +52,10 @@ def test_lj():
 
     print(opt_params)
 
+    output_folder = Path(__file__).parent / "output/lj"
+
     ob.write_output(
-        "./output/lj",
+        output_folder,
         initial_params=initial_params,
         optimal_params=opt_params,
     )
