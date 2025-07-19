@@ -4,6 +4,8 @@ from scme_fitting.combined_objective_function import CombinedObjectiveFunction
 import numpy as np
 import logging
 
+from pydictnest import items_nested, has_nested, get_nested
+
 logging.basicConfig(filename="test_fitter.log", level=logging.DEBUG)
 
 
@@ -89,6 +91,45 @@ def test_with_nested_dict():
     assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
 
 
+def test_with_complicated_dict():
+    def ob(params):
+        res = 0
+        for k, v in items_nested(params):
+            res += v**2
+        return res
+
+    initial_params = {
+        "electrostatic": {"bla": {"a": 1.0, "b": 1.0, "c": 1.0}, "foo": 1.0},
+        "dispersion": 0.4,
+        "params": {"a": 1.0, "b": 1.0},
+    }
+
+    bounds = {"dispersion": [0.2, 2.0], "electrostatic": {"bla": {"a": [0.5, 1.0]}}}
+
+    # Every non-constrained parameter should be at 0.0
+    # and every constrained parameter should be at the lower bound
+    def check_solution(opt_params):
+        for k, v in items_nested(opt_params):
+            if has_nested(bounds, k):
+                lower, upper = get_nested(bounds, k)
+                print(k, v, lower)
+                assert np.isclose(v, lower, atol=1e-2)
+            else:
+                print(k, v, 0.0)
+                assert np.isclose(v, 0.0, atol=1e-2)
+
+    fitter = Fitter(objective_function=ob, initial_params=initial_params, bounds=bounds)
+
+    optimal_params = fitter.fit_scipy()
+    print(f"{optimal_params = }")
+    check_solution(optimal_params)
+
+    optimal_params = fitter.fit_nevergrad(budget=500)
+    print(f"{optimal_params = }")
+    check_solution(optimal_params)
+
+
 if __name__ == "__main__":
-    test_with_square_func()
-    test_with_square_func_bounds()
+    # test_with_square_func()
+    # test_with_square_func_bounds()
+    test_with_complicated_dict()

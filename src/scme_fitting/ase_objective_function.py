@@ -7,6 +7,7 @@ import abc
 import logging
 import numpy as np
 from ase.optimize import BFGS
+from scme_fitting.utils import dump_dict_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -31,9 +32,7 @@ class ParameterApplier(Protocol):
         __call__(atoms, params): Applies a parameter dictionary to `atoms.calc` in-place.
     """
 
-    def __call__(
-        self, atoms: Atoms, params: dict
-    ) -> None:  # pragma: no cover
+    def __call__(self, atoms: Atoms, params: dict) -> None:  # pragma: no cover
         ...
 
 
@@ -194,7 +193,7 @@ class ASEObjectiveFunction(abc.ABC):
             "weight": self.weight,
         }
 
-    def dump_test_configuration(self, path_to_folder: Path) -> None:
+    def write_meta_data(self, path_to_folder: Path, write_config: bool = False) -> None:
         """
         Write the reference configuration and metadata to disk.
 
@@ -207,10 +206,11 @@ class ASEObjectiveFunction(abc.ABC):
 
         meta_data = self.get_meta_data()
         name = meta_data["saved_file"]
-        write(path_to_folder / name, self.atoms)
 
-        with open(path_to_folder / f"meta_{self.tag}.json", "w") as f:
-            json.dump(meta_data, f, indent=4)
+        dump_dict_to_file(path_to_folder / f"meta_{self.tag}.json", meta_data)
+
+        if write_config:
+            write(path_to_folder / name, self.atoms)
 
     def create_atoms_object(self) -> Atoms:
         """

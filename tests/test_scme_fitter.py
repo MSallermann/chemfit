@@ -15,7 +15,7 @@ from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFun
 from scme_fitting.data_utils import process_csv
 import logging
 from pathlib import Path
-from ase.units import Bohr, Hartree
+from ase.units import Bohr
 import numpy as np
 
 logging.basicConfig(filename="./output/test_scme_fitter.log", level=logging.INFO)
@@ -116,7 +116,7 @@ def test_single_energy_objective_function():
 
     output_folder = Path(__file__).parent / "output/single_energy"
 
-    scme_factories.dump_test_configuration(output_folder)
+    scme_factories.write_meta_data(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
 
@@ -137,7 +137,7 @@ def test_dimer_distance_objective_function():
     optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
 
     output_folder = Path(__file__).parent / "output/dimer_distance"
-    scme_factories.dump_test_configuration(output_folder)
+    scme_factories.write_meta_data(output_folder)
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
 

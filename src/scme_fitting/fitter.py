@@ -1,13 +1,9 @@
 import logging
-from typing import Callable
 import numpy as np
-from typing import Dict, Optional
+from typing import Optional, Callable
 import time
 
 from pydictnest import (
-    set_nested,
-    get_nested,
-    items_nested,
     flatten_dict,
     unflatten_dict,
 )
@@ -53,7 +49,7 @@ class Fitter:
         ob_init = self.objective_function(self.initial_parameters)
         logger.info(f"    Initial obj func: {ob_init}")
 
-    def hook_post_fit(self, opt_params: Dict):
+    def hook_post_fit(self, opt_params: dict):
         self.time_fit_end = time.time()
 
         logger.info("End fitting")
@@ -63,56 +59,56 @@ class Fitter:
         logger.info(f"    Optimal parameters {opt_params}")
         logger.info(f"    Time taken {self.time_fit_end - self.time_fit_start} seconds")
 
-    def fit_nevergrad(self, budget: int, **kwargs) -> Dict:
+    def fit_nevergrad(self, budget: int, **kwargs) -> dict:
         import nevergrad as ng
 
         self.hook_pre_fit()
 
+        flat_bounds = flatten_dict(self.bounds)
+        flat_initial_params = flatten_dict(self.initial_parameters)
+
         ng_params = ng.p.Dict()
 
-        # Nevergrad supports nested dictionaries (as long as each key corresponds to a parameter)
-        # Therefore, we use `ng.p.Dict` as the subdict factory and everything works, even with nested dictionaries
-        for k, v in items_nested(self.initial_parameters):
+        for k, v in flat_initial_params.items():
             # If `k` is in bounds, fetch the lower and upper bound
             # It `k` is not in bounds just put lower=None and upper=None
-            lower, upper = get_nested(self.bounds, k, (None, None))
-            set_nested(
-                ng_params,
-                k,
-                ng.p.Scalar(v, lower=lower, upper=upper),
-                subdict_factory=ng.p.Dict,
-            )
+            lower, upper = flat_bounds.get(k, (None, None))
+            ng_params[k] = ng.p.Scalar(v, lower=lower, upper=upper)
 
         instru = ng.p.Instrumentation(ng_params)
 
         optimizer = ng.optimizers.NgIohTuned(parametrization=instru, budget=budget)
 
-        recommendation = optimizer.minimize(
-            self.objective_function, **kwargs
-        )  # best value
+        def f(p):
+            params = unflatten_dict(p)
+            return self.objective_function(params)
+
+        recommendation = optimizer.minimize(f, **kwargs)  # best value
         args, kwargs = recommendation.value
 
         # Our optimal params are the first positional argument
         opt_params = args[0]
 
+        opt_params = unflatten_dict(opt_params)
+
         self.hook_post_fit(opt_params)
 
         return opt_params
 
-    def fit_scipy(self, **kwargs) -> Dict:
+    def fit_scipy(self, **kwargs) -> dict:
         """
         Optimize parameters using SciPy's minimize function.
 
         Parameters
         ----------
-        initial_parameters : Dict[str, float]
+        initial_parameters : dict
             Initial guess for each parameter, as a mapping from name to value.
         **kwargs
             Additional keyword arguments passed directly to scipy.optimize.minimize.
 
         Returns
         -------
-        Dict[str, float]
+        dict
             Dictionary of optimized parameter values.
 
         Warnings

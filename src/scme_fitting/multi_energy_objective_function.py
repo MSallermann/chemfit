@@ -115,6 +115,7 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         initial_params: dict[str, float],
         optimal_params: dict[str, float],
         plot_initial: bool = False,
+        write_config: bool = False,
     ):
         """
         Generate output files and plots summarizing fitting results.
@@ -156,7 +157,7 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
 
         for o in self.objective_functions:
             try:
-                o.dump_test_configuration(output_folder / "reference_configs")
+                o.write_meta_data(output_folder / "reference_configs", write_config)
             except Exception:
                 # Continue even if dumping a particular configuration fails
                 pass
