@@ -1,4 +1,4 @@
-from typing import Sequence, Callable, Optional, Self, Union, Dict
+from typing import Sequence, Callable, Optional, Self, Union
 from collections.abc import Sequence as ABCSequence
 
 
@@ -13,7 +13,7 @@ class CombinedObjectiveFunction:
 
     def __init__(
         self,
-        objective_functions: Sequence[Callable[[Dict[str, float]], float]],
+        objective_functions: Sequence[Callable[[dict], float]],
         weights: Optional[Sequence[float]] = None,
     ) -> None:
         """
@@ -32,7 +32,7 @@ class CombinedObjectiveFunction:
                 objective functions, or if any weight is negative.
         """
         # Convert to list internally for mutability
-        self.objective_functions: list[Callable[[Dict[str, float]], float]] = list(
+        self.objective_functions: list[Callable[[dict], float]] = list(
             objective_functions
         )
 
@@ -61,8 +61,8 @@ class CombinedObjectiveFunction:
     def add(
         self,
         obj_funcs: Union[
-            Sequence[Callable[[Dict[str, float]], float]],
-            Callable[[Dict[str, float]], float],
+            Sequence[Callable[[dict], float]],
+            Callable[[dict], float],
         ],
         weights: Union[Sequence[float], float] = 1.0,
     ) -> Self:
@@ -161,7 +161,7 @@ class CombinedObjectiveFunction:
         # Ensure all scaling weights are non-negative
         assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
 
-        total_objective_functions: list[Callable[[Dict[str, float]], float]] = []
+        total_objective_functions: list[Callable[[dict], float]] = []
         total_weights: list[float] = []
 
         for sub_cob, scale in zip(combined_objective_functions_list, weights):
@@ -176,7 +176,7 @@ class CombinedObjectiveFunction:
 
         return cls(total_objective_functions, total_weights)
 
-    def __call__(self, params: Dict[str, float]) -> float:
+    def __call__(self, params: dict) -> float:
         """
         Evaluate the combined objective at a given parameter dictionary.
 
