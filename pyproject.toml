@@ -1,7 +1,7 @@
 [project]
 name = "SCMEFitting"
 description = "A package to support fitting the parameters of the SCME code."
-version = "2.0.0"
+version = "2.1.0"
 dependencies = [
     "numpy",
     "ase",
