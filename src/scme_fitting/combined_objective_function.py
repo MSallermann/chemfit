@@ -6,7 +6,7 @@ class CombinedObjectiveFunction:
     """
     Represents a weighted sum of multiple objective functions.
 
-    Each objective function accepts a dictionary of parameters (str → float) and returns a float.
+    Each objective function accepts a dictionary of parameters (str -> float) and returns a float.
     Internally, each function is paired with a non-negative weight. Calling the instance returns
     the weighted sum of all objective-function evaluations.
     """

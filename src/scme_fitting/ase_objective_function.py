@@ -173,7 +173,7 @@ class ASEObjectiveFunction(abc.ABC):
 
         self.weight = weight
 
-    def get_meta_data(self) -> dict[str, Union[str, int, float]]:
+    def get_meta_data(self) -> dict[str]:
         """
         Retrieve metadata for this objective function.
 
@@ -198,8 +198,9 @@ class ASEObjectiveFunction(abc.ABC):
         Write the reference configuration and metadata to disk.
 
         Args:
-            path_to_folder: Directory where the .xyz file and metadata JSON
+            path_to_folder: Directory where the .xyz file (if write_config is True) and metadata JSON
                 will be written. The directory is created if it does not exist.
+            write_config: If True, will also write .xyz file for the configuration
         """
         path_to_folder = Path(path_to_folder)
         path_to_folder.mkdir(exist_ok=True, parents=True)
