@@ -9,9 +9,11 @@ from scme_fitting.combined_objective_function import CombinedObjectiveFunction
 import scme_fitting.plot_utils
 import scme_fitting.utils
 
-from pathlib import Path
+from collections.abc import Sequence
 
-from typing import Optional, Union
+from pathlib import Path
+from ase import Atoms
+from typing import Optional, Union, Callable
 import logging
 import pandas as pd
 
@@ -38,7 +40,9 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         tag_list: list[str],
         reference_energy_list: list[float],
         path_or_factory_list: list[Union[Path, AtomsFactory]],
-        divide_by_n_atoms: bool = False,
+        weight_cb: Union[
+            None, list[Callable[[Atoms], float]], Callable[[Atoms], float]
+        ] = None,
         weight_list: Optional[list[float]] = None,
         atom_post_processor_list: Optional[list[AtomsPostProcessor]] = None,
     ):
@@ -56,8 +60,9 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
                 A list of target energies corresponding to each reference configuration.
             path_or_factory_list (list[Union[Path, AtomsFactory]]):
                 A list of filesystem paths, each pointing to a reference configuration file.
-            divide_by_n_atoms (bool, default False):
-                If True, energies will be normalized by the number of atoms in each configuration.
+            weight_cb (Union[
+                None, list[Callable[[Atoms, float]]], Callable[[Atoms], float], default None):
+                Either a single callable for the weight callback, or a list of callables for the weight callback or None
             weight_list (Optional[list[float]], optional):
                 A list of non-negative floats specifying the combination weight for each
                 EnergyObjectiveFunction. If None, all weights default to 1.0.
@@ -72,14 +77,25 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
 
         ob_funcs: list[EnergyObjectiveFunction] = []
 
-        if atom_post_processor_list is None:
-            atom_post_processor_list = [None] * len(path_or_factory_list)
+        n_terms = len(path_or_factory_list)
 
-        for t, p_ref, e_ref, post_proc in zip(
+        if atom_post_processor_list is None:
+            atom_post_processor_list = [None] * n_terms
+
+        if weight_cb is None:
+            weight_cb_list = [None] * n_terms
+        elif not isinstance(weight_cb, Sequence):
+            weight_cb_list = [weight_cb] * n_terms
+        else:
+            assert n_terms == len(weight_cb)
+            weight_cb_list = weight_cb
+
+        for t, p_ref, e_ref, post_proc, w_cb in zip(
             tag_list,
             path_or_factory_list,
             reference_energy_list,
             atom_post_processor_list,
+            weight_cb_list,
         ):
             # First try to find out if p_ref is just a path,
             # or the more general AtomsFactory
@@ -90,9 +106,9 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
                     param_applier=self.param_applier,
                     path_to_reference_configuration=p_ref,
                     reference_energy=e_ref,
-                    divide_by_n_atoms=divide_by_n_atoms,
                     tag=t,
                     atoms_post_processor=post_proc,
+                    weight_cb=w_cb,
                 )
             else:
                 ob = EnergyObjectiveFunction(
@@ -100,9 +116,9 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
                     param_applier=self.param_applier,
                     atoms_factory=p_ref,
                     reference_energy=e_ref,
-                    divide_by_n_atoms=divide_by_n_atoms,
                     tag=t,
                     atoms_post_processor=post_proc,
+                    weight_cb=w_cb,
                 )
 
             ob_funcs.append(ob)
@@ -121,7 +137,7 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         Generate output files and plots summarizing fitting results.
 
         Creates a new output folder (using the next free name under `folder_name`), dumps metadata
-        and parameter sets as JSON, writes per-configuration SCME energy data to CSV, and
+        and parameter sets as JSON, writes per-configuration energy data to CSV, and
         produces plots of energies and residuals.
 
         Args:

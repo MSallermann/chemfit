@@ -148,6 +148,7 @@ def test_multi_energy_ob_function_fitting():
         path_or_factory_list=REFERENCE_CONFIGS,
         reference_energy_list=REFERENCE_ENERGIES,
         tag_list=TAGS,
+        weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
     )
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
@@ -181,6 +182,7 @@ def test_multi_energy_ob_function_fitting_mpi():
         path_or_factory_list=REFERENCE_CONFIGS,
         reference_energy_list=REFERENCE_ENERGIES,
         tag_list=TAGS,
+        weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
     )
 
     with MPIWrapperCOB(ob) as ob_mpi:

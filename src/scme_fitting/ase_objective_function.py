@@ -91,7 +91,6 @@ class ASEObjectiveFunction(abc.ABC):
         param_applier (ParameterApplier): Function to apply parameters to the calculator.
         atoms_post_processor (Optional[AtomsPostProcessor]): Optional hook to process Atoms.
         tag (str): Label for this objective function.
-        divide_by_n_atoms (bool): If True, weight is normalized by atom count.
     """
 
     def __init__(
@@ -102,7 +101,6 @@ class ASEObjectiveFunction(abc.ABC):
         tag: Optional[str] = None,
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
-        divide_by_n_atoms: bool = False,
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ) -> None:
@@ -118,7 +116,6 @@ class ASEObjectiveFunction(abc.ABC):
             weight: Base weight for this objective. Must be non-negative.
             weight_cb: Optional callback that returns a non-negative scaling factor
                 given the `Atoms` object. The base weight is multiplied by this factor.
-            divide_by_n_atoms: If True, weight is further divided by the number of atoms.
             atoms_factory: Optional[AtomsFactory] Optional function to create the Atoms object.
             atoms_post_processor: Optional function to modify or validate the Atoms object
                 immediately after loading and before attaching the calculator.
@@ -163,7 +160,6 @@ class ASEObjectiveFunction(abc.ABC):
             raise AssertionError("Weight must be non-negative.")
 
         self.weight_cb = weight_cb
-        self.divide_by_n_atoms = divide_by_n_atoms
 
     def get_meta_data(self) -> dict[str]:
         """
@@ -250,10 +246,6 @@ class ASEObjectiveFunction(abc.ABC):
                     )
                 self._weight *= scale
 
-            # Normalize by atom count if requested
-            if self.divide_by_n_atoms:
-                self._weight /= self.n_atoms
-
         return self._weight
 
     def get_energy(self, parameters: dict) -> float:
@@ -312,7 +304,6 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         tag: Optional[str] = None,
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
-        divide_by_n_atoms: bool = False,
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ):
@@ -327,7 +318,6 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
             tag: Optional label for this objective.
             weight: Base weight for the error term.
             weight_cb: Optional weight-scaling callback.
-            divide_by_n_atoms: If True, normalize weight by atom count.
             atoms_factory: Optional function to process the Atoms object after loading.
             atoms_post_processor: Optional function to process the Atoms object after loading.
         """
@@ -339,7 +329,6 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
             tag=tag,
             weight=weight,
             weight_cb=weight_cb,
-            divide_by_n_atoms=divide_by_n_atoms,
             atoms_factory=atoms_factory,
             atoms_post_processor=atoms_post_processor,
         )
@@ -397,7 +386,6 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         tag: Optional[str] = None,
         weight: float = 1.0,
         weight_cb: Optional[Callable[[Atoms], float]] = None,
-        divide_by_n_atoms: bool = False,
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ):
@@ -416,7 +404,6 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             tag: Optional label for this objective.
             weight: Base weight for the error term.
             weight_cb: Optional weight-scaling callback.
-            divide_by_n_atoms: If True, normalize weight by atom count.
             atoms_factory: Optional function to create Atoms object.
             atoms_post_processor: Optional function to process the Atoms object after loading.
         """
@@ -432,7 +419,6 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             tag=tag,
             weight=weight,
             weight_cb=weight_cb,
-            divide_by_n_atoms=divide_by_n_atoms,
             atoms_factory=atoms_factory,
             atoms_post_processor=atoms_post_processor,
         )
