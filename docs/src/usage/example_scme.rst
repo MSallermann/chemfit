@@ -101,11 +101,11 @@ This is done by specifying a dictionary of initial parameters
         },
     }
 
-.. info::
+.. note::
 
     Every ``(key,value)`` pair in the `initial_params` dictionary is subject to optimization by the ``Fitter`` with an initial value of value.
 
-.. info::
+.. note::
 
     If a key is found both in the `default_params` and the `initial_params`, the `initial_params` just overwrite it upon application of the parameters.
 

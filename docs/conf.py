@@ -15,14 +15,14 @@ author = "Moritz Sallermann"
 
 extensions = [
     "sphinx.ext.autodoc",  # Core autodoc engine
-    "sphinx.ext.autosummary",  # Generate summary tables automatically
+    # "sphinx.ext.autosummary",  # Generate summary tables automatically
     "sphinx.ext.napoleon",  # Parse Google-/NumPy-style docstrings
     "sphinx.ext.viewcode",  # Add links to source code
     # "sphinx_autodoc_typehints",  # Show type hints in docs
 ]
 
 # If you want autosummary to generate stubs for all modules automatically:
-autosummary_generate = True  # <== key setting
+autosummary_generate = False  # <== key setting
 
 # Napoleon settings (if you use Google or NumPy style docstrings)
 napoleon_google_docstring = True
@@ -35,9 +35,9 @@ autodoc_default_options = {
     "undoc-members": True,
     "show-inheritance": True,
     "member-order": "groupwise",  # or 'alphabetical'
-    "separate" : True,
+    "separate": True,
 }
-autodoc_mock_imports = ["pyscme"]
+autodoc_mock_imports = ["pyscme", "mpi4py"]
 
 add_module_names = False
 

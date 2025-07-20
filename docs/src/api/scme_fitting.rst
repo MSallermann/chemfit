@@ -11,6 +11,7 @@ Submodules
    scme_fitting.combined_objective_function
    scme_fitting.data_utils
    scme_fitting.fitter
+   scme_fitting.mpi_wrapper_cob
    scme_fitting.multi_energy_objective_function
    scme_fitting.plot_utils
    scme_fitting.scme_factories
