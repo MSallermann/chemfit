@@ -7,6 +7,7 @@ import abc
 import logging
 import numpy as np
 from ase.optimize import BFGS
+from scme_fitting.utils import dump_dict_to_file
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,7 @@ class ASEObjectiveFunction(abc.ABC):
         self.weight_cb = weight_cb
         self.divide_by_n_atoms = divide_by_n_atoms
 
-    def get_meta_data(self) -> dict[str, Union[str, int, float]]:
+    def get_meta_data(self) -> dict[str]:
         """
         Retrieve metadata for this objective function.
 
@@ -187,23 +188,25 @@ class ASEObjectiveFunction(abc.ABC):
             "weight": self.weight,
         }
 
-    def dump_test_configuration(self, path_to_folder: Path) -> None:
+    def write_meta_data(self, path_to_folder: Path, write_config: bool = False) -> None:
         """
         Write the reference configuration and metadata to disk.
 
         Args:
-            path_to_folder: Directory where the .xyz file and metadata JSON
+            path_to_folder: Directory where the .xyz file (if write_config is True) and metadata JSON
                 will be written. The directory is created if it does not exist.
+            write_config: If True, will also write .xyz file for the configuration
         """
         path_to_folder = Path(path_to_folder)
         path_to_folder.mkdir(exist_ok=True, parents=True)
 
         meta_data = self.get_meta_data()
         name = meta_data["saved_file"]
-        write(path_to_folder / name, self.atoms)
 
-        with open(path_to_folder / f"meta_{self.tag}.json", "w") as f:
-            json.dump(meta_data, f, indent=4)
+        dump_dict_to_file(path_to_folder / f"meta_{self.tag}.json", meta_data)
+
+        if write_config:
+            write(path_to_folder / name, self.atoms)
 
     def create_atoms_object(self) -> Atoms:
         """

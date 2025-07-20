@@ -1,4 +1,4 @@
-from typing import Sequence, Callable, Optional, Self, Union, Dict
+from typing import Sequence, Callable, Optional, Self, Union
 from collections.abc import Sequence as ABCSequence
 from scme_fitting import HAS_MPI
 
@@ -7,7 +7,7 @@ class CombinedObjectiveFunction:
     """
     Represents a weighted sum of multiple objective functions.
 
-    Each objective function accepts a dictionary of parameters (str → float) and returns a float.
+    Each objective function accepts a dictionary of parameters (str -> float) and returns a float.
     Internally, each function is paired with a non-negative weight. Calling the instance returns
     the weighted sum of all objective-function evaluations.
     """
@@ -33,7 +33,7 @@ class CombinedObjectiveFunction:
                 objective functions, or if any weight is negative.
         """
         # Convert to list internally for mutability
-        self.objective_functions: list[Callable[[Dict[str, float]], float]] = list(
+        self.objective_functions: list[Callable[[dict], float]] = list(
             objective_functions
         )
 
@@ -179,7 +179,7 @@ class CombinedObjectiveFunction:
         # Ensure all scaling weights are non-negative
         assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
 
-        total_objective_functions: list[Callable[[Dict[str, float]], float]] = []
+        total_objective_functions: list[Callable[[dict], float]] = []
         total_weights: list[float] = []
 
         for sub_cob, scale in zip(combined_objective_functions_list, weights):

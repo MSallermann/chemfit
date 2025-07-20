@@ -4,6 +4,7 @@ import numpy as np
 
 from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
 from scme_fitting.fitter import Fitter
+from pathlib import Path
 
 
 class LJAtomsFactory:
@@ -51,8 +52,10 @@ def test_lj():
 
     print(opt_params)
 
+    output_folder = Path(__file__).parent / "output/lj"
+
     ob.write_output(
-        "test_lj_output",
+        output_folder,
         initial_params=initial_params,
         optimal_params=opt_params,
     )
@@ -91,8 +94,10 @@ def test_lj_mpi():
             opt_params = fitter.fit_nevergrad(budget=100)
 
     if rank == 0:
+        output_folder = Path(__file__).parent / "output/lj_mpi"
+
         ob.write_output(
-            "test_lj_output",
+            output_folder,
             initial_params=initial_params,
             optimal_params=opt_params,
         )
@@ -104,4 +109,5 @@ def test_lj_mpi():
 
 
 if __name__ == "__main__":
-    test_lj_mpi()
+    test_lj()
+    # test_lj_mpi()

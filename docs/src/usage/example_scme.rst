@@ -29,52 +29,89 @@ We are very lucky since the :py:func:`scme_fitting.data_utils.process_csv` funct
 Of course, you are free to obtain the list of paths, tags and energies in any other way as well.
 
 
-Deciding initial parameters
+Parameters
 #################################
 
-Further we have to decide the default parameters of the SCME to be used. 
-The default parameters are an instance of :py:class:`scme_fitting.scme_setup.SCMEParams` (a Pydantic model which encompasses all "user facing" parameters of the SCME 2.0 code).
+This section describes how to specify the parameterization of the SCME.
 
-Not all of the default parameters will be changed during the optimization, but even if they remain constant they need to have a value ...
+Default Parameters
+--------------------
+
+First, we have to decide the default parameters of the SCME to be used, these are the parameters passed into the calculator upon initial construction.
+
+The default parameters are supplied as a simple nested dictionary.
+
+Not all of the default parameters will be changed during the optimization, but even if they remain constant they need to have a value ... specifying these constant values is the purpose of the ``default_params`` dictionary.
 
 Here is an example of how the default params can be constructed:
 
 .. code-block:: python
 
     from scme_fitting.utils import create_initial_params
-    from scme_fitting.scme_setup import SCMEParams
+    from ase.units import Bohr
 
     # We construct an SCMEParams instance, explicitly setting some parameters the others are set to the defaults specified in SCMEParams
-    default_params = SCMEParams(
-        Ar_OO=299.5695377280358,
-        Br_OO=-0.14632711560656822,
-        Cr_OO=-2.0071714442805715,
-        r_Br=5.867230272424719,
-        dms=True,
-        qms=True,
-    )
+
+    default_params = {
+        "dispersion": {
+            "td": 4.7,
+            "rc": 8.0 / Bohr,
+            "C6": 46.4430e0,
+            "C8": 1141.7000e0,
+            "C10": 33441.0000e0,
+        },
+        "repulsion": {
+            "Ar_OO": 299.5695377280358,
+            "Br_OO": -0.14632711560656822,
+            "Cr_OO": -2.0071714442805715,
+            "r_Br": 5.867230272424719,
+            "rc": 7.5 / Bohr,
+        },
+        "electrostatic": {
+            "te": 1.2 / Bohr,
+            "rc": 9.0 / Bohr,
+            "NC": [1, 2, 1],
+            "scf_convcrit": 1e-8,
+            "max_iter_scf": 500,
+        },
+        "dms": True,
+        "qms": True,
+    }
 
 .. warning::
-    The code snippet above relies on the defaults set in the :py:class:`scme_fitting.scme_setup.SCMEParams` class.
+    Every parameter, which is not specified in the default parameters, implicitly relies on the defaults set within the SCME code.
     It might be a good idea to **review these defaults** and to **not rely on them** as they might be subject to change.
 
-We should now also decide which of the parameters we want to optimize in order to approach the reference energies. 
-Most of the time we will want to set the initial values of the adjustable parameters to the corresponding default values - but this is not required.
-If we indeed want to use the default parameters as initial values, we can make use of the function :py:func:`scme_fitting.utils.create_initial_params`.
-The code below demonstrates its use:
+
+Initial Parameters
+--------------------
+
+We should now also decide which of the parameters we want to optimize in order to approach the reference energies.
+This is done by specifying a dictionary of initial parameters
 
 .. code-block:: python
 
-    from scme_fitting.utils import create_initial_params
+    initial_params = {
+        "electrostatic": {"te": 2.0},
+        "dispersion": {
+            "td": 4.7,
+            "C6": 46.4430e0,
+            "C8": 1141.7000e0,
+            "C10": 33441.0000e0,
+        },
+    }
 
-    # These should match members in default_params
-    adjustable_params = ["td", "te", "C6", "C8", "C10"]
+.. info::
 
-    # This creates a dictionary of initial params by fetching 
-    # the corresponding values from the default params.
-    # It is essentially equivalent to:
-    #      initial_params = {k: dict(default_params)[k] for k in adjustable_params}
-    initial_params = create_initial_params(adjustable_params, default_params)
+    Every ``(key,value)`` pair in the `initial_params` dictionary is subject to optimization by the ``Fitter`` with an initial value of value.
+
+.. info::
+
+    If a key is found both in the `default_params` and the `initial_params`, the `initial_params` just overwrite it upon application of the parameters.
+
+
+Using monomer expansions
+-------------------------
 
 Lastly, we should decide if we want to use monomer expansions in the style of the generalized SCME code.
 These are supplied in the form of a path to an HDF5 file (``path_to_scme_expansions`` argument) and a corresponding key to the expansion dataset in this file (``parametrization_key`` argument).
@@ -126,7 +163,7 @@ Pass the objective function to an instance of the ``Fitter`` class and write som
 .. code-block:: python
 
     fitter = Fitter(
-        objective_function=scme_factories,
+        objective_function = scme_factories,
         initial_params = initial_params
     )
 

@@ -6,6 +6,7 @@ from collections.abc import Sequence
 
 def process_csv(
     paths_to_csv: Union[Path, Sequence[Path]],
+    index: Union[slice, list[slice]] = slice(None, None, None),
 ) -> tuple[list[Path], list[str], list[float]]:
     """Load a dataset CSV and extract file paths, tags, and reference energies.
     If a list of paths is passed it forwards them one by one to `process_single_csv` and collects
@@ -13,6 +14,7 @@ def process_csv(
 
     Args:
         paths_to_csv (Union[Path, Sequence[Path]]): Either a single path to a CSV for a list of paths
+        index (Union[slice, Sequence[slice]]): Either a single slice or a list of slices which is applied to the data read from the CSVs
 
     Returns:
         tuple[list[Path], list[str], list[float]]:
@@ -25,12 +27,15 @@ def process_csv(
     if isinstance(paths_to_csv, Path):
         return process_single_csv(paths_to_csv)
 
+    if not isinstance(index, Sequence):
+        index = [index] * len(paths_to_csv)
+
     paths = []
     tags = []
     energies = []
 
-    for path_to_csv in paths_to_csv:
-        p, t, e = process_single_csv(path_to_csv)
+    for index, path_to_csv in zip(index, paths_to_csv):
+        p, t, e = process_single_csv(path_to_csv, index)
         paths += p
         tags += t
         energies += e
@@ -38,7 +43,9 @@ def process_csv(
     return paths, tags, energies
 
 
-def process_single_csv(path_to_csv: Path) -> tuple[list[Path], list[str], list[float]]:
+def process_single_csv(
+    path_to_csv: Path, index: slice = slice(None, None, None)
+) -> tuple[list[Path], list[str], list[float]]:
     """Load a dataset CSV and extract file paths, tags, and reference energies.
 
     The CSV must include the following columns:
@@ -53,6 +60,7 @@ def process_single_csv(path_to_csv: Path) -> tuple[list[Path], list[str], list[f
 
     Args:
         path_to_csv (Path): Path to the CSV file describing the datasets.
+        index (slice) slice(None, None, None): A slice which is applied to the data read from the CSV
 
     Returns:
         tuple[list[Path], list[str], list[float]]:
@@ -83,4 +91,4 @@ def process_single_csv(path_to_csv: Path) -> tuple[list[Path], list[str], list[f
     except Exception as err:
         raise ValueError("All 'reference_energy' entries must be numeric.") from err
 
-    return paths, tags, energies
+    return paths[index], tags[index], energies[index]

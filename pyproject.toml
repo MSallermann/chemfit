@@ -1,14 +1,13 @@
 [project]
 name = "SCMEFitting"
 description = "A package to support fitting the parameters of the SCME code."
-version = "0.2.0"
+version = "1.1.0"
 dependencies = [
     "numpy",
     "ase",
     "nevergrad",
     "pandas",
     "matplotlib",
-    "pydantic",
     "pydictnest",
 ]
 requires-python = ">= 3.9"
