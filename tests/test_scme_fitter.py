@@ -17,6 +17,7 @@ import logging
 from pathlib import Path
 from ase.units import Bohr
 import numpy as np
+import time
 
 logging.basicConfig(filename="./output/test_scme_fitter.log", level=logging.INFO)
 
@@ -151,7 +152,10 @@ def test_multi_energy_ob_function_fitting():
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
+    start = time.time()
     optimal_params = fitter.fit_scipy(tol=0, options=dict(maxiter=50, disp=True))
+    end = time.time()
+    print(f"time taken = {end - start} seconds")
 
     output_folder = Path(__file__).parent / "output/multi_energy"
 
@@ -164,13 +168,12 @@ def test_multi_energy_ob_function_fitting():
 
 
 def test_multi_energy_ob_function_fitting_mpi():
-    import scme_fitting
-    import time
+    from scme_fitting import HAS_MPI
 
-    if not scme_fitting.HAS_MPI:
+    if not HAS_MPI:
         return
 
-    from mpi4py import MPI
+    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
 
     ob = MultiEnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
@@ -180,21 +183,17 @@ def test_multi_energy_ob_function_fitting_mpi():
         tag_list=TAGS,
     )
 
-    start = time.time()
-    comm = MPI.COMM_WORLD.Dup()
-    with ob.parallel_mpi(comm) as ob_mpi:
-        if comm.Get_rank() == 0:
+    with MPIWrapperCOB(ob) as ob_mpi:
+        if ob_mpi.rank == 0:
+            start = time.time()
+
             fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
             optimal_params = fitter.fit_scipy(
                 tol=0, options=dict(maxiter=50, disp=True)
             )
-            print(optimal_params)
-    end = time.time()
-
-    if comm.Get_rank() == 0:
-        print(f"time taken = {end - start} seconds")
-
-    MPI.Finalize()
+            print(f"{optimal_params = }")
+            end = time.time()
+            print(f"time taken = {end - start} seconds")
 
 
 if __name__ == "__main__":

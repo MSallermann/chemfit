@@ -65,10 +65,12 @@ def test_lj():
 
 
 def test_lj_mpi():
-    from mpi4py import MPI
+    from scme_fitting import HAS_MPI
 
-    comm = MPI.COMM_WORLD
-    rank = comm.Get_rank()
+    if not HAS_MPI:
+        return
+
+    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
 
     ### Construct the objective function on *all* ranks
     eps = 1.0
@@ -85,29 +87,28 @@ def test_lj_mpi():
         path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
     )
 
-    with ob.parallel_mpi() as ob_mpi:
-        if rank == 0:
+    # Use the MPI Wrapper to make the combined objective function "MPI aware"
+    with MPIWrapperCOB(ob) as ob_mpi:
+        # The optimization needs to run on the first rank only
+        if ob_mpi.rank == 0:
             initial_params = {"epsilon": 2.0, "sigma": 1.5}
             bounds = {"epsilon": (0.1, 10), "sigma": (0.5, 3.0)}
             fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
             # opt_params = fitter.fit_scipy(options=dict(disp=True))
             opt_params = fitter.fit_nevergrad(budget=100)
 
-    if rank == 0:
-        output_folder = Path(__file__).parent / "output/lj_mpi"
+            output_folder = Path(__file__).parent / "output/lj_mpi"
 
-        ob.write_output(
-            output_folder,
-            initial_params=initial_params,
-            optimal_params=opt_params,
-        )
+            ob.write_output(
+                output_folder,
+                initial_params=initial_params,
+                optimal_params=opt_params,
+            )
 
-        assert np.isclose(opt_params["epsilon"], eps)
-        assert np.isclose(opt_params["sigma"], sigma)
-
-    MPI.Finalize()
+            assert np.isclose(opt_params["epsilon"], eps)
+            assert np.isclose(opt_params["sigma"], sigma)
 
 
 if __name__ == "__main__":
-    test_lj()
-    # test_lj_mpi()
+    # test_lj()
+    test_lj_mpi()

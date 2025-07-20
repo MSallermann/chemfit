@@ -12,15 +12,16 @@ def slice_up_range(N: int, n_ranks: int):
         yield (start, end)
 
 
-class MPIContext:
-    def __init__(self, cob: Any, comm: Optional[Any] = None):
+class MPIWrapperCOB:
+    def __init__(self, cob: Any, comm: Optional[Any] = None, finalize_mpi: bool = True):
         self.cob = cob
         if comm is None:
-            self.comm = MPI.COMM_WORLD
+            self.comm = MPI.COMM_WORLD.Dup()
         else:
             self.comm = comm
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
+        self.finalize_mpi = finalize_mpi
 
     def __enter__(self):
         # Attach comm info to the object for call_mpi
@@ -43,16 +44,18 @@ class MPIContext:
                 # Sum up all local_totals into a global_total on the master rank
                 _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
 
-        # Rank 0: return the MPI‐aware evaluate function
-        def mpi_evaluate(params: dict):
-            self.comm.bcast(params, root=0)
-            start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
-            local_total = self.cob(params, idx_slice=slice(start, end))
-            # Sum up all local_totals into a global_total on every rank
-            global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
-            return global_total
+        return self
 
-        return mpi_evaluate
+    def __call__(self, params: dict) -> float:
+        # Function to evaluate the objective function, to be called from rank 0
+
+        self.comm.bcast(params, root=0)
+        start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
+        local_total = self.cob(params, idx_slice=slice(start, end))
+
+        # Sum up all local_totals into a global_total on every rank
+        global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+        return global_total
 
     def __exit__(self, exc_type, exc, tb):
         # Only rank 0 needs to shut down workers
@@ -62,3 +65,6 @@ class MPIContext:
 
         # ensure everyone leaves together
         self.comm.Barrier()
+
+        if self.finalize_mpi:
+            MPI.Finalize()

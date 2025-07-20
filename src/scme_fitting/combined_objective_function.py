@@ -1,6 +1,5 @@
 from typing import Sequence, Callable, Optional, Self, Union
 from collections.abc import Sequence as ABCSequence
-from scme_fitting import HAS_MPI
 
 
 class CombinedObjectiveFunction:
@@ -49,23 +48,6 @@ class CombinedObjectiveFunction:
         )
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
-
-    def parallel_mpi(self, comm=None):
-        """
-        Context-manager entry-point for MPI-parallel evaluation.
-
-        Usage:
-            with ob.parallel_mpi() as mpi_evaluate:
-
-        """
-        if not HAS_MPI:
-            raise Exception(
-                "You need to install `mpi4py` to use this feature. \n You may use `pip install scme_fitting[mpi]`"
-            )
-
-        from scme_fitting.mpi_utils import MPIContext
-
-        return MPIContext(self, comm=comm)
 
     def n_terms(self) -> int:
         """
