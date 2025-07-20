@@ -15,7 +15,7 @@ author = "Moritz Sallermann"
 
 extensions = [
     "sphinx.ext.autodoc",  # Core autodoc engine
-    # "sphinx.ext.autosummary",  # Generate summary tables automatically
+    "sphinx.ext.autosummary",  # Generate summary tables automatically
     "sphinx.ext.napoleon",  # Parse Google-/NumPy-style docstrings
     "sphinx.ext.viewcode",  # Add links to source code
     # "sphinx_autodoc_typehints",  # Show type hints in docs

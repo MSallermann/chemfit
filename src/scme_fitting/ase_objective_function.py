@@ -90,10 +90,7 @@ class ASEObjectiveFunction(abc.ABC):
         calc_factory (CalculatorFactory): Factory to create ASE calculators.
         param_applier (ParameterApplier): Function to apply parameters to the calculator.
         atoms_post_processor (Optional[AtomsPostProcessor]): Optional hook to process Atoms.
-        atoms (Atoms): ASE Atoms object loaded and prepared.
-        n_atoms (int): Number of atoms in the configuration.
         tag (str): Label for this objective function.
-        weight (float): Weighting factor for the objective value.
         divide_by_n_atoms (bool): If True, weight is normalized by atom count.
     """
 
@@ -229,20 +226,20 @@ class ASEObjectiveFunction(abc.ABC):
 
     @property
     def atoms(self):
-        """Check if the atoms have been created already and if not create them"""
+        """The atoms object. Accessing this property for the first time will create the atoms object."""
+        # Check if the atoms have been created already and if not create them
         if self._atoms is None:
             self._atoms = self.create_atoms_object()
         return self._atoms
 
     @property
     def n_atoms(self):
-        """The number of atoms in the atoms object."""
+        """The number of atoms in the atoms object. May trigger creation of the atoms object."""
         return len(self.atoms)
 
     @property
     def weight(self):
-        """The weight."""
-
+        """The weight. May trigger creation of the atoms object."""
         if self._weight is None:
             self._weight = self.weight_init
             if self.weight_cb is not None:
