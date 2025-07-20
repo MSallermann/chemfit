@@ -59,10 +59,9 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
             reference_energy_list (list[float]):
                 A list of target energies corresponding to each reference configuration.
             path_or_factory_list (list[Union[Path, AtomsFactory]]):
-                A list of filesystem paths, each pointing to a reference configuration file.
-            weight_cb (Union[
-                None, list[Callable[[Atoms, float]]], Callable[[Atoms], float], default None):
-                Either a single callable for the weight callback, or a list of callables for the weight callback or None
+                A list of filesystem paths or atom factories.
+            weight_cb (Union[None, list[Callable[[Atoms, float]]], Callable[[Atoms], float], default None):
+                Either a single callable or a list of callables for the weight callback or None
             weight_list (Optional[list[float]], optional):
                 A list of non-negative floats specifying the combination weight for each
                 EnergyObjectiveFunction. If None, all weights default to 1.0.
@@ -131,7 +130,8 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         initial_params: dict[str, float],
         optimal_params: dict[str, float],
         plot_initial: bool = False,
-        write_config: bool = False,
+        write_configs: bool = False,
+        write_meta_data: bool = False,
     ):
         """
         Generate output files and plots summarizing fitting results.
@@ -150,7 +150,10 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
                 Parameter values after fitting; saved to "optimal_params.json" and used to compute
                 fitted energies.
             plot_initial (bool): If `True` the curves will also be plotted for the initial parameters
-
+            write_configs (bool): Whether to write an individual atomic configuration for each
+                reference configuration as xyz files
+            write_meta_data (bool): Whether to write an individual metadata json for each reference
+                configuration
 
         Raises:
             IOError: If creating directories or writing files fails.
@@ -170,12 +173,15 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
             output_folder / "optimal_params.json", optimal_params
         )
 
-        for o in self.objective_functions:
-            try:
-                o.write_meta_data(output_folder / "reference_configs", write_config)
-            except Exception:
-                # Continue even if dumping a particular configuration fails
-                pass
+        if write_meta_data:
+            for o in self.objective_functions:
+                try:
+                    o.write_meta_data(
+                        output_folder / "reference_configs", write_configs
+                    )
+                except Exception:
+                    # Continue even if dumping a particular configuration fails
+                    pass
 
         # Extract per-objective weights and energy values
         weights_energy = [ob.weight for ob in self.objective_functions]
@@ -186,10 +192,10 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         energies_scme = {
             "tag": [ob.tag for ob in self.objective_functions],
             "energy_initial": [
-                ob.get_energy(initial_params) for ob in self.objective_functions
+                ob.compute_energy(initial_params) for ob in self.objective_functions
             ],
             "energy_fitted": [
-                ob.get_energy(optimal_params) for ob in self.objective_functions
+                ob.compute_energy(optimal_params) for ob in self.objective_functions
             ],
             "energy_reference": [
                 ob.reference_energy for ob in self.objective_functions

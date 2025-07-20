@@ -29,6 +29,8 @@ class MPIWrapperCOB:
         self.cob.rank = self.rank
         self.cob.size = self.size
 
+        start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
+
         if self.size > 1 and self.rank != 0:
             # Worker loop: wait for params, compute slice+reduce, repeat
             while True:
@@ -37,9 +39,6 @@ class MPIWrapperCOB:
                 if params is None:
                     break
 
-                start, end = list(slice_up_range(self.cob.n_terms(), self.size))[
-                    self.rank
-                ]
                 local_total = self.cob(params, idx_slice=slice(start, end))
                 # Sum up all local_totals into a global_total on the master rank
                 _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)

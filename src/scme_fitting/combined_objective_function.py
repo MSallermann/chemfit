@@ -75,7 +75,7 @@ class CombinedObjectiveFunction:
         - If `weights` is a sequence, its length must match the number of functions being added.
 
         Args:
-            obj_funcs (Callable[dDict], float]
+            obj_funcs (Callable[dict], float]
                 or Sequence[Callable[[dict], float]]):
                 Either a single objective-function callable or a sequence of such callables. Each callable
                 must accept a `dict` and return a float.

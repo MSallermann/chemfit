@@ -144,6 +144,8 @@ class ASEObjectiveFunction(abc.ABC):
         else:
             self.atoms_factory = atoms_factory
 
+        self._last_energy: Optional[float] = None
+
         # NOTE: You should probably use the `self.atoms` property
         # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
         self._atoms = None  # <- signals that atoms havent been loaded yet
@@ -179,6 +181,7 @@ class ASEObjectiveFunction(abc.ABC):
             "saved_file": name,
             "n_atoms": self.n_atoms,
             "weight": self.weight,
+            "last_energy": self._last_energy,
         }
 
     def write_meta_data(self, path_to_folder: Path, write_config: bool = False) -> None:
@@ -248,7 +251,7 @@ class ASEObjectiveFunction(abc.ABC):
 
         return self._weight
 
-    def get_energy(self, parameters: dict) -> float:
+    def compute_energy(self, parameters: dict) -> float:
         """
         Compute the potential energy for a given set of parameters.
 
@@ -260,9 +263,10 @@ class ASEObjectiveFunction(abc.ABC):
         """
         self.param_applier(self.atoms, parameters)
         self.atoms.calc.calculate(self.atoms)
-        energy = self.atoms.get_potential_energy()
-        logger.debug(f"Calculated energy (tag = {self.tag}): {energy}")
-        return energy
+        self._last_energy = self.atoms.get_potential_energy()
+
+        logger.debug(f"Calculated energy (tag = {self.tag}): {self._last_energy}")
+        return self._last_energy
 
     def check_atoms(self, atoms: Atoms) -> bool:
         """
@@ -343,6 +347,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         """
         data = super().get_meta_data()
         data["reference_energy"] = self.reference_energy
+
         return data
 
     def __call__(self, parameters: dict) -> float:
@@ -357,7 +362,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
             float: Weighted squared difference between computed and reference energies.
         """
 
-        energy = self.get_energy(parameters)
+        energy = self.compute_energy(parameters)
         error = (energy - self.reference_energy) ** 2
         objective_contribution = error * self.weight
         logger.debug(f"Parameters applied: {parameters}")
