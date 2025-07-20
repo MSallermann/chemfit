@@ -26,12 +26,18 @@ def test_with_square_func():
     print(f"{optimal_params = }")
     assert np.isclose(optimal_params["x"], 2.0)
     assert np.isclose(optimal_params["y"], -1.0)
+    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     optimal_params = fitter.fit_nevergrad(budget=100)
 
-    print(optimal_params)
+    print(f"{optimal_params = }")
     assert np.isclose(optimal_params["x"], 2.0, atol=1e-2)
     assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
+    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
+
+    print(f"{fitter.info = }")
 
 
 def test_with_square_func_bounds():
@@ -55,12 +61,18 @@ def test_with_square_func_bounds():
     print(f"{optimal_params = }")
     assert np.isclose(optimal_params["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
+    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     optimal_params = fitter.fit_nevergrad(budget=100)
 
     print(optimal_params)
     assert np.isclose(optimal_params["x"], 1.5, atol=1e-2)
     assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
+    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
+
+    print(f"{fitter.info = }")
 
 
 def test_with_nested_dict():
@@ -83,12 +95,18 @@ def test_with_nested_dict():
     print(f"{optimal_params = }")
     assert np.isclose(optimal_params["params"]["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
+    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     optimal_params = fitter.fit_nevergrad(budget=100)
 
     print(optimal_params)
     assert np.isclose(optimal_params["params"]["x"], 1.5, atol=1e-2)
     assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
+    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
+
+    print(f"{fitter.info = }")
 
 
 def test_with_complicated_dict():
@@ -123,10 +141,16 @@ def test_with_complicated_dict():
     optimal_params = fitter.fit_scipy()
     print(f"{optimal_params = }")
     check_solution(optimal_params)
+    assert np.isclose(ob(initial_params), fitter.info.initial_value)
+    assert np.isclose(ob(optimal_params), fitter.info.final_value)
 
     optimal_params = fitter.fit_nevergrad(budget=500)
     print(f"{optimal_params = }")
     check_solution(optimal_params)
+    assert np.isclose(ob(initial_params), fitter.info.initial_value)
+    assert np.isclose(ob(optimal_params), fitter.info.final_value)
+
+    print(f"{fitter.info = }")
 
 
 if __name__ == "__main__":

@@ -3,12 +3,21 @@ import numpy as np
 from typing import Optional, Callable
 import time
 
+from dataclasses import dataclass
+
 from pydictnest import (
     flatten_dict,
     unflatten_dict,
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FitInfo:
+    initial_value: float = -1.0
+    final_value: float = -1.0
+    time_taken: float = -1.0
 
 
 class Fitter:
@@ -40,24 +49,28 @@ class Fitter:
         else:
             self.bounds = bounds
 
+        self.info = FitInfo()
+
     def hook_pre_fit(self):
-        self.time_fit_start = time.time()
+        self.info = FitInfo()
 
         logger.info("Start fitting")
         logger.info(f"    Initial parameters: {self.initial_parameters}")
         logger.info(f"    Bounds: {self.bounds}")
-        ob_init = self.objective_function(self.initial_parameters)
-        logger.info(f"    Initial obj func: {ob_init}")
+
+        self.info.initial_value = self.objective_function(self.initial_parameters)
+        logger.info(f"    Initial obj func: {self.info.initial_value}")
+
+        self.time_fit_start = time.time()
 
     def hook_post_fit(self, opt_params: dict):
         self.time_fit_end = time.time()
+        self.info.time_taken = self.time_fit_end - self.time_fit_start
 
         logger.info("End fitting")
-        logger.info(
-            f"    Final objective function {self.objective_function(opt_params)}"
-        )
+        logger.info(f"    Final objective function {self.info.final_value}")
         logger.info(f"    Optimal parameters {opt_params}")
-        logger.info(f"    Time taken {self.time_fit_end - self.time_fit_start} seconds")
+        logger.info(f"    Time taken {self.info.time_taken} seconds")
 
     def fit_nevergrad(self, budget: int, **kwargs) -> dict:
         import nevergrad as ng
@@ -85,6 +98,7 @@ class Fitter:
 
         recommendation = optimizer.minimize(f, **kwargs)  # best value
         args, kwargs = recommendation.value
+        self.info.final_value = recommendation.loss
 
         # Our optimal params are the first positional argument
         opt_params = args[0]
@@ -161,6 +175,7 @@ class Fitter:
         if not res.success:
             logger.warning(f"Fit did not converge: {res.message}")
 
+        self.info.final_value = res.fun
         opt_params = dict(zip(self._keys, res.x))
 
         opt_params = unflatten_dict(opt_params)
