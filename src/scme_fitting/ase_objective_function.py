@@ -170,15 +170,12 @@ class ASEObjectiveFunction(abc.ABC):
         Returns:
             dict[str, Union[str, int, float]]: Dictionary containing:
                 tag: User-defined label.
-                original_file: Path to the input configuration.
-                saved_file: Filename for writing the atoms.
                 n_atoms: Number of atoms in the configuration.
                 weight: Final weight after any scaling.
+                last_energy: The last computed energy
         """
-        name = f"atoms_{self.tag}.xyz"
         return {
             "tag": self.tag,
-            "saved_file": name,
             "n_atoms": self.n_atoms,
             "weight": self.weight,
             "last_energy": self._last_energy,
