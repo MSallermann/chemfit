@@ -1,4 +1,4 @@
-from typing import Sequence, Callable, Optional, Self, Union
+from typing import Sequence, Callable, Optional, Self, Union, Any
 from collections.abc import Sequence as ABCSequence
 
 
@@ -43,9 +43,9 @@ class CombinedObjectiveFunction:
             self.weights = list(weights)
 
         # Ensure alignment between objective functions and weights
-        assert len(self.weights) == len(self.objective_functions), (
-            "Number of weights must match number of objective functions."
-        )
+        assert len(self.weights) == len(
+            self.objective_functions
+        ), "Number of weights must match number of objective functions."
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
@@ -106,9 +106,9 @@ class CombinedObjectiveFunction:
         if isinstance(weights, ABCSequence) and not isinstance(weights, (str, bytes)):
             weights_to_add = list(weights)  # type: ignore[assignment]
             # Must match number of new functions
-            assert len(weights_to_add) == len(funcs_to_add), (
-                "Length of weights sequence must equal number of functions added."
-            )
+            assert len(weights_to_add) == len(
+                funcs_to_add
+            ), "Length of weights sequence must equal number of functions added."
         else:
             # Single weight repeated for each new function
             weights_to_add = [float(weights) for _ in funcs_to_add]
@@ -120,9 +120,9 @@ class CombinedObjectiveFunction:
         self.weights.extend(weights_to_add)
 
         # Final sanity check that lists remain aligned
-        assert len(self.weights) == len(self.objective_functions), (
-            "After adding, weights and objective_functions must remain the same length."
-        )
+        assert len(self.weights) == len(
+            self.objective_functions
+        ), "After adding, weights and objective_functions must remain the same length."
 
         return self
 
@@ -155,9 +155,9 @@ class CombinedObjectiveFunction:
                 or if any weight is negative.
         """
         # Ensure we have one scaling weight per sub-instance
-        assert len(combined_objective_functions_list) == len(weights), (
-            "Must supply exactly one weight per CombinedObjectiveFunction."
-        )
+        assert len(combined_objective_functions_list) == len(
+            weights
+        ), "Must supply exactly one weight per CombinedObjectiveFunction."
         # Ensure all scaling weights are non-negative
         assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
 
@@ -170,9 +170,9 @@ class CombinedObjectiveFunction:
             total_weights.extend([w * scale for w in sub_cob.weights])
 
         # Ensure no negative weights after scaling
-        assert all(w >= 0 for w in total_weights), (
-            "Resulting weights must be non-negative."
-        )
+        assert all(
+            w >= 0 for w in total_weights
+        ), "Resulting weights must be non-negative."
 
         return cls(total_objective_functions, total_weights)
 
@@ -202,3 +202,23 @@ class CombinedObjectiveFunction:
             total += self.objective_functions[idx](p_copy) * weight
 
         return total
+
+    def gather_callback(
+        self, callback: Callable, idx_slice: slice = slice(None, None, None)
+    ) -> list[Optional[Any]]:
+        """Execute a callback on each term and append the result to a list.
+        And finally return the list of results. If a slice is specified via the index argument the list only contains the results of the slice.
+        If any of the callbacks raises an exception `None` is appended as a result.
+        """
+
+        idx_list = range(self.n_terms())
+
+        results = []
+        for idx in idx_list[idx_slice]:
+            try:
+                callback_result = callback(self.objective_functions[idx])
+            except Exception() as e:
+                callback_result = None
+            results.append(callback_result)
+
+        return results
