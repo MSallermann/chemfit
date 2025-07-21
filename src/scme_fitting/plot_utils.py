@@ -20,6 +20,11 @@ def plot_progress_curve(progress: list[float], outpath: Path) -> None:
     plt.close()
 
 
+def tags_as_ticks(ax: plt.Axes, tags: list[str], **kwargs):
+    ax.set_xticks(range(len(tags)))
+    ax.set_xticklabels(tags, rotation=90, **kwargs)
+
+
 def plot_energies_and_residuals(
     df: pd.DataFrame,
     output_folder: Path,
@@ -56,12 +61,15 @@ def plot_energies_and_residuals(
     plt.close()
     ax = plt.gca()
     fig = plt.gcf()
-    ax.plot(tags, energy_ref, marker="o", color="black", label="reference")
-    ax.plot(tags, energy_fit, marker="x", label="fitted")
+
+    ax.plot(energy_ref, marker="o", color="black", label="reference")
+    ax.plot(energy_fit, marker="x", label="fitted")
+
     if plot_initial:
         ax.plot(tags, energy_init, marker=".", label="initial")
-    ax.set_xticks(range(n))
-    ax.set_xticklabels(tags, rotation=90)
+
+    tags_as_ticks(ax, tags)
+
     ax.set_ylabel("energy [eV] / n_atoms")
     ax.legend()
     fig.tight_layout()
@@ -76,14 +84,14 @@ def plot_energies_and_residuals(
     ax = plt.gca()
     fig = plt.gcf()
     ax.plot(
-        tags,
         residuals,
         marker="o",
         color="black",
         label=f"residuals (mean={avg_resid:.2e})",
     )
-    ax.set_xticks(range(n))
-    ax.set_xticklabels(tags, rotation=90)
+
+    tags_as_ticks(ax, tags)
+
     ax.set_ylabel("|pred - target| [eV] / n_atoms")
     ax.legend()
     fig.tight_layout()
@@ -98,14 +106,14 @@ def plot_energies_and_residuals(
     ax = plt.gca()
     fig = plt.gcf()
     ax.plot(
-        tags,
         ob_values,
         marker="o",
         color="black",
         label=f"objective_function (mean = {avg_ob:.2e})",
     )
-    ax.set_xticks(range(n))
-    ax.set_xticklabels(tags, rotation=90)
+
+    tags_as_ticks(ax, tags)
+
     ax.set_ylabel("objective_function")
     ax.legend()
     fig.tight_layout()
