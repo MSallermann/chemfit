@@ -203,12 +203,12 @@ class CombinedObjectiveFunction:
 
         return total
 
-    def gather_callback(
-        self, callback: Callable, idx_slice: slice = slice(None, None, None)
-    ) -> list[Optional[Any]]:
-        """Execute a callback on each term and append the result to a list.
-        And finally return the list of results. If a slice is specified via the index argument the list only contains the results of the slice.
-        If any of the callbacks raises an exception `None` is appended as a result.
+    def gather_meta_data(
+        self, idx_slice: slice = slice(None, None, None)
+    ) -> list[Optional[dict]]:
+        """Gather the meta data of each term and append it to a list.
+        If a slice is specified via the index argument the list only contains the results of the slice.
+        If an exception occurs, `None` is appended as a result.
         """
 
         idx_list = range(self.n_terms())
@@ -216,9 +216,9 @@ class CombinedObjectiveFunction:
         results = []
         for idx in idx_list[idx_slice]:
             try:
-                callback_result = callback(self.objective_functions[idx])
+                meta_data = self.objective_functions[idx].get_meta_data()
             except Exception() as e:
-                callback_result = None
-            results.append(callback_result)
+                meta_data = None
+            results.append(meta_data)
 
         return results
