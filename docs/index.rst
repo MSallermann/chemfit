@@ -25,6 +25,7 @@ SCMEFitting
 -------------------------
 
 .. _quickstart:
+
 *************
 Quickstart
 *************

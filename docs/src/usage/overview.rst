@@ -6,6 +6,7 @@ The SCMEFitting package helps you tune the free parameters of the "SCME 2.0" cod
 **Beyond fitting just the SCME parameters**, it can drive the parameters of any ASE calculator via the same callback machinery.
 
 .. _overview_objective_functions:
+
 **********************
 Objective functions
 **********************
