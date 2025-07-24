@@ -5,10 +5,13 @@ Overview
 The SCMEFitting package helps you tune the free parameters of the "SCME 2.0" code so that ASE-computed potential energies match ab-initio reference values *as close as possible*.
 **Beyond fitting just the SCME parameters**, it can drive the parameters of any ASE calculator via the same callback machinery.
 
+.. _overview_objective_functions:
+**********************
 Objective functions
-#######################
+**********************
 
 An objective function (for the sake of this package) is any function (or object implementing a ``__call__`` operator) which supports the call signature (``A(params : dict) -> float``).
+For the objective functions built into this package see: :ref:`predefined_objective_functions`.
 
 See the following code for two example implementations of the ``ob(x) = 2 * x^2`` objective function, first as a regular function and second as a functor object:
 
@@ -39,7 +42,7 @@ These two backends are
 
 
 A minimal ``Fitter`` example
-#############################
+********************************
 
 Performing a fit with this package generally involves three steps:
 
@@ -70,7 +73,7 @@ In this simple example we define a quadratic objective function with two degrees
 
 
 ASE objective functions
-########################
+********************************
 
 The core functionality is provided by the :py:class:`scme_fitting.ase_objective_function`. This is an abstract base class, where deriving classes have to implement the ``__call__(params : dict) -> float`` operator. This operator should compute an objective function value for one reference configuration, which in a later fit would then be minimized.
 
@@ -84,7 +87,7 @@ The key point, which makes these classes flexible, is that they take two factory
 
 
 SCME factory functions
-########################
+***************************
 
 Ready to use implementations of :py:class:`scme_fitting.ase_objective_function.CalculatorFactory` and :py:class:`scme_fitting.ase_objective_function.ParameterApplier` are provided in the :py:mod:`scme_fitting.scme_factories` module.
 

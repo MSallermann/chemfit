@@ -1,3 +1,4 @@
+.. _predefined_objective_functions:
 ##################################
 Predefined objective functions
 ##################################

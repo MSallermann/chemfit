@@ -1,3 +1,5 @@
+.. _ase_objective_function_api:
+
 ############################
 ASE Objective Function API
 ############################

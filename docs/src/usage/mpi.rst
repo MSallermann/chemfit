@@ -1,0 +1,102 @@
+##################
+Running with MPI
+##################
+
+.. warning::
+
+    This section is a work in progress!
+
+.. note::
+
+    To run with ``SCMEFitting`` with MPI, you need a working MPI installation -- duh! If you're on a cluster, consult its documentation. You can of course also install MPI on your local machine.
+
+    Further, you need to have ``mpi4py``, which is an optional dependency installed with ``pip install scme_fitting[mpi]``.
+
+The gist of it is that you can use MPI to parallelize the evaluation of the individual terms in a :py:class:`~scme_fitting.combined_objective_function.CombinedObjectiveFunction`.
+
+In principle the fitting code looks not terribly different from the single threaded case.
+
+Within the python script, the required steps are:
+
+1. **All ranks** construct the :py:class:`~scme_fitting.combined_objective_function.CombinedObjectiveFunction`
+2. **All ranks** enter the context provided by :py:class:`~scme_fitting.mpi_wrapper_cob.MPIWrapperCOB`
+3. **The main rank** calls the fitting routines
+
+.. note::
+
+    Thanks to the **lazy-loading** mechanism, constructing the objective function on all ranks is not actually wasteful.
+    Since only the ranks which actually compute a certain term of the objective function actually construct the ``Atoms`` and the ``Calculator``.
+
+**Then:**
+Call the script with ``mpirun -n $NRANKS python script.py`` (or something equivalent)
+
+A more schematic example:
+
+.. code-block:: python
+
+    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
+    from scme_fitting import CombinedObjectiveFunction
+
+    # ...
+    # construct the combined objective function on **all ranks**
+    # ...
+
+    # Use the MPI Wrapper to make the combined objective function "MPI aware"
+    with MPIWrapperCOB(ob) as ob_mpi:
+        # The optimization needs to run on the first rank only
+        if ob_mpi.rank == 0:
+            fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
+            opt_params = fitter.fit_nevergrad(budget=100)
+
+            #...
+            # write output etc.
+            #... 
+
+
+
+Concrete Example:
+********************
+
+This is the same Lennard Jones example as in the :ref:`quickstart`, but this time with MPI. Yay!
+
+.. code-block:: python
+
+    from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
+    from scme_fitting.fitter import Fitter
+    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
+
+    ### Construct the objective function on *all* ranks
+    eps = 1.0
+    sigma = 1.0
+
+    r_min = 2 ** (1 / 6) * sigma
+    r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
+
+    ob = MultiEnergyObjectiveFunction(
+        calc_factory=construct_lj,
+        param_applier=apply_params_lj,
+        tag_list=[f"lj_{r:.2f}" for r in r_list],
+        reference_energy_list=[e_lj(r, eps, sigma) for r in r_list],
+        path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
+    )
+
+    # Use the MPI Wrapper to make the combined objective function "MPI aware"
+    with MPIWrapperCOB(ob) as ob_mpi:
+        # The optimization needs to run on the first rank only
+        if ob_mpi.rank == 0:
+            initial_params = {"epsilon": 2.0, "sigma": 1.5}
+            bounds = {"epsilon": (0.1, 10), "sigma": (0.5, 3.0)}
+            fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
+            # opt_params = fitter.fit_scipy(options=dict(disp=True))
+            opt_params = fitter.fit_nevergrad(budget=100)
+
+            output_folder = Path(__file__).parent / "output/lj_mpi"
+
+            ob.write_output(
+                output_folder,
+                initial_params=initial_params,
+                optimal_params=opt_params,
+            )
+
+            assert np.isclose(opt_params["epsilon"], eps)
+            assert np.isclose(opt_params["sigma"], sigma)
