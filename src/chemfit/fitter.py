@@ -70,8 +70,9 @@ class Fitter:
                 value = ob_func(params)
                 self.info.n_evals += 1
             except Exception:
-                logger.exception(
-                    f"Caught exception with params {params}. Clipping loss to {self.value_bad_params}"
+                logger.warning(
+                    f"Caught exception with params {params}. Clipping loss to {self.value_bad_params}",
+                    exc_info=True,
                 )
                 value = self.value_bad_params
 
@@ -114,7 +115,9 @@ class Fitter:
         logger.info(f"    Optimal parameters {opt_params}")
         logger.info(f"    Time taken {self.info.time_taken} seconds")
 
-    def fit_nevergrad(self, budget: int, **kwargs) -> dict:
+    def fit_nevergrad(
+        self, budget: int, optimizer_str: str = "NgIohTuned", **kwargs
+    ) -> dict:
         import nevergrad as ng
 
         self.hook_pre_fit()
@@ -132,7 +135,9 @@ class Fitter:
 
         instru = ng.p.Instrumentation(ng_params)
 
-        optimizer = ng.optimizers.NgIohTuned(parametrization=instru, budget=budget)
+        OptimizerCls = ng.optimizers.registry[optimizer_str]
+
+        optimizer = OptimizerCls(parametrization=instru, budget=budget)
 
         def f_ng(p):
             params = unflatten_dict(p)

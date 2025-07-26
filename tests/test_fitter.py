@@ -1,3 +1,10 @@
+try:
+    import mpi4py
+except ImportError:
+    mpi4py = None
+
+import pytest
+
 from chemfit.fitter import Fitter
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 
@@ -5,8 +12,6 @@ import numpy as np
 import logging
 
 from pydictnest import items_nested, has_nested, get_nested
-
-logging.basicConfig(filename="test_fitter.log", level=logging.DEBUG)
 
 
 def test_with_square_func():
@@ -178,14 +183,14 @@ def test_with_bad_function():
 
         # Nevergrad should be able to handle a shitty objective function like this
         optimal_params = fitter.fit_nevergrad(budget=1000)
-        print(f"NEVERGRAD")
+        print("NEVERGRAD")
         print(f"{optimal_params = }")
         print(fitter.info)
         assert np.isclose(optimal_params["x"], X_EXPECTED)
 
         # SCIPY will probably fail, unless starting in the good region
         optimal_params = fitter.fit_scipy()
-        print(f"SCIPY")
+        print("SCIPY")
         print(f"{optimal_params = }")
         print(fitter.info)
 
@@ -194,7 +199,76 @@ def test_with_bad_function():
             assert np.isclose(optimal_params["x"], X_EXPECTED)
 
 
+@pytest.mark.skipif(mpi4py is None, reason="Reason mpi4py not installed")
+def test_with_bad_function_mpi():
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
+
+    X_EXPECTED = 2.5
+
+    def f1(params):
+        if params["x"] < 1.0:
+            return None
+        elif params["x"] < 2.0:
+            raise Exception("Some random exception")
+        elif params["x"] < 3.0:
+            return (params["x"] - 2.5) ** 2
+        elif params["x"] < 4.0:
+            return float("Nan")
+        else:
+            return "not even a number"
+
+    def f2(params):
+        if params["x"] < 1.0:
+            return None
+        elif params["x"] < 2.0:
+            raise Exception("Some random exception")
+        elif params["x"] < 3.0:
+            return (params["x"] - 2.5) ** 2
+        elif params["x"] < 4.0:
+            return float("Nan")
+        else:
+            return "not even a number"
+
+    ob = CombinedObjectiveFunction([f1, f2])
+
+    for x0 in [0.5, 1.5, 2.5, 3.5, 4.5]:
+        print(f"{x0 = }")
+
+        with MPIWrapperCOB(cob=ob, finalize_mpi=(x0 == 4.5)) as ob_mpi:
+
+            logging.basicConfig(
+                filename=f"test_fitter_{ob_mpi.rank}.log", level=logging.DEBUG
+            )
+
+            if ob_mpi.rank == 0:
+                fitter = Fitter(
+                    objective_function=ob_mpi,
+                    initial_params={"x": x0},
+                    bounds={"x": (0.0, 5.0)},
+                )
+
+                print(fitter.objective_function({"x": x0}))
+
+                # Nevergrad should be able to handle a shitty objective function like this
+                optimal_params = fitter.fit_nevergrad(budget=1000)
+                print("NEVERGRAD")
+                print(f"{optimal_params = }")
+                print(fitter.info)
+                assert np.isclose(optimal_params["x"], X_EXPECTED, atol=1e0)
+
+                # SCIPY will probably fail, unless starting in the good region
+                optimal_params = fitter.fit_scipy()
+                print("SCIPY")
+                print(f"{optimal_params = }")
+                print(fitter.info)
+
+                # only assert if x0 is in the good region
+                if x0 >= 2.0 and x0 < 3.0:
+                    assert np.isclose(optimal_params["x"], X_EXPECTED, atol=1e-1)
+
+
 if __name__ == "__main__":
     # test_with_square_func()
     # test_with_square_func_bounds()
-    test_with_complicated_dict()
+    # test_with_complicated_dict()
+    test_with_bad_function_mpi()

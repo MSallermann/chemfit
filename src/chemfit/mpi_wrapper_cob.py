@@ -1,6 +1,10 @@
 from mpi4py import MPI
 from typing import Optional, Any
 import math
+import logging
+from numbers import Real
+
+logger = logging.getLogger(__name__)
 
 
 def slice_up_range(N: int, n_ranks: int):
@@ -23,6 +27,9 @@ class MPIWrapperCOB:
         self.size = self.comm.Get_size()
         self.finalize_mpi = finalize_mpi
 
+    def print(self, msg: str):
+        print(f"[Rank {self.rank}] {msg}")
+
     def __enter__(self):
         # Attach comm info to the object for call_mpi
         self.cob.comm = self.comm
@@ -39,9 +46,23 @@ class MPIWrapperCOB:
                 if params is None:
                     break
 
-                local_total = self.cob(params, idx_slice=slice(start, end))
-                # Sum up all local_totals into a global_total on the master rank
-                _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+                try:
+                    local_total = self.cob(params, idx_slice=slice(start, end))
+                except Exception as e:
+                    logging.warning(
+                        f"Caught exception while evaluating ({start},{end}). Returning Nan."
+                    )
+
+                    local_total = float("NaN")
+                finally:
+                    if not isinstance(local_total, Real):
+                        logging.warning(
+                            f"Index ({start},{end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
+                        )
+                        local_total = float("NaN")
+
+                    # Sum up all local_totals into a global_total on the master rank
+                    _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
 
         return self
 
@@ -50,13 +71,20 @@ class MPIWrapperCOB:
 
         self.comm.bcast(params, root=0)
         start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
-        local_total = self.cob(params, idx_slice=slice(start, end))
 
-        # Sum up all local_totals into a global_total on every rank
-        global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+        try:
+            local_total = self.cob(params, idx_slice=slice(start, end))
+        except Exception as e:
+            local_total = float("NaN")
+            raise e
+        finally:
+            # Sum up all local_totals into a global_total on every rank
+            global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+
         return global_total
 
     def __exit__(self, exc_type, exc, tb):
+
         # Only rank 0 needs to shut down workers
         if self.rank == 0 and self.size > 1:
             # send the poison‐pill (None) so workers break out
