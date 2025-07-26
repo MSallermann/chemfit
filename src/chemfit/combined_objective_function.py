@@ -1,4 +1,5 @@
-from typing import Sequence, Callable, Optional, Self, Union, Any
+from typing import Sequence, Callable, Optional, Union
+from typing_extensions import Self
 from collections.abc import Sequence as ABCSequence
 
 
