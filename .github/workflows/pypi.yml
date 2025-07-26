@@ -19,7 +19,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install build requirements
-        run: pip install build
+        run: pip install build wheel
 
       - name: Build distributions
         run: python -m build --wheel
@@ -30,18 +30,32 @@ jobs:
           name: dist_artifact
           path: dist/*
 
-      - name: Install nox
-        uses: wntrblm/nox@2024.04.15
+      - name: Append temporary build number
+        run: |
+          cd dist
+          wheel unpack chemfit* --dest ./unpacked
+          rm chemfit*.whl
+          sha=$(git rev-parse --short ${{ github.sha }})
+          wheel pack ./unpacked/chemfit* --build-number ${sha}
+          rm -rf unpacked
 
-      - name: Run tests
-        run: nox
+
+      - name: Upload built artifacts test
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist_artifact_test
+          path: dist/*
+  
+      # - name: Install nox
+      #   uses: wntrblm/nox@2024.04.15
+
+      # - name: Run tests
+      #   run: nox
 
   test-pypi-publish:
     name: Upload release to test.pypi
     needs: build
     runs-on: ubuntu-latest
-    if: >
-      contains(github.event.head_commit.message, 'PUBLISH: test.pypi') || contains(github.event.head_commit.message, 'PUBLISH: pypi')
     environment:
       name: testpypi
       url: https://test.pypi.org/p/chemfit
@@ -51,15 +65,8 @@ jobs:
       - name: Download built distributions
         uses: actions/download-artifact@v4
         with:
-          name: dist_artifact
+          name: dist_artifact_test
           path: dist/
-
-      - name: Append temporary build number
-        run: |
-          cd dist
-          wheel unpack chemfit*
-          rm chemfit*.whl
-          wheel pack ./chemfit* --build-number "${{github.event.repository.updated_at}}.${{github.sha}}"
 
       - name: Publish package distributions to test.pypi
         uses: pypa/gh-action-pypi-publish@release/v1
