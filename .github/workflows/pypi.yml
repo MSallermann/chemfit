@@ -1,0 +1,104 @@
+name: Build and Publish to PyPI
+
+on:
+  push
+
+jobs:
+  build:
+    name: Build and test distribution
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # only need to fetch your code
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install build requirements
+        run: pip install build
+
+      - name: Build distributions
+        run: python -m build --wheel
+
+      - name: Upload built artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist_artifact
+          path: dist/*
+
+      - name: Install nox
+        uses: wntrblm/nox@2024.04.15
+
+      - name: Run tests
+        run: nox
+
+  test-pypi-publish:
+    name: Upload release to test.pypi
+    needs: build
+    runs-on: ubuntu-latest
+    if: >
+      contains(github.event.head_commit.message, 'PUBLISH: test.pypi') || contains(github.event.head_commit.message, 'PUBLISH: pypi')
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/chemfit
+    permissions:
+      id-token: write # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist_artifact
+          path: dist/
+
+      - name: Publish package distributions to test.pypi
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          verbose: true
+          skip-existing: true
+
+  test-install-from-test-pypi:
+    needs: test-pypi-publish
+    runs-on: ubuntu-latest
+    steps:
+    - name: Try to install from test.pypi
+      run: pip install --upgrade -i https://test.pypi.org/simple/ chemfit
+
+    # retrieve the repo to get the tests
+    - name: Check out code
+      uses: actions/checkout@v4
+
+    - name: Install pytest
+      run: pip install pytest
+
+    - name: Run tests
+      run: pytest
+
+  pypi-publish:
+    name: Upload release to pypi
+    needs: test-install-from-test-pypi
+    runs-on: ubuntu-latest
+    if: >
+      contains(github.event.head_commit.message, 'PUBLISH: pypi')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pydictnest
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
+
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist_artifact
+          path: dist/
+
+      - name: Publish package distributions to pypi
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          skip-existing: true

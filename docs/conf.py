@@ -6,7 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = "SCMEFitting"
+project = "ChemFit"
 copyright = "2025, Moritz Sallermann"
 author = "Moritz Sallermann"
 

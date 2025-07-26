@@ -1,13 +1,13 @@
-.. SCMEFitting documentation master file, created by
+.. ChemFit documentation master file, created by
    sphinx-quickstart on Thu Jun  5 11:32:11 2025.
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
 ################
-SCMEFitting
+ChemFit
 ################
 
-**SCMEFitting**, is a package to support fitting the parameters of potentials described by an ASE calculator by minimizing objective functions.
+**ChemFit**, is a package to support fitting the parameters of potentials described by an ASE calculator by minimizing objective functions.
 
 -------------------------
 
@@ -32,7 +32,7 @@ Quickstart
 
 In order to use the provided objective functions you have to provide three pieces of information
 
-- How to construct the :py:class:`ase.Atoms` object. If you saved them to a file you can simply pass the path, which under the hood uses the :py:func:`~scme_fitting.ase_objective_function.PathAtomsFactory`.
+- How to construct the :py:class:`ase.Atoms` object. If you saved them to a file you can simply pass the path, which under the hood uses the :py:func:`~chemfit.ase_objective_function.PathAtomsFactory`.
 - How to construct the calculator. This one you will have to define yourself. It's not hard though.
 - How to apply a parametrization (essentially a dictionary) to the calculator. This one you will have to define yourself as well. It provides the "link" between the dictionary of parameters to optimize and the calculator and depends on the specific calculator you are using.
 
@@ -52,8 +52,8 @@ The following toy example shows how to fit the parameters of a Lennard Jones pot
    from ase.calculators.lj import LennardJones
    from ase import Atoms
    import numpy as np
-   from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
-   from scme_fitting.fitter import Fitter
+   from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+   from chemfit.fitter import Fitter
 
    ########################
    # Define the factories

@@ -1,9 +1,16 @@
+try:
+    import mpi4py
+except ImportError:
+    mpi4py = None
+
+import pytest
+
 from ase.calculators.lj import LennardJones
 from ase import Atoms
 import numpy as np
 
-from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
-from scme_fitting.fitter import Fitter
+from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+from chemfit.fitter import Fitter
 from pathlib import Path
 
 
@@ -64,13 +71,14 @@ def test_lj():
     assert np.isclose(opt_params["sigma"], sigma)
 
 
+@pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_lj_mpi():
-    from scme_fitting import HAS_MPI
+    from chemfit import HAS_MPI
 
     if not HAS_MPI:
         return
 
-    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     ### Construct the objective function on *all* ranks
     eps = 1.0

@@ -8,18 +8,18 @@ Running with MPI
 
 .. note::
 
-    To run with ``SCMEFitting`` with MPI, you need a working MPI installation -- duh! If you're on a cluster, consult its documentation. You can of course also install MPI on your local machine.
+    To run with ``ChemFit`` with MPI, you need a working MPI installation -- duh! If you're on a cluster, consult its documentation. You can of course also install MPI on your local machine.
 
-    Further, you need to have ``mpi4py``, which is an optional dependency installed with ``pip install scme_fitting[mpi]``.
+    Further, you need to have ``mpi4py``, which is an optional dependency installed with ``pip install chemfit[mpi]``.
 
-The gist of it is that you can use MPI to parallelize the evaluation of the individual terms in a :py:class:`~scme_fitting.combined_objective_function.CombinedObjectiveFunction`.
+The gist of it is that you can use MPI to parallelize the evaluation of the individual terms in a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
 In principle the fitting code looks not terribly different from the single threaded case.
 
 Within the python script, the required steps are:
 
-1. **All ranks** construct the :py:class:`~scme_fitting.combined_objective_function.CombinedObjectiveFunction`
-2. **All ranks** enter the context provided by :py:class:`~scme_fitting.mpi_wrapper_cob.MPIWrapperCOB`
+1. **All ranks** construct the :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
+2. **All ranks** enter the context provided by :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB`
 3. **The main rank** calls the fitting routines
 
 .. note::
@@ -34,8 +34,8 @@ A more schematic example:
 
 .. code-block:: python
 
-    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
-    from scme_fitting import CombinedObjectiveFunction
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
+    from chemfit import CombinedObjectiveFunction
 
     # ...
     # construct the combined objective function on **all ranks**
@@ -61,9 +61,9 @@ This is the same Lennard Jones example as in the :ref:`quickstart`, but this tim
 
 .. code-block:: python
 
-    from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
-    from scme_fitting.fitter import Fitter
-    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
+    from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+    from chemfit.fitter import Fitter
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     ### Construct the objective function on *all* ranks
     eps = 1.0

@@ -1,13 +1,13 @@
-from scme_fitting.ase_objective_function import (
+from chemfit.ase_objective_function import (
     EnergyObjectiveFunction,
     CalculatorFactory,
     ParameterApplier,
     AtomsFactory,
     AtomsPostProcessor,
 )
-from scme_fitting.combined_objective_function import CombinedObjectiveFunction
-import scme_fitting.plot_utils
-import scme_fitting.utils
+from chemfit.combined_objective_function import CombinedObjectiveFunction
+import chemfit.plot_utils
+import chemfit.utils
 
 from collections.abc import Sequence
 
@@ -158,18 +158,18 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         Raises:
             IOError: If creating directories or writing files fails.
         """
-        output_folder = scme_fitting.utils.next_free_folder(Path(folder_name))
+        output_folder = chemfit.utils.next_free_folder(Path(folder_name))
         output_folder.mkdir(exist_ok=True, parents=True)
 
         logger.info(f"Output folder: {output_folder}")
 
         meta: dict[str, object] = {"name": folder_name}
 
-        scme_fitting.utils.dump_dict_to_file(output_folder / "meta.json", meta)
-        scme_fitting.utils.dump_dict_to_file(
+        chemfit.utils.dump_dict_to_file(output_folder / "meta.json", meta)
+        chemfit.utils.dump_dict_to_file(
             output_folder / "initial_params.json", initial_params
         )
-        scme_fitting.utils.dump_dict_to_file(
+        chemfit.utils.dump_dict_to_file(
             output_folder / "optimal_params.json", optimal_params
         )
 
@@ -210,7 +210,7 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         energies_df = pd.DataFrame(energies_scme)
         energies_df.to_csv(output_folder / "energies.csv")
 
-        scme_fitting.plot_utils.plot_energies_and_residuals(
+        chemfit.plot_utils.plot_energies_and_residuals(
             df=energies_df,
             output_folder=output_folder,
             plot_initial=plot_initial,

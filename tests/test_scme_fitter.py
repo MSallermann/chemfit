@@ -1,20 +1,28 @@
-from scme_fitting.fitter import Fitter
+try:
+    import pyscme
+except ImportError:
+    pyscme = None
 
-from scme_fitting.ase_objective_function import (
+try:
+    import mpi4py
+except ImportError:
+    mpi4py = None
+
+import pytest
+
+from chemfit.fitter import Fitter
+from chemfit.ase_objective_function import (
     EnergyObjectiveFunction,
     DimerDistanceObjectiveFunction,
 )
-from scme_fitting.scme_factories import (
-    SCMECalculatorFactory,
-    SCMEParameterApplier,
-)
 
-from scme_fitting.utils import dump_dict_to_file
+from chemfit.utils import dump_dict_to_file
+from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+from chemfit.data_utils import process_csv
 
-from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
-from scme_fitting.data_utils import process_csv
 import logging
 from pathlib import Path
+from ase import Atoms
 from ase.units import Bohr
 import numpy as np
 import time
@@ -65,8 +73,12 @@ INITIAL_PARAMS = {
 }
 
 
+@pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_factories():
-    from ase import Atoms
+    from chemfit.scme_factories import (
+        SCMECalculatorFactory,
+        SCMEParameterApplier,
+    )
 
     atoms = Atoms()
     calc_factory = SCMECalculatorFactory(DEFAULT_PARAMS, None, None)
@@ -102,7 +114,13 @@ def test_factories():
     check_if_params_applied(INITIAL_PARAMS)
 
 
+@pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_single_energy_objective_function():
+    from chemfit.scme_factories import (
+        SCMECalculatorFactory,
+        SCMEParameterApplier,
+    )
+
     ob = EnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
@@ -120,7 +138,13 @@ def test_single_energy_objective_function():
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
 
 
+@pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_dimer_distance_objective_function():
+    from chemfit.scme_factories import (
+        SCMECalculatorFactory,
+        SCMEParameterApplier,
+    )
+
     ob = DimerDistanceObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
@@ -141,7 +165,13 @@ def test_dimer_distance_objective_function():
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
 
 
+@pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_multi_energy_ob_function_fitting():
+    from chemfit.scme_factories import (
+        SCMECalculatorFactory,
+        SCMEParameterApplier,
+    )
+
     ob = MultiEnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
@@ -168,13 +198,20 @@ def test_multi_energy_ob_function_fitting():
     )
 
 
+@pytest.mark.skipif(
+    pyscme is None or mpi4py is None, reason="Cannot import pyscme or mpi4py or both"
+)
 def test_multi_energy_ob_function_fitting_mpi():
-    from scme_fitting import HAS_MPI
+    from chemfit.scme_factories import (
+        SCMECalculatorFactory,
+        SCMEParameterApplier,
+    )
+    from chemfit import HAS_MPI
 
     if not HAS_MPI:
         return
 
-    from scme_fitting.mpi_wrapper_cob import MPIWrapperCOB
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     ob = MultiEnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),

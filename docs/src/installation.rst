@@ -3,16 +3,16 @@ Installation
 #######################
 
 ====================================
-Installing the SCMEFitting package
+Installing the ChemFit package
 ====================================
 
-The installation of the SCMEFitting package is simple. The dependencies (**except SCME 2.0**) are installed automatically.
+The installation of the ChemFit package is simple. The dependencies (**except SCME 2.0**) are installed automatically.
 
 Execute this command in your terminal (and activate your preferred virtual environment before)
 
 .. code-block:: bash
 
-    pip install git+https://github.com/MSallermann/SCMEFitting.git
+    pip install git+https://github.com/MSallermann/ChemFit.git
 
 Alternatively, you can of course check out the repository manually and perform a local pip install.
 
@@ -21,7 +21,7 @@ Alternatively, you can of course check out the repository manually and perform a
     The pip install **does not** install the SCME 2.0 code for you.
 
 .. note::
-    Even **without the SCME code**, you can still use everything this package provides, except the :py:mod:`scme_fitting.scme_factories` module.
+    Even **without the SCME code**, you can still use everything this package provides, except the :py:mod:`chemfit.scme_factories` module.
 
 =============================
 Installing the SCME 2.0 code
@@ -31,10 +31,10 @@ To use this package with the SCME code, you need a working installation of the S
 
 .. note::
 
-    In practice, this means that the following import must succeed in the environment in which SCMEFitting is installed
+    In practice, this means that the following import must succeed in the environment in which ChemFit is installed
 
     .. code-block:: python
 
-        import pyscme # must succeed in order to use scme_fitting.scme_factories
+        import pyscme # must succeed in order to use chemfit.scme_factories
 
     Further, a recent enough version must be installed.

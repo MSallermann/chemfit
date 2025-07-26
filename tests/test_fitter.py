@@ -1,5 +1,5 @@
-from scme_fitting.fitter import Fitter
-from scme_fitting.combined_objective_function import CombinedObjectiveFunction
+from chemfit.fitter import Fitter
+from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 import numpy as np
 import logging

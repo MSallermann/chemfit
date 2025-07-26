@@ -1,5 +1,6 @@
-# SCMEFitting
-Python package to support fitting the free parameters of the SCME water potential.
+# ChemFit
 
-Please, find the **documentation** (which is a work in progress) [here](https://scmefitting.readthedocs.io/en/latest/).
+Python package to support fitting the free parameters of potentials described by an ASE calculator.
+
+Please, find the **documentation** (which is a work in progress) [here](https://chemfit.readthedocs.io/en/latest/).
 

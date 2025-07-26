@@ -13,17 +13,17 @@ Obtaining data
 The first step is, of course, to obtain all the reference configurations as well as the reference energies.
 
 .. note::
-    **Example data** for dimer binding energies, computed with the PBE functional, can be found `here. <https://github.com/MSallermann/SCMEFitting/tree/9ffdc77d2c7a5144618b55615ce6211028aedd3c/tests/test_configurations_scme>`_
+    **Example data** for dimer binding energies, computed with the PBE functional, can be found `here. <https://github.com/MSallermann/ChemFit/tree/9ffdc77d2c7a5144618b55615ce6211028aedd3c/tests/test_configurations_scme>`_
     To follow this little tutorial, download all of these files and save them in a folder ``./data``.
 
 Generally, it is a good idea to store the paths to the reference configurations, reference energies and some tags in a file somewhere on your computer.
 In the example data above, this file is called ``energies.csv``. It has three columns (if you ignore the index): ``file``, ``reference_energy`` and ``tag``.
 
-We are very lucky since the :py:func:`scme_fitting.data_utils.process_csv` function provides a utility to parse exactly this information from a CSV file:
+We are very lucky since the :py:func:`chemfit.data_utils.process_csv` function provides a utility to parse exactly this information from a CSV file:
 
 .. code-block:: python
 
-    from scme_fitting.data_utils import process_csv
+    from chemfit.data_utils import process_csv
     paths, tags, energies = process_csv("./data/energies.csv")
 
 Of course, you are free to obtain the list of paths, tags and energies in any other way as well.
@@ -47,7 +47,7 @@ Here is an example of how the default params can be constructed:
 
 .. code-block:: python
 
-    from scme_fitting.utils import create_initial_params
+    from chemfit.utils import create_initial_params
     from ase.units import Bohr
 
     # We construct an SCMEParams instance, explicitly setting some parameters the others are set to the defaults specified in SCMEParams
@@ -122,11 +122,11 @@ If any of these are ``None``, the generalized SCME will **not** be used.
 Instantiating the factory functors
 ####################################
 
-While it is completely possible to supply your own factory functions, we will use the predefined ones from the :py:mod:`scme_fitting.scme_factories` module:
+While it is completely possible to supply your own factory functions, we will use the predefined ones from the :py:mod:`chemfit.scme_factories` module:
 
 .. code-block:: python
 
-    from scme_fitting.scme_factories import SCMECalculatorFactory, SCMEParameterApplier
+    from chemfit.scme_factories import SCMECalculatorFactory, SCMEParameterApplier
 
     calc_factory = SCMECalculatorFactory(
                         default_scme_params=default_params,
@@ -144,7 +144,7 @@ We now simply instantiate the objective function by passing the factory functors
 
 .. code-block:: python
 
-    from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
+    from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
 
     scme_factories = MultiEnergyObjectiveFunction(
         calc_factory=calc_factory,

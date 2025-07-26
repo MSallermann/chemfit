@@ -8,7 +8,7 @@ Predefined objective functions
 The ``EnergyObjectiveFunction``
 ########################################
 
-The class :py:class:`scme_fitting.ase_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
+The class :py:class:`chemfit.ase_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
 Its main use is to serve as a building block for more complex objective functions.
 
 This objective function has the form
@@ -36,7 +36,7 @@ From these pieces of information we can construct the objective function:
 
 .. code-block:: python
 
-    from scme_fitting.ase_objective_function import EnergyObjectiveFunction
+    from chemfit.ase_objective_function import EnergyObjectiveFunction
 
     from my_calculator import MyCalculator
 
@@ -67,7 +67,7 @@ From these pieces of information we can construct the objective function:
 The ``MultiEnergyObjectiveFunction``
 ##############################################
 
-:py:class:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction` is used in much the same way as it's single energy counterpart.
+:py:class:`chemfit.multi_energy_objective_function.MultiEnergyObjectiveFunction` is used in much the same way as it's single energy counterpart.
 The only difference is that, instead of a single configuration/energy pair, it supports multiple - leading to an objective function value of
 
 .. math::
@@ -83,7 +83,7 @@ Crucially, the objective function still takes only a single ``parameter_applier`
 
 .. code-block:: python
 
-    from scme_fitting.multi_energy_objective_function import MultiEnergyObjectiveFunction
+    from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
 
     # ... assume the same definitions for `MyCalculatorFactory` and `MyCalculatorParameterApplier` from above
 
@@ -99,7 +99,7 @@ Crucially, the objective function still takes only a single ``parameter_applier`
     val = objective_function( {"x" : 2.0, "y": 1.0} )
 
 
-The ``MultiEnergyObjectiveFunction`` has a convenience function (:py:meth:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction.write_output`) to write a "report" (various json files and plots) to an output folder after a fit has been performed.
+The ``MultiEnergyObjectiveFunction`` has a convenience function (:py:meth:`chemfit.multi_energy_objective_function.MultiEnergyObjectiveFunction.write_output`) to write a "report" (various json files and plots) to an output folder after a fit has been performed.
 It can be used like this
 
 .. code-block:: python
@@ -118,15 +118,15 @@ It can be used like this
 The ``CombinedObjectiveFunction``
 #########################################
 
-The :py:class:`scme_fitting.combined_objective_function.CombinedObjectiveFunction` class is used to turn a list of individual objective functions into a single objective function which is the (weighted) sum of the individual terms.
+The :py:class:`chemfit.combined_objective_function.CombinedObjectiveFunction` class is used to turn a list of individual objective functions into a single objective function which is the (weighted) sum of the individual terms.
 
-Using it directly is likely not needed. You are more likely to indirectly use it via the derived class :py:class:`scme_fitting.multi_energy_objective_function.MultiEnergyObjectiveFunction`.
+Using it directly is likely not needed. You are more likely to indirectly use it via the derived class :py:class:`chemfit.multi_energy_objective_function.MultiEnergyObjectiveFunction`.
 
 Its use is demonstrated in the following:
 
 .. code-block:: python
 
-    from scme_fitting.combined_objective_function import CombinedObjectiveFunction
+    from chemfit.combined_objective_function import CombinedObjectiveFunction
 
     def a(p):
         return 1.0 * p["x"]**2

@@ -1,7 +1,7 @@
-scme\_fitting.utils module
+chemfit.scme\_setup module
 ==========================
 
-.. automodule:: scme_fitting.utils
+.. automodule:: chemfit.scme_setup
    :members:
    :show-inheritance:
    :undoc-members:

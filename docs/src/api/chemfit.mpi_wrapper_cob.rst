@@ -1,7 +1,7 @@
-scme\_fitting.data\_utils module
+chemfit.mpi\_wrapper\_cob module
 ================================
 
-.. automodule:: scme_fitting.data_utils
+.. automodule:: chemfit.mpi_wrapper_cob
    :members:
    :show-inheritance:
    :undoc-members:

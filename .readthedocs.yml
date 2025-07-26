@@ -7,7 +7,7 @@ build:
     python: "3.13"                # ← must be indented under tools:
   jobs:
     pre_build:
-      - sphinx-apidoc -o ./docs/src/api ./src/scme_fitting -f --remove-old
+      - sphinx-apidoc -o ./docs/src/api ./src/chemfit -f --remove-old
 
 sphinx:
   configuration: docs/conf.py

@@ -1,7 +1,7 @@
-scme_fitting
-============
+chemfit
+=======
 
 .. toctree::
    :maxdepth: 4
 
-   scme_fitting
+   chemfit

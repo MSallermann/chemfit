@@ -7,7 +7,7 @@ import abc
 import logging
 import numpy as np
 from ase.optimize import BFGS
-from scme_fitting.utils import dump_dict_to_file
+from chemfit.utils import dump_dict_to_file
 
 logger = logging.getLogger(__name__)
 
