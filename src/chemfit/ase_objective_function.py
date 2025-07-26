@@ -194,12 +194,11 @@ class ASEObjectiveFunction(abc.ABC):
         path_to_folder.mkdir(exist_ok=True, parents=True)
 
         meta_data = self.get_meta_data()
-        name = meta_data["saved_file"]
 
         dump_dict_to_file(path_to_folder / f"meta_{self.tag}.json", meta_data)
 
         if write_config:
-            write(path_to_folder / name, self.atoms)
+            write(path_to_folder / f"atoms_{self.tag}.xyz", self.atoms)
 
     def create_atoms_object(self) -> Atoms:
         """

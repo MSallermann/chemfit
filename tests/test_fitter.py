@@ -153,6 +153,47 @@ def test_with_complicated_dict():
     print(f"{fitter.info = }")
 
 
+def test_with_bad_function():
+
+    X_EXPECTED = 2.5
+
+    def ob(params):
+        if params["x"] < 1.0:
+            return None
+        elif params["x"] < 2.0:
+            raise Exception("Some random exception")
+        elif params["x"] < 3.0:
+            return (params["x"] - 2.5) ** 2
+        elif params["x"] < 4.0:
+            return float("Nan")
+        else:
+            return "not even a number"
+
+    for x0 in [0.25, 0.75, 1.5, 2.25]:
+        print(f"{x0 = }")
+
+        fitter = Fitter(
+            objective_function=ob, initial_params={"x": x0}, bounds={"x": (0.0, 3.0)}
+        )
+
+        # Nevergrad should be able to handle a shitty objective function like this
+        optimal_params = fitter.fit_nevergrad(budget=1000)
+        print(f"NEVERGRAD")
+        print(f"{optimal_params = }")
+        print(fitter.info)
+        assert np.isclose(optimal_params["x"], X_EXPECTED)
+
+        # SCIPY will probably fail, unless starting in the good region
+        optimal_params = fitter.fit_scipy()
+        print(f"SCIPY")
+        print(f"{optimal_params = }")
+        print(fitter.info)
+
+        # only assert if x0 is in the good region
+        if x0 >= 2.0 and x0 < 3.0:
+            assert np.isclose(optimal_params["x"], X_EXPECTED)
+
+
 if __name__ == "__main__":
     # test_with_square_func()
     # test_with_square_func_bounds()

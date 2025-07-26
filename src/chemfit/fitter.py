@@ -1,7 +1,10 @@
 import logging
 import numpy as np
-from typing import Optional, Callable
+from typing import Optional, Callable, Any
 import time
+
+from numbers import Real
+from functools import wraps
 
 from dataclasses import dataclass
 
@@ -18,6 +21,7 @@ class FitInfo:
     initial_value: float = -1.0
     final_value: float = -1.0
     time_taken: float = -1.0
+    n_evals: int = 0
 
 
 class Fitter:
@@ -41,7 +45,8 @@ class Fitter:
                 Dictionary of parameter bounds
         """
 
-        self.objective_function = objective_function
+        self.objective_function = self.ob_func_wrapper(objective_function)
+
         self.initial_parameters = initial_params
 
         if bounds is None:
@@ -49,7 +54,35 @@ class Fitter:
         else:
             self.bounds = bounds
 
+        self.value_bad_params = 1e5
+
         self.info = FitInfo()
+
+    def ob_func_wrapper(self, ob_func: Any) -> float:
+        """Wraps the objective function and applies some checks plus logging"""
+
+        @wraps(ob_func)
+        def wrapped_ob_func(params: dict):
+            # first we try if we can get a value at all
+            try:
+                value = ob_func(params)
+                self.info.n_evals += 1
+            except Exception:
+                logger.exception(
+                    f"Caught exception with params {params}. Clipping loss to {self.value_bad_params}"
+                )
+                value = self.value_bad_params
+
+            # then we make sure that the value is a float
+            if not isinstance(value, Real):
+                logger.error(
+                    f"Objective number did not return a single float, but returned {value}. Clipping loss to {self.value_bad_params}"
+                )
+                value = self.value_bad_params
+
+            return value
+
+        return wrapped_ob_func
 
     def hook_pre_fit(self):
         self.info = FitInfo()
@@ -61,6 +94,7 @@ class Fitter:
         self.info.initial_value = self.objective_function(self.initial_parameters)
         logger.info(f"    Initial obj func: {self.info.initial_value}")
 
+        self.info.n_evals = 0
         self.time_fit_start = time.time()
 
     def hook_post_fit(self, opt_params: dict):
@@ -92,11 +126,11 @@ class Fitter:
 
         optimizer = ng.optimizers.NgIohTuned(parametrization=instru, budget=budget)
 
-        def f(p):
+        def f_ng(p):
             params = unflatten_dict(p)
             return self.objective_function(params)
 
-        recommendation = optimizer.minimize(f, **kwargs)  # best value
+        recommendation = optimizer.minimize(f_ng, **kwargs)  # best value
         args, kwargs = recommendation.value
         self.info.final_value = recommendation.loss
 
@@ -170,6 +204,7 @@ class Fitter:
             p = unflatten_dict(dict(zip(self._keys, x)))
             return self.objective_function(p)
 
+        # ob = partial(self.ob_func_wrapper, ob_func=f_scipy)
         res = minimize(f_scipy, x0, bounds=bounds, **kwargs)
 
         if not res.success:

@@ -206,10 +206,6 @@ def test_multi_energy_ob_function_fitting_mpi():
         SCMECalculatorFactory,
         SCMEParameterApplier,
     )
-    from chemfit import HAS_MPI
-
-    if not HAS_MPI:
-        return
 
     from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
