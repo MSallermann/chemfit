@@ -20,8 +20,3 @@ Repository = "https://github.com/MSallermann/chemfit"
 [project.optional-dependencies]
 build_docs = ["sphinx", "furo", "sphinxcontrib-napoleon", "sphinx-autobuild"]
 mpi = ["mpi4py"]
-
-
-[build-system]
-requires = ["setuptools >= 77.0.3"]
-build-backend = "setuptools.build_meta"

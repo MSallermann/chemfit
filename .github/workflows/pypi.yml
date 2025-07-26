@@ -30,16 +30,21 @@ jobs:
           name: dist_artifact
           path: dist/*
 
-      - name: Append temporary build number
+      # The following step renames the wheel and puts the timestamp as a local version suffix.
+      # This allows us to avoid versions conflicts on test.pypi
+      # First we get the original version from pyproject.toml
+      # then we wipe the prvious dist/ folder
+      # then we build again
+      - name: Inject temporary build number into pyproject.toml and rebuild
+        shell: bash
         run: |
-          cd dist
-          wheel unpack chemfit* --dest ./unpacked
-          rm chemfit*.whl
-          sha=$(git rev-parse --short ${{ github.sha }})
-          wheel pack ./unpacked/chemfit* --build-number ${sha}
-          rm -rf unpacked
+          orig_version=$(grep '^version =' pyproject.toml)
+          timestamp=$(date +%Y%m%d%H%M)
+          sed -i "s/^version = .*/version = \"2.1.0.dev${timestamp}\"/" pyproject.toml
+          rm -rf ./dist
+          python -m build --wheel
 
-
+      # Then we upload the test artifact as well
       - name: Upload built artifacts test
         uses: actions/upload-artifact@v4
         with:
@@ -79,10 +84,20 @@ jobs:
     needs: test-pypi-publish
     runs-on: ubuntu-latest
     steps:
-    - name: Try to install from test.pypi
-      run: pip install --upgrade -i https://test.pypi.org/simple/ chemfit
 
-    # retrieve the repo to get the tests
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.x'
+
+    - name: Try to install from test.pypi
+      run: | 
+        pip install --upgrade \
+        --index-url https://test.pypi.org/simple/ \
+        --extra-index-url https://pypi.org/simple \
+        chemfit
+
+    # check the repo to get the tests
     - name: Check out code
       uses: actions/checkout@v4
 
@@ -92,27 +107,27 @@ jobs:
     - name: Run tests
       run: pytest
 
-  # pypi-publish:
-  #   name: Upload release to pypi
-  #   needs: test-install-from-test-pypi
-  #   runs-on: ubuntu-latest
-  #   if: >
-  #     contains(github.event.head_commit.message, 'PUBLISH: pypi')
-  #   environment:
-  #     name: pypi
-  #     url: https://pypi.org/p/pydictnest
-  #   permissions:
-  #     id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
-  #   steps:
+  pypi-publish:
+    name: Upload release to pypi
+    needs: test-install-from-test-pypi
+    runs-on: ubuntu-latest
+    if: >
+      contains(github.event.head_commit.message, 'PUBLISH: pypi')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/chemfit
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
 
-  #     - name: Download built distributions
-  #       uses: actions/download-artifact@v4
-  #       with:
-  #         name: dist_artifact
-  #         path: dist/
+      - name: Download built distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist_artifact
+          path: dist/
 
-  #     - name: Publish package distributions to pypi
-  #       uses: pypa/gh-action-pypi-publish@release/v1
-  #       with:
-  #         verbose: true
-  #         skip-existing: true
+      - name: Publish package distributions to pypi
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
+          skip-existing: true
