@@ -90,7 +90,7 @@ jobs:
           skip-existing: true
 
   test-install-from-test-pypi:
-    needs: test-pypi-publish
+    needs: [test-pypi-publish, build] # needs to depend on build to have access to the exact package version
     runs-on: ubuntu-latest
     steps:
 
