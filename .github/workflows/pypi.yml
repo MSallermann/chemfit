@@ -60,6 +60,9 @@ jobs:
           name: dist_artifact_test
           path: dist/*
   
+      - name: Setup MPI
+        uses: mpi4py/setup-mpi@v1
+
       - name: Install nox
         uses: wntrblm/nox@2024.04.15
 

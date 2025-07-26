@@ -73,11 +73,6 @@ def test_lj():
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_lj_mpi():
-    from chemfit import HAS_MPI
-
-    if not HAS_MPI:
-        return
-
     from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     ### Construct the objective function on *all* ranks
