@@ -8,6 +8,8 @@ from functools import wraps
 
 from dataclasses import dataclass
 
+import math
+
 from pydictnest import (
     flatten_dict,
     unflatten_dict,
@@ -75,8 +77,14 @@ class Fitter:
 
             # then we make sure that the value is a float
             if not isinstance(value, Real):
-                logger.error(
-                    f"Objective number did not return a single float, but returned {value}. Clipping loss to {self.value_bad_params}"
+                logger.warning(
+                    f"Objective function did not return a single float, but returned `{value}` with type {type(value)}. Clipping loss to {self.value_bad_params}"
+                )
+                value = self.value_bad_params
+
+            if math.isnan(value):
+                logger.warning(
+                    f"Objective function returned NaN. Clipping loss to {self.value_bad_params}"
                 )
                 value = self.value_bad_params
 

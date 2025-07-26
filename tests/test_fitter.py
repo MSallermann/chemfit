@@ -29,7 +29,7 @@ def test_with_square_func():
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=100)
+    optimal_params = fitter.fit_nevergrad(budget=1000)
 
     print(f"{optimal_params = }")
     assert np.isclose(optimal_params["x"], 2.0, atol=1e-2)
@@ -64,7 +64,7 @@ def test_with_square_func_bounds():
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=100)
+    optimal_params = fitter.fit_nevergrad(budget=1000)
 
     print(optimal_params)
     assert np.isclose(optimal_params["x"], 1.5, atol=1e-2)
@@ -98,7 +98,7 @@ def test_with_nested_dict():
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=100)
+    optimal_params = fitter.fit_nevergrad(budget=1000)
 
     print(optimal_params)
     assert np.isclose(optimal_params["params"]["x"], 1.5, atol=1e-2)
@@ -144,7 +144,7 @@ def test_with_complicated_dict():
     assert np.isclose(ob(initial_params), fitter.info.initial_value)
     assert np.isclose(ob(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=500)
+    optimal_params = fitter.fit_nevergrad(budget=1000)
     print(f"{optimal_params = }")
     check_solution(optimal_params)
     assert np.isclose(ob(initial_params), fitter.info.initial_value)
@@ -169,11 +169,11 @@ def test_with_bad_function():
         else:
             return "not even a number"
 
-    for x0 in [0.25, 0.75, 1.5, 2.25]:
+    for x0 in [0.5, 1.5, 2.5, 3.5, 4.5]:
         print(f"{x0 = }")
 
         fitter = Fitter(
-            objective_function=ob, initial_params={"x": x0}, bounds={"x": (0.0, 3.0)}
+            objective_function=ob, initial_params={"x": x0}, bounds={"x": (0.0, 5.0)}
         )
 
         # Nevergrad should be able to handle a shitty objective function like this
