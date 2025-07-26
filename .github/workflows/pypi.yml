@@ -9,6 +9,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # only need to fetch your code
+    outputs:
+      test-package-version: ${{steps.set-test-version.outputs.version}}
     steps:
       - name: Check out code
         uses: actions/checkout@v4
@@ -36,11 +38,18 @@ jobs:
       # then we wipe the prvious dist/ folder
       # then we build again
       - name: Inject temporary build number into pyproject.toml and rebuild
+        id: set-test-version
         shell: bash
         run: |
           orig_version=$(grep '^version =' pyproject.toml)
           timestamp=$(date +%Y%m%d%H%M)
-          sed -i "s/^version = .*/version = \"2.1.0.dev${timestamp}\"/" pyproject.toml
+
+          version="2.1.0.dev${timestamp}"
+          echo "version=${version}" >> $GITHUB_ENV
+          echo "version=${version}" >> $GITHUB_OUTPUT
+
+          sed -i "s/^version = .*/version = \"${version}\"/" pyproject.toml
+
           rm -rf ./dist
           python -m build --wheel
 
@@ -51,11 +60,11 @@ jobs:
           name: dist_artifact_test
           path: dist/*
   
-      # - name: Install nox
-      #   uses: wntrblm/nox@2024.04.15
+      - name: Install nox
+        uses: wntrblm/nox@2024.04.15
 
-      # - name: Run tests
-      #   run: nox
+      - name: Run tests
+        run: nox
 
   test-pypi-publish:
     name: Upload release to test.pypi
@@ -95,7 +104,7 @@ jobs:
         pip install --upgrade \
         --index-url https://test.pypi.org/simple/ \
         --extra-index-url https://pypi.org/simple \
-        chemfit
+        chemfit==${{needs.build.outputs.test-package-version}}
 
     # check the repo to get the tests
     - name: Check out code
