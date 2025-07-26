@@ -54,6 +54,13 @@ jobs:
           name: dist_artifact
           path: dist/
 
+      - name: Append temporary build number
+        run: |
+          cd dist
+          wheel unpack chemfit*
+          rm chemfit*.whl
+          wheel pack ./chemfit* --build-number "${{github.event.repository.updated_at}}.${{github.sha}}"
+
       - name: Publish package distributions to test.pypi
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -78,27 +85,27 @@ jobs:
     - name: Run tests
       run: pytest
 
-  pypi-publish:
-    name: Upload release to pypi
-    needs: test-install-from-test-pypi
-    runs-on: ubuntu-latest
-    if: >
-      contains(github.event.head_commit.message, 'PUBLISH: pypi')
-    environment:
-      name: pypi
-      url: https://pypi.org/p/pydictnest
-    permissions:
-      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
-    steps:
+  # pypi-publish:
+  #   name: Upload release to pypi
+  #   needs: test-install-from-test-pypi
+  #   runs-on: ubuntu-latest
+  #   if: >
+  #     contains(github.event.head_commit.message, 'PUBLISH: pypi')
+  #   environment:
+  #     name: pypi
+  #     url: https://pypi.org/p/pydictnest
+  #   permissions:
+  #     id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+  #   steps:
 
-      - name: Download built distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: dist_artifact
-          path: dist/
+  #     - name: Download built distributions
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: dist_artifact
+  #         path: dist/
 
-      - name: Publish package distributions to pypi
-        uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          verbose: true
-          skip-existing: true
+  #     - name: Publish package distributions to pypi
+  #       uses: pypa/gh-action-pypi-publish@release/v1
+  #       with:
+  #         verbose: true
+  #         skip-existing: true
