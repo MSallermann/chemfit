@@ -37,10 +37,7 @@ def apply_params_lj(atoms: Atoms, params: dict[str, float]):
     atoms.calc.parameters.epsilon = params["epsilon"]
 
 
-def test_lj():
-    eps = 1.0
-    sigma = 1.0
-
+def get_ob_func(eps: float, sigma: float) -> MultiEnergyObjectiveFunction:
     r_min = 2 ** (1 / 6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
@@ -52,12 +49,19 @@ def test_lj():
         path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
     )
 
+    return ob
+
+
+def test_lj():
+    eps = 1.0
+    sigma = 1.0
+
+    ob = get_ob_func(eps, sigma)
+
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
     fitter = Fitter(ob, initial_params=initial_params)
-    opt_params = fitter.fit_scipy(options=dict(disp=True))
-
-    print(opt_params)
+    opt_params = fitter.fit_scipy()
 
     output_folder = Path(__file__).parent / "output/lj"
 
@@ -79,27 +83,18 @@ def test_lj_mpi():
     eps = 1.0
     sigma = 1.0
 
-    r_min = 2 ** (1 / 6) * sigma
-    r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
+    ob = get_ob_func(eps, sigma)
 
-    ob = MultiEnergyObjectiveFunction(
-        calc_factory=construct_lj,
-        param_applier=apply_params_lj,
-        tag_list=[f"lj_{r:.2f}" for r in r_list],
-        reference_energy_list=[e_lj(r, eps, sigma) for r in r_list],
-        path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
-    )
+    initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
     # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
     with MPIWrapperCOB(ob, finalize_mpi=False) as ob_mpi:
         # The optimization needs to run on the first rank only
         if ob_mpi.rank == 0:
-            initial_params = {"epsilon": 2.0, "sigma": 1.5}
-            bounds = {"epsilon": (0.1, 10), "sigma": (0.5, 3.0)}
-            fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
-            # opt_params = fitter.fit_scipy(options=dict(disp=True))
-            opt_params = fitter.fit_nevergrad(budget=100)
+
+            fitter = Fitter(ob_mpi, initial_params=initial_params)
+            opt_params = fitter.fit_scipy()
 
             output_folder = Path(__file__).parent / "output/lj_mpi"
 
