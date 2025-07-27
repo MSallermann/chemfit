@@ -70,7 +70,6 @@ class PathAtomsFactory:
         self.index = index
 
     def __call__(self) -> Atoms:
-        logger.debug(f"Loading configuration from {self.path}")
         atoms = read(self.path, self.index, parallel=False)
         return atoms
 
@@ -261,7 +260,6 @@ class ASEObjectiveFunction(abc.ABC):
         self.atoms.calc.calculate(self.atoms)
         self._last_energy = self.atoms.get_potential_energy()
 
-        logger.debug(f"Calculated energy (tag = {self.tag}): {self._last_energy}")
         return self._last_energy
 
     def check_atoms(self, atoms: Atoms) -> bool:
@@ -361,11 +359,6 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         energy = self.compute_energy(parameters)
         error = (energy - self.reference_energy) ** 2
         objective_contribution = error * self.weight
-        logger.debug(f"Parameters applied: {parameters}")
-        logger.debug(f"Computed energy: {energy}")
-        logger.debug(f"Reference energy: {self.reference_energy}")
-        logger.debug(f"Weight: {self.weight}")
-        logger.debug(f"Objective contribution: {objective_contribution}")
         return objective_contribution
 
 
@@ -459,11 +452,6 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         optimizer = BFGS(self.atoms)
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
         self.OO_distance = self.atoms.get_distance(0, 3, mic=True)
-        logger.debug(f"Relaxed O-O distance: {self.OO_distance}")
         diff = self.OO_distance - self.reference_OO_distance
         objective_value = self.weight * diff**2
-        logger.debug(f"Parameters applied: {parameters}")
-        logger.debug(f"Target O-O distance: {self.reference_OO_distance}")
-        logger.debug(f"Weight: {self.weight}")
-        logger.debug(f"Objective value: {objective_value}")
         return objective_value

@@ -161,8 +161,6 @@ class MultiEnergyObjectiveFunction(CombinedObjectiveFunction):
         output_folder = chemfit.utils.next_free_folder(Path(folder_name))
         output_folder.mkdir(exist_ok=True, parents=True)
 
-        logger.info(f"Output folder: {output_folder}")
-
         meta: dict[str, object] = {"name": folder_name}
 
         chemfit.utils.dump_dict_to_file(output_folder / "meta.json", meta)

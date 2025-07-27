@@ -49,14 +49,14 @@ class MPIWrapperCOB:
                 try:
                     local_total = self.cob(params, idx_slice=slice(start, end))
                 except Exception as e:
-                    logging.warning(
+                    logging.debug(
                         f"Caught exception while evaluating ({start},{end}). Returning Nan."
                     )
 
                     local_total = float("NaN")
                 finally:
                     if not isinstance(local_total, Real):
-                        logging.warning(
+                        logging.debug(
                             f"Index ({start},{end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
                         )
                         local_total = float("NaN")

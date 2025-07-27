@@ -5,11 +5,7 @@ from .scme_setup import (
 )
 from ase import Atoms
 from pathlib import Path
-import logging
-
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 class SCMECalculatorFactory:
@@ -27,11 +23,6 @@ class SCMECalculatorFactory:
         # Attach a fresh copy of default SCME parameters to this Atoms object
         if not check_water_is_in_OHH_order(atoms=atoms):
             atoms = arrange_water_in_OHH_order(atoms)
-
-        logger.debug("Setting up calculator")
-        logger.debug(f"    {self.default_scme_params = }")
-        logger.debug(f"    {self.path_to_scme_expansions = }")
-        logger.debug(f"    {self.parametrization_key = }")
 
         setup_calculator(
             atoms,

@@ -70,7 +70,7 @@ class Fitter:
                 value = ob_func(params)
                 self.info.n_evals += 1
             except Exception:
-                logger.warning(
+                logger.debug(
                     f"Caught exception with params {params}. Clipping loss to {self.value_bad_params}",
                     exc_info=True,
                 )
@@ -78,13 +78,13 @@ class Fitter:
 
             # then we make sure that the value is a float
             if not isinstance(value, Real):
-                logger.warning(
+                logger.debug(
                     f"Objective function did not return a single float, but returned `{value}` with type {type(value)}. Clipping loss to {self.value_bad_params}"
                 )
                 value = self.value_bad_params
 
             if math.isnan(value):
-                logger.warning(
+                logger.debug(
                     f"Objective function returned NaN. Clipping loss to {self.value_bad_params}"
                 )
                 value = self.value_bad_params
