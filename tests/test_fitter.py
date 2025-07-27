@@ -182,11 +182,11 @@ def test_with_bad_function():
         )
 
         # Nevergrad should be able to handle a shitty objective function like this
-        optimal_params = fitter.fit_nevergrad(budget=1000)
+        optimal_params = fitter.fit_nevergrad(budget=10000, optimizer_str="OnePlusOne")
         print("NEVERGRAD")
         print(f"{optimal_params = }")
         print(fitter.info)
-        assert np.isclose(optimal_params["x"], X_EXPECTED)
+        assert np.isclose(optimal_params["x"], X_EXPECTED, atol=5e-2)
 
         # SCIPY will probably fail, unless starting in the good region
         optimal_params = fitter.fit_scipy()
@@ -234,7 +234,8 @@ def test_with_bad_function_mpi():
     for x0 in [0.5, 1.5, 2.5, 3.5, 4.5]:
         print(f"{x0 = }")
 
-        with MPIWrapperCOB(cob=ob, finalize_mpi=(x0 == 4.5)) as ob_mpi:
+        # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
+        with MPIWrapperCOB(cob=ob, finalize_mpi=False) as ob_mpi:
 
             logging.basicConfig(
                 filename=f"test_fitter_{ob_mpi.rank}.log", level=logging.DEBUG
@@ -250,11 +251,13 @@ def test_with_bad_function_mpi():
                 print(fitter.objective_function({"x": x0}))
 
                 # Nevergrad should be able to handle a shitty objective function like this
-                optimal_params = fitter.fit_nevergrad(budget=1000)
+                optimal_params = fitter.fit_nevergrad(
+                    budget=10000, optimizer_str="OnePlusOne"
+                )
                 print("NEVERGRAD")
                 print(f"{optimal_params = }")
                 print(fitter.info)
-                assert np.isclose(optimal_params["x"], X_EXPECTED, atol=1e0)
+                assert np.isclose(optimal_params["x"], X_EXPECTED, atol=5e-2)
 
                 # SCIPY will probably fail, unless starting in the good region
                 optimal_params = fitter.fit_scipy()

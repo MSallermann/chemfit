@@ -218,7 +218,8 @@ def test_multi_energy_ob_function_fitting_mpi():
         weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
     )
 
-    with MPIWrapperCOB(ob) as ob_mpi:
+    # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
+    with MPIWrapperCOB(ob, finalize_mpi=False) as ob_mpi:
         if ob_mpi.rank == 0:
             start = time.time()
 

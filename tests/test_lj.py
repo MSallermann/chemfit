@@ -91,7 +91,8 @@ def test_lj_mpi():
     )
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    with MPIWrapperCOB(ob) as ob_mpi:
+    # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
+    with MPIWrapperCOB(ob, finalize_mpi=False) as ob_mpi:
         # The optimization needs to run on the first rank only
         if ob_mpi.rank == 0:
             initial_params = {"epsilon": 2.0, "sigma": 1.5}
