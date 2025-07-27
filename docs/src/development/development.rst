@@ -36,7 +36,7 @@ Make sure to install the Sphinx dependencies. You can do so by specifying the ``
 
 .. code-block:: bash
 
-    pip install -e "ChemFit[build_docs]"
+    pip install -e "chemfit[build_docs]"
 
 
 Then you can build the documentation by invoking the following from the repository root

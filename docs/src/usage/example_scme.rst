@@ -19,7 +19,7 @@ The first step is, of course, to obtain all the reference configurations as well
 Generally, it is a good idea to store the paths to the reference configurations, reference energies and some tags in a file somewhere on your computer.
 In the example data above, this file is called ``energies.csv``. It has three columns (if you ignore the index): ``file``, ``reference_energy`` and ``tag``.
 
-We are very lucky since the :py:func:`chemfit.data_utils.process_csv` function provides a utility to parse exactly this information from a CSV file:
+We are very lucky since the :py:func:`~chemfit.data_utils.process_csv` function provides a utility to parse exactly this information from a CSV file:
 
 .. code-block:: python
 
@@ -122,7 +122,7 @@ If any of these are ``None``, the generalized SCME will **not** be used.
 Instantiating the factory functors
 ####################################
 
-While it is completely possible to supply your own factory functions, we will use the predefined ones from the :py:mod:`chemfit.scme_factories` module:
+While it is completely possible to supply your own factory functions, we will use the predefined ones from the :py:mod:`~chemfit.scme_factories` module:
 
 .. code-block:: python
 

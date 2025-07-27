@@ -6,19 +6,20 @@ ASE Objective Function API
 
 
 This page shows how to implement and use the ASE-specific "functors" (callable objects) that plug into the ASEObjectiveFunction framework via the
-:py:class:`chemfit.ase_objective_function.CalculatorFactory`,
-:py:class:`chemfit.ase_objective_function.ParameterApplier`, and
-:py:class:`chemfit.ase_objective_function.AtomsPostProcessor` protocols.
+:py:class:`~chemfit.ase_objective_function.CalculatorFactory`,
+:py:class:`~chemfit.ase_objective_function.ParameterApplier`, and
+:py:class:`~chemfit.ase_objective_function.AtomsPostProcessor` protocols.
 
 CalculatorFactory
 ############################
 
-A **CalculatorFactory** is any callable implementing the :py:class:`chemfit.ase_objective_function.CalculatorFactory` protocol.
+A **CalculatorFactory** is any callable implementing the :py:class:`~chemfit.ase_objective_function.CalculatorFactory` protocol.
 This means it must be callable with the signature
 
 .. code-block:: python
 
-    factory(atoms: ase.Atoms) -> None
+    def factory(atoms: ase.Atoms) -> None
+        ...
 
 It must construct a calculator and attach it to the ``atoms.calc`` member.
 
@@ -31,7 +32,7 @@ Example: LJ calculator factory
     def construct_lj(atoms: Atoms):
         atoms.calc = LennardJones(rc=2000)
 
-For a more sophisticated example, see :py:class:`chemfit.scme_factories:SCMECalculatorFactory`
+For a more sophisticated example, see :py:class:`~chemfit.scme_factories:SCMECalculatorFactory`
 
 
 ParameterApplier
@@ -56,7 +57,7 @@ Example: LJ parameter applier
         atoms.calc.parameters.sigma = params["sigma"]
         atoms.calc.parameters.epsilon = params["epsilon"]
 
-For a more sophisticated example see :py:class:`chemfit.scme_factories.SCMEParameterApplier`.
+For a more sophisticated example see :py:class:`~chemfit.scme_factories.SCMEParameterApplier`.
 
 
 Putting it all together
@@ -117,11 +118,11 @@ AtomsFactory
 ----------------------
 In the example above, the ``ase.Atoms`` object is created from a path to a configuration file.
 In some cases it might be required to have more fine grained control over the creation of the atoms object.
-For such situations :py:class:`chemfit.ase_objective_function.ASEObjectiveFunction` provides the option to pass an implementation 
-of an **AtomsFactory** protocol (defined in :py:class:`chemfit.ase_objective_function.AtomsFactory`) in the ``atoms_factory`` argument of the initializer (:py:meth:`chemfit.ase_objective_function.ASEObjectiveFunction`).
+For such situations :py:class:`~chemfit.ase_objective_function.ASEObjectiveFunction` provides the option to pass an implementation 
+of an **AtomsFactory** protocol (defined in :py:class:`~chemfit.ase_objective_function.AtomsFactory`) in the ``atoms_factory`` argument of the initializer (:py:meth:`~chemfit.ase_objective_function.ASEObjectiveFunction`).
 
 .. note::
-    Under the hood the ``path_to_reference_configuration`` argument is just a convenient way to construct a :py:class:`chemfit.ase_objective_function.PathAtomsFactory`
+    Under the hood the ``path_to_reference_configuration`` argument is just a convenient way to construct a :py:class:`~chemfit.ase_objective_function.PathAtomsFactory`
 
 .. warning::
     If both ``atoms_factory`` and ``path_to_reference_configuration`` are specified, ``atoms_factory`` takes precedence.
@@ -145,9 +146,9 @@ As a more complex example, lets define a **LJAtomsFactory** to simplify the cons
     from ase.calculators.lj import LennardJones
     from ase import Atoms
     import numpy as np
-
     from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
     from chemfit.fitter import Fitter
+
 
     class LJAtomsFactory:
         def __init__(self, r: float):
@@ -174,9 +175,9 @@ As a more complex example, lets define a **LJAtomsFactory** to simplify the cons
 
     eps = 1.0
     sigma = 1.0
-
     r_min = 2 ** (1 / 6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
+
 
     ob = MultiEnergyObjectiveFunction(
         calc_factory=construct_lj,
@@ -210,4 +211,4 @@ Example: trivial post-processor
         com = atoms.get_center_of_mass()
         atoms.positions -= com
 
-It is passed to the initializer of :py:class:`chemfit.ase_objective_function.ASEObjectiveFunction`.
+It is passed to the initializer of :py:class:`~chemfit.ase_objective_function.ASEObjectiveFunction`.
