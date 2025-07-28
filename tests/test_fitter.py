@@ -13,6 +13,8 @@ import logging
 
 from pydictnest import items_nested, has_nested, get_nested
 
+NG_SOLVERS = ["CMA", "NgIohTuned", "Carola3"]
+
 
 def test_with_square_func():
     def cont1(params):
@@ -34,13 +36,16 @@ def test_with_square_func():
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=1000)
+    for opt in NG_SOLVERS:
+        optimal_params = fitter.fit_nevergrad(budget=1000, optimizer_str=opt)
+        print(f"{opt = }")
+        print(f"{optimal_params = }")
+        print(f"{fitter.info = }")
 
-    print(f"{optimal_params = }")
-    assert np.isclose(optimal_params["x"], 2.0, atol=1e-2)
-    assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
-    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
+        assert np.isclose(optimal_params["x"], 2.0, atol=1e-2)
+        assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
+        assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+        assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     print(f"{fitter.info = }")
 
@@ -64,18 +69,22 @@ def test_with_square_func_bounds():
     optimal_params = fitter.fit_scipy()
 
     print(f"{optimal_params = }")
+    print(f"{fitter.info = }")
     assert np.isclose(optimal_params["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=1000)
+    for opt in NG_SOLVERS:
+        optimal_params = fitter.fit_nevergrad(budget=1000, optimizer_str=opt)
+        print(f"{opt = }")
+        print(f"{optimal_params = }")
+        print(f"{fitter.info = }")
 
-    print(optimal_params)
-    assert np.isclose(optimal_params["x"], 1.5, atol=1e-2)
-    assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
-    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
+        assert np.isclose(optimal_params["x"], 1.5, atol=1e-2)
+        assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
+        assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
+        assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     print(f"{fitter.info = }")
 
@@ -98,6 +107,7 @@ def test_with_nested_dict():
 
     optimal_params = fitter.fit_scipy()
     print(f"{optimal_params = }")
+    print(f"{fitter.info = }")
     assert np.isclose(optimal_params["params"]["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
@@ -105,13 +115,12 @@ def test_with_nested_dict():
 
     optimal_params = fitter.fit_nevergrad(budget=1000)
 
-    print(optimal_params)
+    print(f"{optimal_params = }")
+    print(f"{fitter.info = }")
     assert np.isclose(optimal_params["params"]["x"], 1.5, atol=1e-2)
     assert np.isclose(optimal_params["y"], -1.0, atol=1e-2)
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
-
-    print(f"{fitter.info = }")
 
 
 def test_with_complicated_dict():
@@ -145,12 +154,14 @@ def test_with_complicated_dict():
 
     optimal_params = fitter.fit_scipy()
     print(f"{optimal_params = }")
+    print(f"{fitter.info = }")
     check_solution(optimal_params)
     assert np.isclose(ob(initial_params), fitter.info.initial_value)
     assert np.isclose(ob(optimal_params), fitter.info.final_value)
 
     optimal_params = fitter.fit_nevergrad(budget=1000)
     print(f"{optimal_params = }")
+    print(f"{fitter.info = }")
     check_solution(optimal_params)
     assert np.isclose(ob(initial_params), fitter.info.initial_value)
     assert np.isclose(ob(optimal_params), fitter.info.final_value)
@@ -185,7 +196,7 @@ def test_with_bad_function():
         optimal_params = fitter.fit_nevergrad(budget=10000, optimizer_str="OnePlusOne")
         print("NEVERGRAD")
         print(f"{optimal_params = }")
-        print(fitter.info)
+        print(f"{fitter.info = }")
         assert np.isclose(optimal_params["x"], X_EXPECTED, atol=5e-2)
 
         # SCIPY will probably fail, unless starting in the good region
@@ -256,14 +267,15 @@ def test_with_bad_function_mpi():
                 )
                 print("NEVERGRAD")
                 print(f"{optimal_params = }")
-                print(fitter.info)
+                print(f"{fitter.info = }")
+
                 assert np.isclose(optimal_params["x"], X_EXPECTED, atol=5e-2)
 
                 # SCIPY will probably fail, unless starting in the good region
                 optimal_params = fitter.fit_scipy()
                 print("SCIPY")
                 print(f"{optimal_params = }")
-                print(fitter.info)
+                print(f"{fitter.info = }")
 
                 # only assert if x0 is in the good region
                 if x0 >= 2.0 and x0 < 3.0:

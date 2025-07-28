@@ -135,7 +135,11 @@ class Fitter:
 
         instru = ng.p.Instrumentation(ng_params)
 
-        OptimizerCls = ng.optimizers.registry[optimizer_str]
+        try:
+            OptimizerCls = ng.optimizers.registry[optimizer_str]
+        except KeyError as e:
+            e.add_note(f"Available solvers: {list(ng.optimizers.registry.keys())}")
+            raise e
 
         optimizer = OptimizerCls(parametrization=instru, budget=budget)
 
