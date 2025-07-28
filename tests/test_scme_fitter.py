@@ -230,6 +230,8 @@ def test_multi_energy_ob_function_fitting_mpi():
             print(f"{optimal_params = }")
             end = time.time()
             print(f"time taken = {end - start} seconds")
+        else:
+            ob_mpi.worker_loop()
 
 
 if __name__ == "__main__":

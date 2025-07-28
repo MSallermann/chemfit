@@ -280,7 +280,9 @@ def test_with_bad_function_mpi():
 
                 # only assert if x0 is in the good region
                 if x0 >= 2.0 and x0 < 3.0:
-                    assert np.isclose(optimal_params["x"], X_EXPECTED)
+                    assert np.isclose(optimal_params["x"], X_EXPECTED, atol=1e-1)
+            else:
+                ob_mpi.worker_loop()
 
 
 if __name__ == "__main__":

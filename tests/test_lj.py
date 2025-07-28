@@ -12,29 +12,7 @@ import numpy as np
 from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
 from chemfit.fitter import Fitter
 from pathlib import Path
-
-
-class LJAtomsFactory:
-    def __init__(self, r: float):
-        p0 = np.zeros(3)
-        p1 = np.array([r, 0.0, 0.0])
-        self.atoms = Atoms(positions=[p0, p1])
-
-    def __call__(self):
-        return self.atoms
-
-
-def e_lj(r, eps, sigma):
-    return 4.0 * eps * ((sigma / r) ** 6 - 1.0) * (sigma / r) ** 6
-
-
-def construct_lj(atoms: Atoms):
-    atoms.calc = LennardJones(rc=2000)
-
-
-def apply_params_lj(atoms: Atoms, params: dict[str, float]):
-    atoms.calc.parameters.sigma = params["sigma"]
-    atoms.calc.parameters.epsilon = params["epsilon"]
+from conftest import construct_lj, apply_params_lj, LJAtomsFactory, e_lj
 
 
 def get_ob_func(eps: float, sigma: float) -> MultiEnergyObjectiveFunction:
@@ -89,11 +67,9 @@ def test_lj_mpi():
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
     # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
-    with MPIWrapperCOB(ob, finalize_mpi=False) as ob_mpi:
-        # The optimization needs to run on the first rank only
-        if ob_mpi.rank == 0:
-
-            fitter = Fitter(ob_mpi, initial_params=initial_params)
+    with MPIWrapperCOB(ob, finalize_mpi=False) as mpi:
+        if mpi.rank == 0:
+            fitter = Fitter(mpi, initial_params=initial_params)
             opt_params = fitter.fit_scipy()
 
             output_folder = Path(__file__).parent / "output/lj_mpi"
@@ -106,8 +82,14 @@ def test_lj_mpi():
 
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)
+        else:
+            mpi.worker_loop()
 
 
 if __name__ == "__main__":
+    import logging
+
+    logging.basicConfig(filename="test_lj.log")
+
     # test_lj()
     test_lj_mpi()

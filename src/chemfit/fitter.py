@@ -74,7 +74,7 @@ class Fitter:
             except FactoryException as e:
                 # If we catch a factory exception we should just crash the code
                 logging.exception(
-                    "Caught factory exception while objective function. Crashing."
+                    "Caught factory exception while evaluating objective function. Crashing."
                 )
                 raise e
             except Exception:
