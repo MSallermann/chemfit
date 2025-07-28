@@ -6,6 +6,8 @@ import time
 from numbers import Real
 from functools import wraps
 
+from chemfit.exceptions import FactoryException
+
 from dataclasses import dataclass
 
 import math
@@ -69,6 +71,12 @@ class Fitter:
             try:
                 value = ob_func(params)
                 self.info.n_evals += 1
+            except FactoryException as e:
+                # If we catch a factory exception we should just crash the code
+                logging.exception(
+                    "Caught factory exception while objective function. Crashing."
+                )
+                raise e
             except Exception:
                 logger.debug(
                     f"Caught exception with params {params}. Clipping loss to {self.value_bad_params}",
@@ -103,12 +111,26 @@ class Fitter:
         self.info.initial_value = self.objective_function(self.initial_parameters)
         logger.info(f"    Initial obj func: {self.info.initial_value}")
 
+        if self.info.initial_value == self.value_bad_params:
+            logger.warning(
+                f"Starting optimization in a `bad` region. Objective function could not be evaluated properly. Loss has been set to {self.value_bad_params = }"
+            )
+        elif self.info.initial_value > self.value_bad_params:
+            logger.warning(
+                f"Starting optimization in a high loss region. Loss is greater than {self.value_bad_params = }"
+            )
+
         self.info.n_evals = 0
         self.time_fit_start = time.time()
 
     def hook_post_fit(self, opt_params: dict):
         self.time_fit_end = time.time()
         self.info.time_taken = self.time_fit_end - self.time_fit_start
+
+        if self.info.final_value >= self.value_bad_params:
+            logger.warning(
+                f"Ending optimization in a `bad` region. Loss is greater or equal to {self.value_bad_params = }"
+            )
 
         logger.info("End fitting")
         logger.info(f"    Final objective function {self.info.final_value}")

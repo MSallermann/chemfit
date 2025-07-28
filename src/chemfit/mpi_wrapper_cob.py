@@ -49,8 +49,14 @@ class MPIWrapperCOB:
                 try:
                     local_total = self.cob(params, idx_slice=slice(start, end))
                 except Exception as e:
+                    # We only log this at the debug level otherwise we might create *huge* logfiles when the objective function is called in a loop
                     logging.debug(
                         f"Caught exception while evaluating ({start},{end}). Returning Nan."
+                    )
+                    logging.debug(
+                        e,
+                        stack_info=True,
+                        stacklevel=2,
                     )
 
                     local_total = float("NaN")

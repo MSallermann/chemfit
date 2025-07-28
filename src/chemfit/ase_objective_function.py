@@ -1,13 +1,14 @@
 from ase import Atoms
 from ase.io import read, write
-from typing import Optional, Callable, Union, Protocol, Any
+from typing import Optional, Callable, Protocol, Any
 from pathlib import Path
-import json
 import abc
 import logging
 import numpy as np
 from ase.optimize import BFGS
 from chemfit.utils import dump_dict_to_file
+
+from chemfit.exceptions import FactoryException
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +73,18 @@ class PathAtomsFactory:
     def __call__(self) -> Atoms:
         atoms = read(self.path, self.index, parallel=False)
         return atoms
+
+
+class CalculatorFactoryException(FactoryException): ...
+
+
+class AtomsFactoryException(FactoryException): ...
+
+
+class ParameterApplierException(FactoryException): ...
+
+
+class AtomsPostProcessorException(FactoryException): ...
 
 
 class ASEObjectiveFunction(abc.ABC):
@@ -147,12 +160,12 @@ class ASEObjectiveFunction(abc.ABC):
 
         # NOTE: You should probably use the `self.atoms` property
         # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
-        self._atoms = None  # <- signals that atoms havent been loaded yet
+        self._atoms = None  # <- signals that atoms haven't been loaded yet
 
         # NOTE: You should probably use the `self.weight` property
         # The final weight depends on the atoms object which is loaded lazily,
         # therefore we can only find it after the atoms object has been created
-        self._weight = None  # <- signals that weights havent been created yet
+        self._weight = None  # <- signals that weights haven't been created yet
 
         # This is the initial weight, which is a simple float so we can just assign it
         self.weight_init: float = weight
@@ -207,14 +220,26 @@ class ASEObjectiveFunction(abc.ABC):
             Atoms: ASE Atoms object with calculator attached.
         """
 
-        atoms = self.atoms_factory()
+        try:
+            atoms = self.atoms_factory()
+        except Exception as e:
+            logging.exception("Could not create atoms object.")
+            raise AtomsFactoryException() from e
 
         self.check_atoms(atoms)
 
         if self.atoms_post_processor is not None:
-            self.atoms_post_processor(atoms)
+            try:
+                self.atoms_post_processor(atoms)
+            except Exception as e:
+                logging.exception("Could not post-process atoms object.")
+                raise AtomsPostProcessorException() from e
 
-        self.calc_factory(atoms)
+        try:
+            self.calc_factory(atoms)
+        except Exception as e:
+            logging.exception("Could not create calculator.")
+            raise CalculatorFactoryException() from e
 
         return atoms
 
@@ -237,7 +262,14 @@ class ASEObjectiveFunction(abc.ABC):
         if self._weight is None:
             self._weight = self.weight_init
             if self.weight_cb is not None:
-                scale = self.weight_cb(self.atoms)
+
+                try:
+                    scale = self.weight_cb(self.atoms)
+                except Exception as e:
+                    scale = 1.0
+                    logging.exception("Could not use weight callback.")
+                    raise e
+
                 if scale < 0:
                     raise AssertionError(
                         "Weight callback must return a non-negative scaling factor."
@@ -256,7 +288,12 @@ class ASEObjectiveFunction(abc.ABC):
         Returns:
             float: Potential energy after applying parameters.
         """
-        self.param_applier(self.atoms, parameters)
+
+        try:
+            self.param_applier(self.atoms, parameters)
+        except Exception as e:
+            raise ParameterApplierException() from e
+
         self.atoms.calc.calculate(self.atoms)
         self._last_energy = self.atoms.get_potential_energy()
 

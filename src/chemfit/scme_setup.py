@@ -16,11 +16,13 @@ def setup_expansions(
     calc: SCMECalculator, parametrization_key: str, path_to_scme_expansions: Path
 ):
     file = Path(path_to_scme_expansions)
-    assert file.exists()
 
     logging.debug("Setting up expansions")
     logging.debug(f"    {parametrization_key = }")
     logging.debug(f"    {file = }")
+
+    if not file.exists():
+        raise Exception(f"Expansion file `{file}` does not exist")
 
     energy_expansion = get_energy_expansion_from_hdf5_file(
         path_to_file=file, key_to_dataset="energy"
