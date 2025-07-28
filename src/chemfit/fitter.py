@@ -131,7 +131,7 @@ class Fitter:
             # If `k` is in bounds, fetch the lower and upper bound
             # It `k` is not in bounds just put lower=None and upper=None
             lower, upper = flat_bounds.get(k, (None, None))
-            ng_params[k] = ng.p.Scalar(v, lower=lower, upper=upper)
+            ng_params[k] = ng.p.Scalar(init=v, lower=lower, upper=upper)
 
         instru = ng.p.Instrumentation(ng_params)
 
@@ -143,12 +143,33 @@ class Fitter:
             params = unflatten_dict(p)
             return self.objective_function(params)
 
-        recommendation = optimizer.minimize(f_ng, **kwargs)  # best value
+        for i in range(budget):
+            if i == 0:
+                flat_params = flat_initial_params
+                p = optimizer.parametrization.spawn_child()
+                p.value = (
+                    (flat_params,),
+                    {},
+                )
+                optimizer.tell(p, self.info.initial_value)
+            else:
+                p = optimizer.ask()
+                args, kwargs = p.value
+                flat_params = args[0]
+
+                optimizer.tell(p, f_ng(flat_params))
+
+        recommendation = optimizer.provide_recommendation()
         args, kwargs = recommendation.value
-        self.info.final_value = recommendation.loss
 
         # Our optimal params are the first positional argument
         opt_params = args[0]
+
+        # loss is an optional field in the recommendation so we have to test if it has been written
+        if recommendation.loss is not None:
+            self.info.final_value = recommendation.loss
+        else:  # otherwise we compute the optimal loss
+            self.info.final_value = self.objective_function(opt_params)
 
         opt_params = unflatten_dict(opt_params)
 
