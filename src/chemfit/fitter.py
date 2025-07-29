@@ -73,15 +73,19 @@ class Fitter:
                 self.info.n_evals += 1
             except FactoryException as e:
                 # If we catch a factory exception we should just crash the code, therefore we re-raise
-                logging.exception(
-                    "Caught factory exception while evaluating objective function. Crashing."
+                logger.exception(
+                    "Caught factory exception while evaluating objective function.",
+                    stack_info=True,
+                    stacklevel=2,
                 )
                 raise e
             except Exception:
                 # On a general exception we continue execution, since it might just be a bad parameter region
                 logger.debug(
-                    f"Caught exception with params {params}. Clipping loss to {self.value_bad_params}",
+                    f"Caught exception with {params = }. Clipping loss to {self.value_bad_params}",
                     exc_info=True,
+                    stack_info=True,
+                    stacklevel=2,
                 )
                 value = self.value_bad_params
 
