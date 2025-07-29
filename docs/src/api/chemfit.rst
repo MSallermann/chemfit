@@ -10,6 +10,8 @@ Submodules
    chemfit.ase_objective_function
    chemfit.combined_objective_function
    chemfit.data_utils
+   chemfit.debug_utils
+   chemfit.exceptions
    chemfit.fitter
    chemfit.mpi_wrapper_cob
    chemfit.multi_energy_objective_function

@@ -10,7 +10,7 @@ Running with MPI
 
 .. note::
 
-    To run with ``ChemFit`` with MPI, you need a working MPI installation -- duh! If you're on a cluster, consult its documentation. You can of course also install MPI on your local machine.
+    To run ``ChemFit`` with MPI, you need a working MPI installation -- duh! If you're on a cluster, consult its documentation. You can of course also install MPI on your local machine.
 
     Further, you need to have ``mpi4py``, which is an optional dependency installed with ``pip install chemfit[mpi]``.
 
@@ -22,7 +22,7 @@ Within the python script, the required steps are:
 
 1. **All ranks** construct the :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
 2. **All ranks** enter the context provided by :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB`
-3. **The main rank** calls the fitting routines
+3. **The main rank** calls the fitting routines, **all other ranks** enter the :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB.worker_loop`
 
 .. note::
 
@@ -53,7 +53,8 @@ A more schematic example:
             #...
             # write output etc.
             #... 
-
+        else:
+            ob_mpi.worker_loop()
 
 
 Concrete Example:
@@ -66,6 +67,26 @@ This is the same Lennard Jones example as in the :ref:`quickstart`, but this tim
     from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
     from chemfit.fitter import Fitter
     from chemfit.mpi_wrapper_cob import MPIWrapperCOB
+    from ase.calculators.lj import LennardJones
+
+    def e_lj(r, eps, sigma):
+        return 4.0 * eps * ((sigma / r) ** 6 - 1.0) * (sigma / r) ** 6
+
+    class LJAtomsFactory:
+        def __init__(self, r: float):
+            p0 = np.zeros(3)
+            p1 = np.array([r, 0.0, 0.0])
+            self.atoms = Atoms(positions=[p0, p1])
+
+        def __call__(self):
+            return self.atoms
+
+    def construct_lj(atoms: Atoms):
+        atoms.calc = LennardJones(rc=2000)
+
+    def apply_params_lj(atoms: Atoms, params: dict[str, float]):
+        atoms.calc.parameters.sigma = params["sigma"]
+        atoms.calc.parameters.epsilon = params["epsilon"]
 
     ### Construct the objective function on *all* ranks
     eps = 1.0
@@ -89,8 +110,8 @@ This is the same Lennard Jones example as in the :ref:`quickstart`, but this tim
             initial_params = {"epsilon": 2.0, "sigma": 1.5}
             bounds = {"epsilon": (0.1, 10), "sigma": (0.5, 3.0)}
             fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
-            # opt_params = fitter.fit_scipy(options=dict(disp=True))
-            opt_params = fitter.fit_nevergrad(budget=100)
+
+            opt_params = fitter.fit_scipy()
 
             output_folder = Path(__file__).parent / "output/lj_mpi"
 
@@ -102,3 +123,5 @@ This is the same Lennard Jones example as in the :ref:`quickstart`, but this tim
 
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)
+        else:
+            ob_mpi.worker_loop()
