@@ -72,12 +72,13 @@ class Fitter:
                 value = ob_func(params)
                 self.info.n_evals += 1
             except FactoryException as e:
-                # If we catch a factory exception we should just crash the code
+                # If we catch a factory exception we should just crash the code, therefore we re-raise
                 logging.exception(
                     "Caught factory exception while evaluating objective function. Crashing."
                 )
                 raise e
             except Exception:
+                # On a general exception we continue execution, since it might just be a bad parameter region
                 logger.debug(
                     f"Caught exception with params {params}. Clipping loss to {self.value_bad_params}",
                     exc_info=True,
@@ -116,9 +117,11 @@ class Fitter:
                 f"Starting optimization in a `bad` region. Objective function could not be evaluated properly. Loss has been set to {self.value_bad_params = }"
             )
         elif self.info.initial_value > self.value_bad_params:
+            new_value_bad_params = 1.1 * self.info.initial_value
             logger.warning(
-                f"Starting optimization in a high loss region. Loss is greater than {self.value_bad_params = }"
+                f"Starting optimization in a high loss region. Loss is {self.info.initial_value}, which is greater than {self.value_bad_params = }. Adjusting to {new_value_bad_params = }."
             )
+            self.value_bad_params = new_value_bad_params
 
         self.info.n_evals = 0
         self.time_fit_start = time.time()
