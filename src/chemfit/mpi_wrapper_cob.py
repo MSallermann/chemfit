@@ -4,6 +4,8 @@ import math
 import logging
 from numbers import Real
 from chemfit.exceptions import FactoryException
+from chemfit.debug_utils import log_all_methods
+
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +21,7 @@ def slice_up_range(N: int, n_ranks: int):
 
 class MPIWrapperCOB:
     def __init__(
-        self, cob: Any, comm: Optional[Any] = None, finalize_mpi: bool = False
+        self, cob: Any, comm: Optional[Any] = None, mpi_debug_log: bool = False
     ):
         self.cob = cob
         if comm is None:
@@ -28,10 +30,11 @@ class MPIWrapperCOB:
             self.comm = comm
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
-        self.finalize_mpi = finalize_mpi
 
-    def print(self, msg: str):
-        print(f"[Rank {self.rank}] {msg}")
+        if mpi_debug_log:
+            self.comm = log_all_methods(
+                self.comm, lambda msg: logger.warning(f"[Rank {self.rank}] {msg}")
+            )
 
     def __enter__(self):
         return self
