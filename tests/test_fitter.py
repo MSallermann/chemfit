@@ -246,11 +246,11 @@ def test_with_bad_function_mpi():
     for x0 in [0.5, 1.5, 2.5, 3.5, 4.5]:
         print(f"{x0 = }")
 
-        # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
-        with MPIWrapperCOB(cob=ob, finalize_mpi=False) as ob_mpi:
+        with MPIWrapperCOB(cob=ob) as ob_mpi:
 
             logging.basicConfig(
-                filename=f"test_fitter_{ob_mpi.rank}.log", level=logging.DEBUG
+                filename=f"test_fitter_bad_function_{ob_mpi.rank}.log",
+                level=logging.DEBUG,
             )
 
             if ob_mpi.rank == 0:
@@ -263,9 +263,7 @@ def test_with_bad_function_mpi():
                 print(fitter.objective_function({"x": x0}))
 
                 # Nevergrad should be able to handle a shitty objective function like this
-                optimal_params = fitter.fit_nevergrad(
-                    budget=10000, optimizer_str="OnePlusOne"
-                )
+                optimal_params = fitter.fit_nevergrad(budget=2000, optimizer_str="CMA")
                 print("NEVERGRAD")
                 print(f"{optimal_params = }")
                 print(f"{fitter.info = }")

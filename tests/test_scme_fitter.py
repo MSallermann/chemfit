@@ -183,10 +183,8 @@ def test_multi_energy_ob_function_fitting():
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    start = time.time()
     optimal_params = fitter.fit_scipy(tol=0, options=dict(maxiter=50, disp=True))
-    end = time.time()
-    print(f"time taken = {end - start} seconds")
+    print(f"time taken = {fitter.info.time_taken} seconds")
 
     output_folder = Path(__file__).parent / "output/multi_energy"
 
@@ -218,18 +216,14 @@ def test_multi_energy_ob_function_fitting_mpi():
         weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
     )
 
-    # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
-    with MPIWrapperCOB(ob, finalize_mpi=False) as ob_mpi:
+    with MPIWrapperCOB(ob) as ob_mpi:
         if ob_mpi.rank == 0:
-            start = time.time()
-
             fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
             optimal_params = fitter.fit_scipy(
                 tol=0, options=dict(maxiter=50, disp=True)
             )
             print(f"{optimal_params = }")
-            end = time.time()
-            print(f"time taken = {end - start} seconds")
+            print(f"time taken = {fitter.info.time_taken} seconds")
         else:
             ob_mpi.worker_loop()
 

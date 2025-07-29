@@ -66,8 +66,7 @@ def test_lj_mpi():
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
-    with MPIWrapperCOB(ob, finalize_mpi=False) as mpi:
+    with MPIWrapperCOB(ob) as mpi:
         if mpi.rank == 0:
             fitter = Fitter(mpi, initial_params=initial_params)
             opt_params = fitter.fit_scipy()

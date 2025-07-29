@@ -45,13 +45,24 @@ class MPIWrapperCOB:
 
             # Worker loop: wait for params, compute slice+reduce, repeat
             while True:
+
                 params = self.comm.bcast(None, root=0)
 
                 if params is None:
                     break
 
+                # In the usual use-case the worker loop will be the top-level context for the worker ranks.
+                # Therefore, the error handling needs to be slightly different,
+                # and we try to suppress general exceptions instead of re-raising them
+                # We do not suppress `FactoryException`s, however, because, it makes no sense to continue execution.
+                # The reason that it makes no sense is that these  exceptions are connected to being unable to construct internals
+                # of the objective functions.
+                # (remember due to lazy evaluation such constructions can happen inside `__call__`)
                 try:
+                    # First we try to obtain a value the normal way
                     local_total = self.cob(params, idx_slice=slice(start, end))
+
+                    # if we don't get a real number, we convert it to a NaN
                     if not isinstance(local_total, Real):
                         logger.debug(
                             f"Index ({start},{end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
@@ -72,6 +83,7 @@ class MPIWrapperCOB:
                     )
                     local_total = float("NaN")
                 finally:
+                    # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
                     # Sum up all local_totals into a global_total on the master rank
                     _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
 
@@ -88,17 +100,16 @@ class MPIWrapperCOB:
 
         try:
             local_total = self.cob(params, idx_slice=slice(start, end))
-        except FactoryException as e:
-            # If we catch a factory exception we should just crash the code
-            local_total = float("NaN")
-            raise e
         except Exception as e:
+            # If an exception occurs on the master rank, we set the local total to "NaN"
+            # (so that the later reduce works fine and gives NaN)
+            # then we simply re-raise and the exception can be handled higher up (or not)
             local_total = float("NaN")
             raise e
         finally:
+            # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank
             global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
-
         return global_total
 
     def __exit__(self, exc_type, exc, tb):
@@ -107,9 +118,3 @@ class MPIWrapperCOB:
         if self.rank == 0 and self.size > 1:
             # send the poison‐pill (None) so workers break out
             self.comm.bcast(None, root=0)
-
-        # ensure everyone leaves together
-        self.comm.Barrier()
-
-        if self.finalize_mpi:
-            MPI.Finalize()

@@ -76,9 +76,8 @@ def test_exceptions_mpi():
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    # Note: we set finalize_mpi to False, because we use a session-scoped fixture to finalize MPI instead
     with pytest.raises(FactoryException) as excinfo:
-        with MPIWrapperCOB(ob, finalize_mpi=False) as ob_mpi:
+        with MPIWrapperCOB(ob, mpi_debug_log=True) as ob_mpi:
             # The optimization needs to run on the first rank only
             if ob_mpi.rank == 0:
                 fitter = Fitter(ob_mpi, initial_params=initial_params)
