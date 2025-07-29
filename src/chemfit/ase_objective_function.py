@@ -223,7 +223,6 @@ class ASEObjectiveFunction(abc.ABC):
         try:
             atoms = self.atoms_factory()
         except Exception as e:
-            logger.exception("Could not create atoms object.")
             raise AtomsFactoryException() from e
 
         self.check_atoms(atoms)
@@ -232,13 +231,11 @@ class ASEObjectiveFunction(abc.ABC):
             try:
                 self.atoms_post_processor(atoms)
             except Exception as e:
-                logger.exception("Could not post-process atoms object.")
                 raise AtomsPostProcessorException() from e
 
         try:
             self.calc_factory(atoms)
         except Exception as e:
-            logger.exception("Could not create calculator.")
             raise CalculatorFactoryException() from e
 
         return atoms
