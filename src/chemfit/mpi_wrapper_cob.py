@@ -101,6 +101,10 @@ class MPIWrapperCOB:
 
         try:
             local_total = self.cob(params, idx_slice=slice(start, end))
+        except FactoryException as e:
+            # If we catch a factory exception we should just crash the code
+            local_total = float("NaN")
+            raise e
         except Exception as e:
             # If an exception occurs on the master rank, we set the local total to "NaN"
             # (so that the later reduce works fine and gives NaN)
