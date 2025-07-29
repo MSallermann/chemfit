@@ -50,22 +50,19 @@ class MPIWrapperCOB:
                 try:
                     local_total = self.cob(params, idx_slice=slice(start, end))
                     if not isinstance(local_total, Real):
-                        logging.debug(
+                        logger.debug(
                             f"Index ({start},{end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
                         )
                         local_total = float("NaN")
                 except FactoryException as e:
                     # If we catch a factory exception we should just crash the code
                     local_total = float("NaN")
-                    raise e
+                    raise e  # <-- from here we enter the __exit__ method, the worker rank will crash and consequently all processes are stopped
                 except Exception as e:
                     # We assume all other exceptions stem from going into bad parameter regions
-                    # In such a case we continue, but return "Nan"
-                    # We only log this at the debug level otherwise we might create *huge* logfiles when the objective function is called in a loop
-                    logging.debug(
-                        f"Caught exception while evaluating ({start},{end}). Returning Nan."
-                    )
-                    logging.debug(
+                    # In such a case we dont propagate the exception, but instead set the local_total to "Nan"
+                    # We only log this at the debug level otherwise we might create *huge* log files when the objective function is called in a loop
+                    logger.debug(
                         e,
                         stack_info=True,
                         stacklevel=2,
