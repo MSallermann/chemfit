@@ -71,6 +71,7 @@ class MPIWrapperCOB:
                 except FactoryException as e:
                     # If we catch a factory exception we should just crash the code
                     local_total = float("NaN")
+                    logger.exception(e, stack_info=True, stacklevel=2)
                     raise e  # <-- from here we enter the __exit__ method, the worker rank will crash and consequently all processes are stopped
                 except Exception as e:
                     # We assume all other exceptions stem from going into bad parameter regions
