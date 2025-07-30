@@ -42,7 +42,9 @@ def test_lj():
     opt_params = fitter.fit_scipy()
 
     ob.gather_meta_data()
+    meta_data = ob.gather_meta_data()
 
+    assert ob.n_terms() == len(meta_data)
     assert np.isclose(opt_params["epsilon"], eps)
     assert np.isclose(opt_params["sigma"], sigma)
 
@@ -64,9 +66,9 @@ def test_lj_mpi():
         if mpi.rank == 0:
             fitter = Fitter(mpi, initial_params=initial_params)
             opt_params = fitter.fit_scipy()
-
             meta_data = mpi.gather_meta_data()
 
+            assert ob.n_terms() == len(meta_data)
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)
         else:

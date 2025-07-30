@@ -123,7 +123,11 @@ class MPIWrapperCOB(ObjectiveFunctor):
         local_meta_data = self.cob.gather_meta_data(
             idx_slice=slice(self.start, self.end)
         )
-        total_meta_data = self.comm.gather(local_meta_data)
+        gathered = self.comm.gather(local_meta_data)
+
+        # Since gathered will now be a list of list, we unpack it
+        total_meta_data = []
+        [total_meta_data.extend(m) for m in gathered]
 
         return total_meta_data
 
