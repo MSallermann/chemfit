@@ -2,10 +2,10 @@ from ase import Atoms
 from ase.io import read, write
 from typing import Optional, Callable, Protocol, Any
 from pathlib import Path
-import abc
 import logging
 import numpy as np
 from ase.optimize import BFGS
+from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.utils import dump_dict_to_file
 
 from chemfit.exceptions import FactoryException
@@ -87,7 +87,7 @@ class ParameterApplierException(FactoryException): ...
 class AtomsPostProcessorException(FactoryException): ...
 
 
-class ASEObjectiveFunction(abc.ABC):
+class ASEObjectiveFunction(ObjectiveFunctor):
     """
     Base class for ASE-based objective functions.
 
@@ -307,19 +307,6 @@ class ASEObjectiveFunction(abc.ABC):
             bool: True if the atoms pass validation, False otherwise.
         """
         return True
-
-    @abc.abstractmethod
-    def __call__(self, parameters: dict) -> float:
-        """
-        Compute the objective value given a set of parameters.
-
-        Args:
-            parameters: Dictionary of parameter names to float values.
-
-        Returns:
-            float: Computed objective value (e.g., error metric).
-        """
-        ...
 
 
 class EnergyObjectiveFunction(ASEObjectiveFunction):

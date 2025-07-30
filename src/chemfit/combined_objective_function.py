@@ -1,9 +1,10 @@
 from typing import Sequence, Callable, Optional, Union
 from typing_extensions import Self
 from collections.abc import Sequence as ABCSequence
+from chemfit.abstract_objective_function import ObjectiveFunctor
 
 
-class CombinedObjectiveFunction:
+class CombinedObjectiveFunction(ObjectiveFunctor):
     """
     Represents a weighted sum of multiple objective functions.
 
@@ -203,6 +204,9 @@ class CombinedObjectiveFunction:
             total += self.objective_functions[idx](p_copy) * weight
 
         return total
+
+    def get_meta_data(self) -> dict:
+        return {"n_terms": self.n_terms()}
 
     def gather_meta_data(
         self, idx_slice: slice = slice(None, None, None)
