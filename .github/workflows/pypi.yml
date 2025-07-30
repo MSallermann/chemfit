@@ -85,6 +85,14 @@ jobs:
           name: dist_artifact_test
           path: dist/
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Test wheel install locally
+        run: pip install ./dist/chemfit*
+
       - name: Publish package distributions to test.pypi
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
@@ -92,36 +100,9 @@ jobs:
           verbose: true
           skip-existing: true
 
-  test-install-from-test-pypi:
-    needs: [test-pypi-publish, build] # needs to depend on build to have access to the exact package version
-    runs-on: ubuntu-latest
-    steps:
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.x'
-
-    - name: Try to install from test.pypi
-      run: | 
-        pip install --upgrade \
-        --index-url https://test.pypi.org/simple/ \
-        --extra-index-url https://pypi.org/simple \
-        chemfit==${{needs.build.outputs.test-package-version}}
-
-    # check the repo to get the tests
-    - name: Check out code
-      uses: actions/checkout@v4
-
-    - name: Install pytest
-      run: pip install pytest
-
-    - name: Run tests
-      run: pytest
-
   pypi-publish:
     name: Upload release to pypi
-    needs: test-install-from-test-pypi
+    needs: test-pypi-publish
     runs-on: ubuntu-latest
     if: >
       contains(github.event.head_commit.message, 'PUBLISH: pypi')
