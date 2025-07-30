@@ -3,9 +3,12 @@ from typing import Optional, Any
 import math
 import logging
 from numbers import Real
+
+from chemfit.abstract_objective_function import ObjectiveFunctor
+from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.exceptions import FactoryException
 from chemfit.debug_utils import log_all_methods
-
+from enum import Enum
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +22,17 @@ def slice_up_range(N: int, n_ranks: int):
         yield (start, end)
 
 
-class MPIWrapperCOB:
+class Signal(Enum):
+    ABORT = -1
+    GATHER_META_DATA = 0
+
+
+class MPIWrapperCOB(ObjectiveFunctor):
     def __init__(
-        self, cob: Any, comm: Optional[Any] = None, mpi_debug_log: bool = False
+        self,
+        cob: CombinedObjectiveFunction,
+        comm: Optional[Any] = None,
+        mpi_debug_log: bool = False,
     ):
         self.cob = cob
         if comm is None:
@@ -36,71 +47,100 @@ class MPIWrapperCOB:
                 self.comm, lambda msg: logger.warning(f"[Rank {self.rank}] {msg}")
             )
 
+        self.start, self.end = list(slice_up_range(self.cob.n_terms(), self.size))[
+            self.rank
+        ]
+
     def __enter__(self):
         return self
 
+    def worker_process_params(self, params):
+        # In the usual use-case the worker loop will be the top-level context for the worker ranks.
+        # Therefore, the error handling needs to be slightly different,
+        # and we try to suppress general exceptions instead of re-raising them
+        # We do not suppress `FactoryException`s, however, because, it makes no sense to continue execution.
+        # The reason that it makes no sense is that these  exceptions are connected to being unable to construct internals
+        # of the objective functions.
+        # (remember due to lazy evaluation such constructions can happen inside `__call__`)
+        try:
+            # First we try to obtain a value the normal way
+            local_total = self.cob(params, idx_slice=slice(self.start, self.end))
+
+            # if we don't get a real number, we convert it to a NaN
+            if not isinstance(local_total, Real):
+                logger.debug(
+                    f"Index ({self.start},{self.end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
+                )
+                local_total = float("NaN")
+        except FactoryException as e:
+            # If we catch a factory exception we should just crash the code
+            local_total = float("NaN")
+            logger.exception(e, stack_info=True, stacklevel=2)
+            raise e  # <-- from here we enter the __exit__ method, the worker rank will crash and consequently all processes are stopped
+        except Exception as e:
+            # We assume all other exceptions stem from going into bad parameter regions
+            # In such a case we dont propagate the exception, but instead set the local_total to "Nan"
+            # We only log this at the debug level otherwise we might create *huge* log files when the objective function is called in a loop
+            logger.debug(
+                e,
+                stack_info=True,
+                stacklevel=2,
+            )
+            local_total = float("NaN")
+        finally:
+            # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
+            # Sum up all local_totals into a global_total on the master rank
+            _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+
+    def worker_gather_meta_data(self):
+        local_meta_data = self.cob.gather_meta_data(
+            idx_slice=slice(self.start, self.end)
+        )
+        self.comm.gather(local_meta_data, root=0)
+
     def worker_loop(self):
         if self.size > 1 and self.rank != 0:
-            start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
-
             # Worker loop: wait for params, compute slice+reduce, repeat
             while True:
 
-                params = self.comm.bcast(None, root=0)
+                signal = self.comm.bcast(None, root=0)
 
-                if params is None:
+                if signal == Signal.ABORT:
                     break
+                elif signal == Signal.GATHER_META_DATA:
+                    self.worker_gather_meta_data()
+                elif isinstance(signal, dict):
+                    params = signal
+                    self.worker_process_params(params)
 
-                # In the usual use-case the worker loop will be the top-level context for the worker ranks.
-                # Therefore, the error handling needs to be slightly different,
-                # and we try to suppress general exceptions instead of re-raising them
-                # We do not suppress `FactoryException`s, however, because, it makes no sense to continue execution.
-                # The reason that it makes no sense is that these  exceptions are connected to being unable to construct internals
-                # of the objective functions.
-                # (remember due to lazy evaluation such constructions can happen inside `__call__`)
-                try:
-                    # First we try to obtain a value the normal way
-                    local_total = self.cob(params, idx_slice=slice(start, end))
+    def gather_meta_data(self) -> list[Optional[dict]]:
+        # Ensure only rank 0 can call this
+        if self.rank != 0:
+            raise RuntimeError("`gather_meta_data` can only be used on rank 0")
 
-                    # if we don't get a real number, we convert it to a NaN
-                    if not isinstance(local_total, Real):
-                        logger.debug(
-                            f"Index ({start},{end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
-                        )
-                        local_total = float("NaN")
-                except FactoryException as e:
-                    # If we catch a factory exception we should just crash the code
-                    local_total = float("NaN")
-                    logger.exception(e, stack_info=True, stacklevel=2)
-                    raise e  # <-- from here we enter the __exit__ method, the worker rank will crash and consequently all processes are stopped
-                except Exception as e:
-                    # We assume all other exceptions stem from going into bad parameter regions
-                    # In such a case we dont propagate the exception, but instead set the local_total to "Nan"
-                    # We only log this at the debug level otherwise we might create *huge* log files when the objective function is called in a loop
-                    logger.debug(
-                        e,
-                        stack_info=True,
-                        stacklevel=2,
-                    )
-                    local_total = float("NaN")
-                finally:
-                    # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
-                    # Sum up all local_totals into a global_total on the master rank
-                    _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+        self.comm.bcast(Signal.GATHER_META_DATA, root=0)
+
+        local_meta_data = self.cob.gather_meta_data(
+            idx_slice=slice(self.start, self.end)
+        )
+        total_meta_data = self.comm.gather(local_meta_data)
+
+        return total_meta_data
+
+    def get_meta_data(self) -> dict:
+        return self.cob.get_meta_data()
 
     def __call__(self, params: dict) -> float:
         # Function to evaluate the objective function, to be called from rank 0
 
         # Ensure only rank 0 can call this
         if self.rank != 0:
-            raise RuntimeError("__call__ can only be used on rank 0")
+            raise RuntimeError("`__call__` can only be used on rank 0")
 
         self.comm.bcast(params, root=0)
 
-        start, end = list(slice_up_range(self.cob.n_terms(), self.size))[self.rank]
-
         try:
-            local_total = self.cob(params, idx_slice=slice(start, end))
+            local_total = self.cob(params, idx_slice=slice(self.start, self.end))
         except FactoryException as e:
             # If we catch a factory exception we should just crash the code
             local_total = float("NaN")
@@ -122,4 +162,4 @@ class MPIWrapperCOB:
         # Only rank 0 needs to shut down workers
         if self.rank == 0 and self.size > 1:
             # send the poison‐pill (None) so workers break out
-            self.comm.bcast(None, root=0)
+            self.comm.bcast(Signal.ABORT, root=0)
