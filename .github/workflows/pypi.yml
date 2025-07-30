@@ -66,6 +66,11 @@ jobs:
       - name: Install nox
         uses: wntrblm/nox@2024.04.15
 
+      - name: Make sure wheel is installable
+        run: | 
+          pip install dist/* pytest
+          pytest -k lj
+
       - name: Run tests
         run: nox
 
@@ -84,14 +89,6 @@ jobs:
         with:
           name: dist_artifact_test
           path: dist/
-
-      - name: Set up Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.x'
-
-      - name: Test wheel install locally
-        run: pip install ./dist/chemfit*
 
       - name: Publish package distributions to test.pypi
         uses: pypa/gh-action-pypi-publish@release/v1
