@@ -52,7 +52,7 @@ The following toy example shows how to fit the parameters of a Lennard Jones pot
    from ase.calculators.lj import LennardJones
    from ase import Atoms
    import numpy as np
-   from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+   from chemfit.multi_energy_objective_function import create_multi_energy_objective_function
    from chemfit.fitter import Fitter
 
    ########################
@@ -94,7 +94,7 @@ The following toy example shows how to fit the parameters of a Lennard Jones pot
    r_min = 2 ** (1.0 / 6.0) * sigma
    r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
-   ob = MultiEnergyObjectiveFunction(
+   ob = create_multi_energy_objective_function(
       calc_factory=construct_lj,
       param_applier=apply_params_lj,
       tag_list=[f"lj_{r:.2f}" for r in r_list],
@@ -111,7 +111,7 @@ The following toy example shows how to fit the parameters of a Lennard Jones pot
    fitter = Fitter(ob, initial_params=initial_params)
    opt_params = fitter.fit_scipy(options=dict(disp=True))
 
-   print(opt_params)
+   print(f"Optimal parameters {opt_params}")
 
 
 *************

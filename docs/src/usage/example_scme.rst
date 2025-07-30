@@ -144,9 +144,9 @@ We now simply instantiate the objective function by passing the factory functors
 
 .. code-block:: python
 
-    from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+    from chemfit.multi_energy_objective_function import create_multi_energy_objective_function
 
-    scme_factories = MultiEnergyObjectiveFunction(
+    scme_factories = create_multi_energy_objective_function(
         calc_factory=calc_factory,
         param_applier=param_applier,
         path_to_reference_configuration_list=paths,

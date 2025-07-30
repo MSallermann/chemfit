@@ -60,54 +60,6 @@ Example: LJ parameter applier
 For a more sophisticated example see :py:class:`~chemfit.scme_factories.SCMEParameterApplier`.
 
 
-Putting it all together
-############################
-
-Pass these functors into an ASE-based objective function. 
-The following code fits the "sigma" and "epsilon" parameters of the ``LennardJones`` calculator.
-(For a working script see the ``test_lj`` unit test).
-
-.. code-block:: python
-
-    from ase.calculators.lj import LennardJones
-    from ase import Atoms
-    import numpy as np
-    from pathlib import Path
-
-    from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
-    from chemfit.fitter import Fitter
-
-    # Prepare data
-    # ...
-    # paths, tags, energies = prepare_data(r_list, output_folder, eps=eps, sigma=sigma)
-
-    eps = 1.0
-    sigma = 1.0
-
-    def construct_lj(atoms: Atoms):
-        atoms.calc = LennardJones(rc=2000)
-
-    def apply_params_lj(atoms: Atoms, params: dict[str, float]):
-        atoms.calc.parameters.sigma = params["sigma"]
-        atoms.calc.parameters.epsilon = params["epsilon"]
-
-    ob = MultiEnergyObjectiveFunction(
-        calc_factory=construct_lj,
-        param_applier=apply_params_lj,
-        tag_list=tags,
-        path_to_reference_configuration_list=paths,
-        reference_energy_list=energies,
-    )
-
-    initial_params = {"epsilon": 2.0, "sigma": 1.5}
-
-    fitter = Fitter(ob, initial_params)
-
-    opt_params = fitter.fit_scipy( options=dict(disp=True))
-
-    print(opt_params)
-
-
 Optional factories
 ############################
 
@@ -146,7 +98,7 @@ As a more complex example, lets define a **LJAtomsFactory** to simplify the cons
     from ase.calculators.lj import LennardJones
     from ase import Atoms
     import numpy as np
-    from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+    from chemfit.multi_energy_objective_function import create_multi_energy_objective_function
     from chemfit.fitter import Fitter
 
 
@@ -179,12 +131,12 @@ As a more complex example, lets define a **LJAtomsFactory** to simplify the cons
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
 
-    ob = MultiEnergyObjectiveFunction(
+    ob = create_multi_energy_objective_function(
         calc_factory=construct_lj,
         param_applier=apply_params_lj,
         tag_list=[f"lj_{r:.2f}" for r in r_list],
         reference_energy_list=[e_lj(r, eps, sigma) for r in r_list],
-        path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
+        path_or_factory_list=[LJAtomsFactory(r) for r in r_list], # <--- Now the atoms are constructed directly in memory
     )
 
 

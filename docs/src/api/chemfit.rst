@@ -7,6 +7,7 @@ Submodules
 .. toctree::
    :maxdepth: 4
 
+   chemfit.abstract_objective_function
    chemfit.ase_objective_function
    chemfit.combined_objective_function
    chemfit.data_utils

@@ -51,11 +51,15 @@ A more schematic example:
             opt_params = fitter.fit_nevergrad(budget=100)
 
             #...
+            meta_data_list = ob_mpi.gather_meta_data()
             # write output etc.
             #... 
         else:
             ob_mpi.worker_loop()
 
+.. tip::
+
+    :py:meth:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB.gather_meta_data` gathers the meta_data from all worker ranks on the main rank
 
 Concrete Example:
 ********************
@@ -64,7 +68,7 @@ This is the same Lennard Jones example as in the :ref:`quickstart`, but this tim
 
 .. code-block:: python
 
-    from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+    from chemfit.multi_energy_objective_function import create_multi_energy_objective_function
     from chemfit.fitter import Fitter
     from chemfit.mpi_wrapper_cob import MPIWrapperCOB
     from ase.calculators.lj import LennardJones
@@ -92,10 +96,10 @@ This is the same Lennard Jones example as in the :ref:`quickstart`, but this tim
     eps = 1.0
     sigma = 1.0
 
-    r_min = 2 ** (1 / 6) * sigma
+    r_min = 2 ** (1/6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
-    ob = MultiEnergyObjectiveFunction(
+    ob = create_multi_energy_objective_function(
         calc_factory=construct_lj,
         param_applier=apply_params_lj,
         tag_list=[f"lj_{r:.2f}" for r in r_list],
@@ -112,14 +116,6 @@ This is the same Lennard Jones example as in the :ref:`quickstart`, but this tim
             fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
 
             opt_params = fitter.fit_scipy()
-
-            output_folder = Path(__file__).parent / "output/lj_mpi"
-
-            ob.write_output(
-                output_folder,
-                initial_params=initial_params,
-                optimal_params=opt_params,
-            )
 
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)

@@ -32,7 +32,7 @@ See the following code for two example implementations of the ``ob(x) = 2 * x^2`
     # `B` is also an objective function [ob(x) = 2.0 * x^2]
     B = BFunctor(f=2.0)
 
-For more complex tasks the "functor" pattern is generally favoured (this is also how the objective functions in :py:mod:`~chemfit.ase_objective_function` are implemented).
+For more complex tasks the "functor" pattern is generally favoured (especially those implementing the :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor` interface).
 
 In principle such objective functions may be optimized with any suitable method. For convenience `ChemFit` provides the :py:class:`~chemfit.fitter.Fitter` class, which wraps two different backends.
 
