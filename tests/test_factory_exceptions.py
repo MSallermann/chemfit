@@ -10,7 +10,10 @@ except ImportError:
 
 from chemfit.fitter import Fitter
 from chemfit.exceptions import FactoryException
-from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.multi_energy_objective_function import (
+    construct_multi_energy_objective_function,
+)
 from ase import Atoms
 from conftest import construct_lj, apply_params_lj, LJAtomsFactory, e_lj
 import numpy as np
@@ -33,12 +36,12 @@ def get_ob_func(
     sigma: float,
     bad_atoms_factory: tuple[bool, bool] = (False, False),
     n_terms: int = 2,
-) -> MultiEnergyObjectiveFunction:
+) -> CombinedObjectiveFunction:
 
     r_min = 2 ** (1 / 6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma, num=n_terms)
 
-    ob = MultiEnergyObjectiveFunction(
+    ob = construct_multi_energy_objective_function(
         calc_factory=construct_lj,
         param_applier=apply_params_lj,
         tag_list=[f"lj_{r:.2f}" for r in r_list],

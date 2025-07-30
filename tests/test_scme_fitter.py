@@ -17,7 +17,9 @@ from chemfit.ase_objective_function import (
 )
 
 from chemfit.utils import dump_dict_to_file
-from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+from chemfit.multi_energy_objective_function import (
+    construct_multi_energy_objective_function,
+)
 from chemfit.data_utils import process_csv
 
 import logging
@@ -158,11 +160,7 @@ def test_dimer_distance_objective_function():
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
-
-    output_folder = Path(__file__).parent / "output/dimer_distance"
-    ob.write_meta_data(output_folder)
-
-    dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
+    print(f"{optimal_params = }")
 
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
@@ -172,7 +170,7 @@ def test_multi_energy_ob_function_fitting():
         SCMEParameterApplier,
     )
 
-    ob = MultiEnergyObjectiveFunction(
+    ob = construct_multi_energy_objective_function(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
         path_or_factory_list=REFERENCE_CONFIGS,
@@ -184,16 +182,8 @@ def test_multi_energy_ob_function_fitting():
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
     optimal_params = fitter.fit_scipy(tol=0, options=dict(maxiter=50, disp=True))
+    print(f"{optimal_params = }")
     print(f"time taken = {fitter.info.time_taken} seconds")
-
-    output_folder = Path(__file__).parent / "output/multi_energy"
-
-    ob.write_output(
-        output_folder,
-        initial_params=INITIAL_PARAMS,
-        optimal_params=optimal_params,
-        plot_initial=True,
-    )
 
 
 @pytest.mark.skipif(
@@ -207,7 +197,7 @@ def test_multi_energy_ob_function_fitting_mpi():
 
     from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
-    ob = MultiEnergyObjectiveFunction(
+    ob = construct_multi_energy_objective_function(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
         path_or_factory_list=REFERENCE_CONFIGS,

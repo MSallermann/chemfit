@@ -5,21 +5,21 @@ except ImportError:
 
 import pytest
 
-from ase.calculators.lj import LennardJones
-from ase import Atoms
 import numpy as np
 
-from chemfit.multi_energy_objective_function import MultiEnergyObjectiveFunction
+from chemfit.multi_energy_objective_function import (
+    construct_multi_energy_objective_function,
+)
+from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.fitter import Fitter
-from pathlib import Path
 from conftest import construct_lj, apply_params_lj, LJAtomsFactory, e_lj
 
 
-def get_ob_func(eps: float, sigma: float) -> MultiEnergyObjectiveFunction:
+def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:
     r_min = 2 ** (1 / 6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
-    ob = MultiEnergyObjectiveFunction(
+    ob = construct_multi_energy_objective_function(
         calc_factory=construct_lj,
         param_applier=apply_params_lj,
         tag_list=[f"lj_{r:.2f}" for r in r_list],
@@ -41,13 +41,7 @@ def test_lj():
     fitter = Fitter(ob, initial_params=initial_params)
     opt_params = fitter.fit_scipy()
 
-    output_folder = Path(__file__).parent / "output/lj"
-
-    ob.write_output(
-        output_folder,
-        initial_params=initial_params,
-        optimal_params=opt_params,
-    )
+    ob.gather_meta_data()
 
     assert np.isclose(opt_params["epsilon"], eps)
     assert np.isclose(opt_params["sigma"], sigma)
@@ -71,13 +65,7 @@ def test_lj_mpi():
             fitter = Fitter(mpi, initial_params=initial_params)
             opt_params = fitter.fit_scipy()
 
-            output_folder = Path(__file__).parent / "output/lj_mpi"
-
-            ob.write_output(
-                output_folder,
-                initial_params=initial_params,
-                optimal_params=opt_params,
-            )
+            meta_data = mpi.gather_meta_data()
 
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)
