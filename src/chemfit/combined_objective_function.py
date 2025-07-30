@@ -220,10 +220,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         results = []
         for idx in idx_list[idx_slice]:
-            try:
-                meta_data = self.objective_functions[idx].get_meta_data()
-            except Exception() as e:
-                meta_data = None
+            meta_data = None
+            if hasattr(self.objective_functions[idx], "get_meta_data"):
+                if callable(self.objective_functions[idx].get_meta_data):
+                    meta_data = self.objective_functions[idx].get_meta_data()
             results.append(meta_data)
 
         return results
