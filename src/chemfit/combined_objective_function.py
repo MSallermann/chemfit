@@ -206,7 +206,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         return total
 
     def get_meta_data(self) -> dict:
-        return {"n_terms": self.n_terms()}
+        return {"n_terms": self.n_terms(), "type": type(self).__name__}
 
     def gather_meta_data(
         self, idx_slice: slice = slice(None, None, None)

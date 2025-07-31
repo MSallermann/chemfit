@@ -191,6 +191,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
             "n_atoms": self.n_atoms,
             "weight": self.weight,
             "last_energy": self._last_energy,
+            "type": type(self).__name__,
         }
 
     def write_meta_data(self, path_to_folder: Path, write_config: bool = False) -> None:

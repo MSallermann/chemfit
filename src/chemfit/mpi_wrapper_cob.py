@@ -132,7 +132,9 @@ class MPIWrapperCOB(ObjectiveFunctor):
         return total_meta_data
 
     def get_meta_data(self) -> dict:
-        return self.cob.get_meta_data()
+        d = self.cob.get_meta_data()
+        d["type"] = type(self).__name__
+        return d
 
     def __call__(self, params: dict) -> float:
         # Function to evaluate the objective function, to be called from rank 0
