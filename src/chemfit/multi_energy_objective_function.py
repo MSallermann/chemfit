@@ -69,6 +69,9 @@ def construct_multi_energy_objective_function(
         assert n_terms == len(weight_cb)
         weight_cb_list = weight_cb
 
+    if weight_list is None:
+        weight_list = [1.0 for _ in reference_energy_list]
+
     for t, p_ref, e_ref, post_proc, weight, w_cb in zip(
         tag_list,
         path_or_factory_list,
