@@ -69,11 +69,12 @@ def construct_multi_energy_objective_function(
         assert n_terms == len(weight_cb)
         weight_cb_list = weight_cb
 
-    for t, p_ref, e_ref, post_proc, w_cb in zip(
+    for t, p_ref, e_ref, post_proc, weight, w_cb in zip(
         tag_list,
         path_or_factory_list,
         reference_energy_list,
         atom_post_processor_list,
+        weight_list,
         weight_cb_list,
     ):
         # First try to find out if p_ref is just a path,
@@ -87,6 +88,7 @@ def construct_multi_energy_objective_function(
                 reference_energy=e_ref,
                 tag=t,
                 atoms_post_processor=post_proc,
+                weight=weight,
                 weight_cb=w_cb,
             )
         else:
@@ -97,9 +99,10 @@ def construct_multi_energy_objective_function(
                 reference_energy=e_ref,
                 tag=t,
                 atoms_post_processor=post_proc,
+                weight=weight,
                 weight_cb=w_cb,
             )
 
         ob_funcs.append(ob)
 
-    return CombinedObjectiveFunction(ob_funcs, weight_list)
+    return CombinedObjectiveFunction(ob_funcs)
