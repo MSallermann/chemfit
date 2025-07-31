@@ -1,7 +1,7 @@
 [project]
 name = "chemfit"
 description = "A package to support fitting the parameters potentials described by an ASE calculator."
-version = "2.2.0"
+version = "2.3.0"
 dependencies = [
     "numpy",
     "ase",
