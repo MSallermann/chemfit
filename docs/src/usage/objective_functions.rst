@@ -199,7 +199,7 @@ The ``MultiEnergyObjectiveFunction``
 
 Technically, there is no separate ``MultiEnergyObjectiveFunction`` class (there used to be one).
 
-The *function* :py:func:`~chemfit.multi_energy_objective_function.construct_multi_energy_objective_function` provides a convenient tool to construct a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` consisting only of :py:class:`~chemfit.ase_objective_function.EnergyObjectiveFunction`s.
+The *function* :py:func:`~chemfit.multi_energy_objective_function.construct_multi_energy_objective_function` provides a convenient tool to construct a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` consisting only of :py:class:`~chemfit.ase_objective_function.EnergyObjectiveFunction`.
 
 The objective function value is computed as
 
