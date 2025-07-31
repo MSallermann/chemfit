@@ -3,11 +3,15 @@ import inspect
 from typing import Callable
 
 
-def log_invocation(func, log_func: Callable[[str], None]):
+def log_invocation(func, log_func: Callable[[str], None], log_args: bool = True):
 
     @wraps(func)
     def wrapped_with_logging(*args, **kwargs):
         log_func(f"Pre {func.__name__}")
+        if log_args and len(args) > 0:
+            log_func(f"    {args = }")
+        if log_args and len(kwargs) > 0:
+            log_func(f"    {kwargs = }")
         res = func(*args, **kwargs)
         log_func(f"Post {func.__name__}")
         return res
