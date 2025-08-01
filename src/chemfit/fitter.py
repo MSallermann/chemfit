@@ -38,6 +38,8 @@ class Fitter:
         objective_function: Callable[[dict], float],
         initial_params: dict,
         bounds: Optional[dict] = None,
+        near_bound_tol: Optional[float] = None,
+        value_bad_params: float = 1e5,
     ):
         """
         Args:
@@ -47,6 +49,11 @@ class Fitter:
                 Initial values of the parameters
             bound (Optional[dict]):
                 Dictionary of parameter bounds
+            near_bound_tol(Optional[float]):
+                If specified, performs a check to see if any of the parameters
+                is too close to the bounds and logs a warning if so
+            value_bad_params (float):
+                A value beyond which the objective function is considered to be in a bad region
         """
 
         self.objective_function = self.ob_func_wrapper(objective_function)
@@ -58,7 +65,9 @@ class Fitter:
         else:
             self.bounds = bounds
 
-        self.value_bad_params = 1e5
+        self.value_bad_params = value_bad_params
+
+        self.near_bound_tol = near_bound_tol
 
         self.info = FitInfo()
 
@@ -110,8 +119,6 @@ class Fitter:
         self.info = FitInfo()
 
         logger.info("Start fitting")
-        logger.info(f"    Initial parameters: {self.initial_parameters}")
-        logger.info(f"    Bounds: {self.bounds}")
 
         self.info.initial_value = self.objective_function(self.initial_parameters)
         logger.info(f"    Initial obj func: {self.info.initial_value}")
@@ -140,9 +147,22 @@ class Fitter:
             )
 
         logger.info("End fitting")
-        logger.info(f"    Final objective function {self.info.final_value}")
-        logger.info(f"    Optimal parameters {opt_params}")
-        logger.info(f"    Time taken {self.info.time_taken} seconds")
+        logger.info(f"    Info {self.info}")
+
+        if self.near_bound_tol is not None:
+            self.problematic_params = self.check_params_near_bounds(
+                opt_params, self.near_bound_tol
+            )
+
+            if len(self.problematic_params) > 0:
+                logger.warning(
+                    f"The following parameters are within {self.near_bound_tol * 100:.1f}% of the bounds."
+                    "You *may* have to loosen the bounds for an optimal result."
+                )
+                for kp, vp, lower, upper in self.problematic_params:
+                    logger.warning(
+                        f"    parameter = {kp}, lower = {lower}, upper = {upper}, value = {vp}"
+                    )
 
     def fit_nevergrad(
         self, budget: int, optimizer_str: str = "NgIohTuned", **kwargs
@@ -209,6 +229,23 @@ class Fitter:
         self.hook_post_fit(opt_params)
 
         return opt_params
+
+    def check_params_near_bounds(self, params, relative_tol: float) -> list:
+
+        flat_params = flatten_dict(params)
+        flat_bounds = flatten_dict(self.bounds)
+
+        problematic_params = []
+
+        for (kp, vp), (kb, (lower, upper)) in zip(
+            flat_params.items(), flat_bounds.items()
+        ):
+            abs_tol = relative_tol * np.abs(vp)
+
+            if vp - lower < abs_tol or upper - vp < abs_tol:
+                problematic_params.append([kp, vp, lower, upper])
+
+        return problematic_params
 
     def fit_scipy(self, **kwargs) -> dict:
         """
