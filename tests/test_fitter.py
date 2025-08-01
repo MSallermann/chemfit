@@ -64,13 +64,18 @@ def test_with_square_func_bounds():
     bounds = dict(x=(0.0, 1.5))
 
     fitter = Fitter(
-        objective_function=obj_func, initial_params=initial_params, bounds=bounds
+        objective_function=obj_func,
+        initial_params=initial_params,
+        bounds=bounds,
+        near_bound_tol=1e-2,
     )
 
     optimal_params = fitter.fit_scipy()
 
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
+
+    assert len(fitter.check_params_near_bounds(optimal_params, 1e-2)) == 1
     assert np.isclose(optimal_params["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
