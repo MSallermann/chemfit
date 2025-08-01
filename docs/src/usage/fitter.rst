@@ -1,16 +1,16 @@
-##################
 Fitter
-##################
+==================================
 
-The `Fitter` class is a wrapper around optimization backends and minimizes objective functions.
+
+The :py:class:`~chemfit.fitter.Fitter` class is a wrapper around optimization backends and minimizes objective functions.
 
 Currently it supports the following backends:
 
-    1. `Nevergrad <https://github.com/facebookresearch/nevergrad>`_ 
-    2. `Scipy <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ 
+1. `Nevergrad <https://github.com/facebookresearch/nevergrad>`_ 
+2. `Scipy <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ 
 
-What can be optimized with Fitter
-##################################
+What can be minimized with Fitter
+----------------------------------
 
 Any python function with the signature:
 
@@ -21,7 +21,8 @@ Any python function with the signature:
         ...
 
 Params dict format 
-=====================
+----------------------------------
+
 
 The ``params`` can be any dictionary, which contains only **float values** or sub-dictionaries, which may in turn contain only float values or sub-dictionaries and so on ...
 
@@ -52,9 +53,36 @@ This is **not** allowed
             }
 
 Bounds
-=====================
+----------------------------------
 
-Bounds for parameters may be specified, alongside the initial parameters, in the constructor of the fitter class, e.g.
+
+Bounds for parameters (of the form ``lower < param < upper`` ) may be specified, alongside the initial parameters.
+They are specified as a dictionary of tuples with the same keys as the ``initial_params``. 
+The same rules as for the params dict apply, **except** that each leaf node needs to be a tuple of two floats.
+
+
+Example:
+
+.. code-block:: python
+
+    bounds = {
+                "foo" : {
+                    "bar" : {
+                        "a" : (0.0, 2.0)
+                    }
+                    "b" : (-1.0, 3.0) 
+                }
+            }
+
+.. note::
+
+    It is allowed to **not** specify bounds for a parameter. Simply leave it out of the bounds dictionary.
+
+.. note::
+
+    If a bound is specified, both lower and upper need to be given.
+
+The bounds are passed into the constructor:
 
 .. code-block:: python
 
@@ -63,20 +91,3 @@ Bounds for parameters may be specified, alongside the initial parameters, in the
         initial_params=initial_params,
         bounds=bounds
     )
-
-The bounds must be in the same path as the parameters they are supposed to apply to.
-The same rules as for the params dict apply, **except** that each leaf node needs to be a tuple of two floats.
-
-.. note::
-
-    It is allowed to **not** specify bounds for a parameter.
-
-For example:
-
-.. code-block:: python
-
-    initial_params = {"foo": {"x" : 0.0}, "y": 0.0}
-
-    # Restrict params['foo']['x'] to the interval (0.0, 1.5)
-    # (leaves params['y'] unrestricted)
-    bounds = {"params": { "x" : (0.0, 1.5)}

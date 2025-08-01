@@ -34,6 +34,7 @@ autodoc_default_options = {
     "members": True,
     "undoc-members": True,
     "show-inheritance": True,
+    "special-members": "__init__,__call__",
     "member-order": "groupwise",  # or 'alphabetical'
     "separate": True,
 }

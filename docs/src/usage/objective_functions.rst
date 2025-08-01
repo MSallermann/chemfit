@@ -8,18 +8,19 @@ Predefined objective functions
 The abstract ``ObjectiveFunctor``
 -------------------------------------
 
-The :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor` class is an abstract base class for functor based objective functions in ``chemfit``.
+The :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor` class is an abstract base class for functor based objective functions in ChemFit.
 
-Besides the obvious :py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.__call__` method, which computes the value of the objective function for a given parameter set, there is only the :py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.get_meta_data` method to be implemented, which is supposed to return a dictionary of meta data.
+Besides the obvious :py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.__call__` method, which computes the value of the objective function for a given parameter set, there is only the :py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.get_meta_data` method to be implemented.
+This method is supposed to return a dictionary of meta data.
 
 .. note::
     ``ChemFit`` also works with objective functions which do not implement the :py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.get_meta_data` method (such as regular functions), but some functionality may be lost.
 
 
-The ``CombinedObjectiveFunction``
+The combined objective function
 -------------------------------------
 
-The :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` class is used to turn a list of individual objective functions into a single objective function which is the (weighted) sum of the individual terms.
+The :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` class is used to turn a list of individual functions into a combined objective function, formed by the (weighted) sum of the individual terms.
 
 Its use is demonstrated in the following
 
@@ -48,7 +49,7 @@ You can also add terms by using :py:meth:`~chemfit.combined_objective_function.C
     # now is equivalent to a+b+c
     objective_function.add(c)
 
-Lastly, if you have one or more :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`s you can add them in a flat hierarchy with :py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.add_flat`
+Lastly, if you have one or more :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` you can add them in a flat hierarchy with :py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.add_flat`:
 
 .. code-block:: python
 
@@ -61,7 +62,7 @@ Lastly, if you have one or more :py:class:`~chemfit.combined_objective_function.
 Why do we care?
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Obviously this example makes it seem like the :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` is not useful. After all, we could have just defined it ourselves without bothering with an additional class
+Obviously this example makes it seem like the :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` is not useful. After all, we could have just defined it ourselves like so
 
 .. code-block:: python
 
@@ -81,8 +82,7 @@ It can be used to make a :py:class:`~chemfit.combined_objective_function.Combine
 **Reason 2:** Gathering meta data
 ************************************************
 
-
-If the individual terms implement the ``get_meta_data`` method, we can collect the meta data in a list.
+If the individual terms of the :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`, implement the ``get_meta_data`` method, we can easily collect the meta data in a list.
 
 .. code-block:: python
 
@@ -120,10 +120,10 @@ If the individual terms implement the ``get_meta_data`` method, we can collect t
     As you can see in the example above, ``None`` is returned if the ``get_meta_data`` method is not implemented.
 
 .. note::
-    The main use of :py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.get_meta_data` is to gather information about individual terms in a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` (possibly collected from different MPI).
+    The main use of :py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.get_meta_data` is to gather information about individual terms in a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` (possibly collected from different MPI ranks).
 
 .. tip::
-    For objective functions with many terms, you can use ``pandas`` and the ``DataFrame.from_records`` from records method to turn a list of meta data dictionaries into a DataFrame and from there into e.g a CSV or any columnar format.
+    For objective functions with many terms, you can use ``pandas`` and the ``DataFrame.from_records`` method to turn a list of meta data dictionaries into a DataFrame and from there into e.g a CSV or any columnar format.
 
     .. code-block:: python
 
@@ -136,10 +136,19 @@ If the individual terms implement the ``get_meta_data`` method, we can collect t
 ASE based objective functions
 -----------------------------------
 
-The ``EnergyObjectiveFunction``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The ASE based objective functions derive from :py:class:`chemfit.ase_objective_function.ASEObjectiveFunction`. 
+They are meant for use with the "atomic simulation environment" (ASE).
+All of these functions are designed for flexibility (See :ref:`ase_objective_function_api`) and can accommodate any ase calculator. 
 
-The class :py:class:`~chemfit.ase_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
+``ChemFit`` provides a few pre-defined objective functions of that type, which are explained in the following.
+
+**Custom ase-based objective functions** can be implemented by deriving from :py:class:`chemfit.ase_objective_function.ASEObjectiveFunction` and implementing the ``__call__(params : dict) -> float`` operator.
+
+
+The energy based objective function for a single configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The :py:class:`~chemfit.ase_objective_function.EnergyObjectiveFunction` represents a **single** reference configuration and energy pair.
 Its main use is to serve as a building block for more complex objective functions.
 
 This objective function has the form
@@ -152,13 +161,13 @@ where :math:`w` is a weight factor, :math:`E_\text{pred}(\{r\}_\text{ref})` is t
 If we want to use this objective function in isolation, we need at least
     - A filepath to a reference configuration of atom positions
     - A target energy associated to this reference configuration. This energy might for example have been computed from an ab-initio code.
-    - A ``CalculatorFactory``
-    - A ``ParameterApplier``
-    - Optionally (but recommended) a ``tag``, which is a string identifier for bookkeeping purposes
-
+    - A :py:class:`~chemfit.ase_objective_function.CalculatorFactory`
+    - A :py:class:`~chemfit.ase_objective_function.ParameterApplier`
+    - Optionally (but recommended) a ``tag``, which is a string identifier for book keeping purposes
 
 .. note::
     The reference atom positions should be saved in a format, which is parseable by ASE's ``io.read`` function (https://wiki.fysik.dtu.dk/ase/ase/io/io.html#ase.io.read) function.
+
     **Important**: If the file contains multiple "images" of atoms, the **first image** will be selected as the reference configuration. 
 
 
@@ -212,7 +221,7 @@ Consequently instead of a single ``path_to_reference_configuration`` argument th
 
 Two other initializer arguments enjoy a similar promotion, namely: ``reference_energy_list`` and ``tag_list``.
 
-Crucially, the objective function still takes only a single ``parameter_applier`` and ``calculator_factory``.
+Crucially, the objective function takes only a single ``parameter_applier`` and ``calculator_factory``.
 
 .. code-block:: python
 

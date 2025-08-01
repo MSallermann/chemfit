@@ -16,55 +16,45 @@ logger = logging.getLogger(__name__)
 class CalculatorFactory(Protocol):
     """
     Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`
-
-    Methods:
-        __call__(atoms): Construct a calculator and overwrite atoms.calc.
     """
 
-    def __call__(self, atoms: Atoms) -> None:  # pragma: no cover
+    def __call__(self, atoms: Atoms) -> None:
+        """Construct a calculator and overwrite `atoms.calc`"""
         ...
 
 
 class ParameterApplier(Protocol):
     """
     Protocol for a function that applies parameters to an ASE calculator.
-
-    Methods:
-        __call__(atoms, params): Applies a parameter dictionary to `atoms.calc` in-place.
     """
 
-    def __call__(self, atoms: Atoms, params: dict) -> None:  # pragma: no cover
+    def __call__(self, atoms: Atoms, params: dict) -> None:
+        """Applies a parameter dictionary to `atoms.calc` in-place."""
         ...
 
 
 class AtomsPostProcessor(Protocol):
     """
     Protocol for a function that post-processes an ASE Atoms object.
-
-    Methods:
-        __call__(atoms): Performs in-place modifications or checks on the Atoms object.
     """
 
-    def __call__(self, atoms: Atoms) -> None:  # pragma: no cover
+    def __call__(self, atoms: Atoms) -> None:
+        """Modify the atoms in-place"""
         ...
 
 
 class AtomsFactory(Protocol):
     """
     Protocol for a function that creates an ASE Atoms object.
-
-    Methods:
-        __call__(): Creates the atoms object
     """
 
-    def __call__(self) -> Atoms:  # pragma: no cover
+    def __call__(self) -> Atoms:
+        """Create an atoms object"""
         ...
 
 
-class PathAtomsFactory:
+class PathAtomsFactory(AtomsFactory):
     """Implementation of AtomsFactory which reads the atoms from a path."""
-
-    from ase.io import read
 
     def __init__(self, path: Path, index: Optional[int] = None):
         self.path = path
