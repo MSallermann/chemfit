@@ -124,8 +124,8 @@ Contents
    src/installation
    src/usage/overview.rst
    src/usage/fitter.rst
-   src/usage/ase_objective_function_api.rst
    src/usage/objective_functions.rst
+   src/usage/ase_objective_function_api.rst
    src/usage/example_scme.rst
    src/usage/mpi.rst
    src/development/development.rst
