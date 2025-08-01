@@ -1,8 +1,7 @@
 .. _ase_objective_function_api:
 
-############################
 ASE Objective Function API
-############################
+=============================
 
 
 This page shows how to implement and use the ASE-specific "functors" (callable objects) that plug into the ASEObjectiveFunction framework via the
@@ -11,7 +10,7 @@ This page shows how to implement and use the ASE-specific "functors" (callable o
 :py:class:`~chemfit.ase_objective_function.AtomsPostProcessor` protocols.
 
 CalculatorFactory
-############################
+---------------------
 
 A **CalculatorFactory** is any callable implementing the :py:class:`~chemfit.ase_objective_function.CalculatorFactory` protocol.
 This means it must be callable with the signature
@@ -36,9 +35,12 @@ For a more sophisticated example, see :py:class:`~chemfit.scme_factories:SCMECal
 
 
 ParameterApplier
-############################
+---------------------
 
-A **ParameterApplier** updates the attached calculator's internal parameters before each evaluation. The signature is
+A **ParameterApplier** implements the :py:class:`~chemfit.ase_objective_function.ParameterApplier` protocol.
+It updates the attached calculator's internal parameters before each evaluation.
+
+The signature is
 
 .. code-block:: python
 
@@ -61,17 +63,21 @@ For a more sophisticated example see :py:class:`~chemfit.scme_factories.SCMEPara
 
 
 Optional factories
-############################
+---------------------
+
 
 In the following some optional factories, besides **ParameterApplier** and **CalculatorFactory**, are described. 
 These can be used to make the **ASEObjectiveFunction** more flexible.
 
 AtomsFactory
-----------------------
-In the example above, the ``ase.Atoms`` object is created from a path to a configuration file.
-In some cases it might be required to have more fine grained control over the creation of the atoms object.
-For such situations :py:class:`~chemfit.ase_objective_function.ASEObjectiveFunction` provides the option to pass an implementation 
-of an **AtomsFactory** protocol (defined in :py:class:`~chemfit.ase_objective_function.AtomsFactory`) in the ``atoms_factory`` argument of the initializer (:py:meth:`~chemfit.ase_objective_function.ASEObjectiveFunction`).
+~~~~~~~~~~~~~~~
+
+Frequently, the ``ase.Atoms`` object is simply read from a path to a configuration file.
+In such cases the py:class:`chemfit.ase_objective_function.ASEObjectiveFunction` provides a convenience argument ``path_to_reference_configuration``.
+
+Sometimes, however, it might be required to have more fine grained control over the creation of the atoms object.
+For such situations, :py:class:`~chemfit.ase_objective_function.ASEObjectiveFunction` provides the option to pass an implementation 
+of an :py:class:`~chemfit.ase_objective_function.AtomsFactory` protocol in the ``atoms_factory`` argument of :py:meth:`~chemfit.ase_objective_function.ASEObjectiveFunction.__init__`.
 
 .. note::
     Under the hood the ``path_to_reference_configuration`` argument is just a convenient way to construct a :py:class:`~chemfit.ase_objective_function.PathAtomsFactory`
@@ -141,7 +147,8 @@ As a more complex example, lets define a **LJAtomsFactory** to simplify the cons
 
 
 AtomsPostProcessor
-----------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 
 An optional **AtomsPostProcessor** runs on the raw Atoms immediately after loading (before the calculator is attached). Its signature is
 

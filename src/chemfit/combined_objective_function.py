@@ -132,7 +132,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
     def add_flat(
         cls,
         combined_objective_functions_list: Sequence[Self],
-        weights: Sequence[float],
+        weights: Optional[Sequence[float]] = None,
     ) -> Self:
         """
         Create a new, "flat" CombinedObjectiveFunction by merging multiple existing instances.
@@ -156,10 +156,15 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             AssertionError: If the lengths of `combined_objective_functions_list` and `weights` differ,
                 or if any weight is negative.
         """
+
+        if weights is None:
+            weights = [1.0 for _ in combined_objective_functions_list]
+
         # Ensure we have one scaling weight per sub-instance
         assert len(combined_objective_functions_list) == len(
             weights
         ), "Must supply exactly one weight per CombinedObjectiveFunction."
+
         # Ensure all scaling weights are non-negative
         assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
 
