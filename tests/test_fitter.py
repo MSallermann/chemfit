@@ -5,7 +5,7 @@ except ImportError:
 
 import pytest
 
-from chemfit.fitter import Fitter
+from chemfit.fitter import Fitter, CallbackInfo
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 import numpy as np
@@ -13,8 +13,17 @@ import logging
 
 from pydictnest import items_nested, has_nested, get_nested
 
-NG_SOLVERS = ["CMA", "NgIohTuned", "Carola3"]
+NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
 NG_ATOL = 5e-2
+NSTEPS_CB = 100
+NG_BUDGET = 2000
+
+
+def collect_progress(
+    info: CallbackInfo,
+    progress: list,
+):
+    progress.append(info)
 
 
 def test_with_square_func():
@@ -29,6 +38,10 @@ def test_with_square_func():
     initial_params = dict(x=0.0, y=0.0)
     fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
 
+    progress = []
+    fitter.register_callback(
+        lambda args: collect_progress(args, progress=progress), n_steps=NSTEPS_CB
+    )
     optimal_params = fitter.fit_scipy()
 
     print(f"{optimal_params = }")
@@ -38,10 +51,26 @@ def test_with_square_func():
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     for opt in NG_SOLVERS:
-        optimal_params = fitter.fit_nevergrad(budget=2000, optimizer_str=opt)
+        progress = []
+        optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET, optimizer_str=opt)
+
         print(f"{opt = }")
         print(f"{optimal_params = }")
         print(f"{fitter.info = }")
+        print(f"{len(progress) = }")
+        print(f"{NG_BUDGET // NSTEPS_CB = }")
+
+        print(f"{progress[-1].opt_loss = }")
+        print(f"{progress[-1].opt_params = }")
+        print(f"{obj_func(optimal_params) = }")
+        print(f"{fitter.info.final_value = }")
+
+        # This assert is interesting because intuitively we would expect,
+        # these to be exactly equal, but this is solver dependent!!
+        # The "CMA" solver, for instance, may recommend parameters it has not actually visited yet
+        # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
+        # obj_func(optimal_params) value may be very slightly different
+        assert np.isclose(progress[-1].opt_loss, obj_func(optimal_params))
 
         assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
         assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
@@ -82,7 +111,7 @@ def test_with_square_func_bounds():
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     for opt in NG_SOLVERS:
-        optimal_params = fitter.fit_nevergrad(budget=2000, optimizer_str=opt)
+        optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET, optimizer_str=opt)
         print(f"{opt = }")
         print(f"{optimal_params = }")
         print(f"{fitter.info = }")
@@ -119,7 +148,7 @@ def test_with_nested_dict():
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=2000)
+    optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET)
 
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
@@ -165,7 +194,7 @@ def test_with_complicated_dict():
     assert np.isclose(ob(initial_params), fitter.info.initial_value)
     assert np.isclose(ob(optimal_params), fitter.info.final_value)
 
-    optimal_params = fitter.fit_nevergrad(budget=2000)
+    optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET)
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
     check_solution(optimal_params)
@@ -199,7 +228,9 @@ def test_with_bad_function():
         )
 
         # Nevergrad should be able to handle a shitty objective function like this
-        optimal_params = fitter.fit_nevergrad(budget=10000, optimizer_str="OnePlusOne")
+        optimal_params = fitter.fit_nevergrad(
+            budget=NG_BUDGET, optimizer_str="OnePlusOne"
+        )
         print("NEVERGRAD")
         print(f"{optimal_params = }")
         print(f"{fitter.info = }")
@@ -268,7 +299,9 @@ def test_with_bad_function_mpi():
                 print(fitter.objective_function({"x": x0}))
 
                 # Nevergrad should be able to handle a shitty objective function like this
-                optimal_params = fitter.fit_nevergrad(budget=2000, optimizer_str="CMA")
+                optimal_params = fitter.fit_nevergrad(
+                    budget=NG_BUDGET, optimizer_str="CMA"
+                )
                 print("NEVERGRAD")
                 print(f"{optimal_params = }")
                 print(f"{fitter.info = }")
@@ -289,7 +322,7 @@ def test_with_bad_function_mpi():
 
 
 if __name__ == "__main__":
-    # test_with_square_func()
+    test_with_square_func()
     # test_with_square_func_bounds()
     # test_with_complicated_dict()
-    test_with_bad_function_mpi()
+    # test_with_bad_function_mpi()

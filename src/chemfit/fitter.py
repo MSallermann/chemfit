@@ -22,10 +22,20 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FitInfo:
-    initial_value: float = -1.0
-    final_value: float = -1.0
-    time_taken: float = -1.0
+    initial_value: Optional[float] = None
+    final_value: Optional[float] = None
+    time_taken: Optional[float] = None
     n_evals: int = 0
+
+
+@dataclass
+class CallbackInfo:
+    opt_params: dict
+    opt_loss: float
+    cur_params: dict
+    cur_loss: float
+    step: int
+    info: FitInfo
 
 
 class Fitter:
@@ -71,6 +81,29 @@ class Fitter:
 
         self.info = FitInfo()
 
+        self.callbacks: list[tuple[Callable[[dict, float, int, FitInfo]], int]] = []
+
+    def register_callback(self, func: Callable[[CallbackInfo], None], n_steps: int):
+        """
+        Register a callback which is run after every `n_steps` of the optimization.
+
+        Multiple callbacks may be registered. They are executed in order of registration.
+
+        The callback needs to be callable with
+            func( arg : CallbackInfo )
+
+        The `CallbackInfo` is a dataclass with the following members
+
+            - `opt_params` are the optimal parameters at the time the callback is invoked
+            - `opt_loss` is the loss with those optimal parameters
+            - `cur_params` are the parameters which have been tested lasts at the time the callback is invoked.
+            - `cur_loss` are the parameters which have been tested lasts at the time the callback is invoked.
+            - `step` is the number of optimization steps performed thus far
+                    (in general not equal to the number of evaluations of the loss function)
+            - `info` is the current `FitInfo` of the fitter at the time the callback is invoked
+        """
+        self.callbacks.append((func, n_steps))
+
     def ob_func_wrapper(self, ob_func: Any) -> float:
         """Wraps the objective function and applies some checks plus logging"""
 
@@ -115,7 +148,25 @@ class Fitter:
 
         return wrapped_ob_func
 
+    def _produce_callback(self) -> tuple[Optional[Callable[[CallbackInfo], None]], int]:
+        """Generate a single callback from the list of callbacks"""
+
+        if len(self.callbacks) == 0:
+            return None, float("inf")
+
+        min_n_steps = min([n_steps for (_, n_steps) in self.callbacks])
+
+        def callback(callback_args: CallbackInfo):
+            for cb, n_steps in self.callbacks:
+                if callback_args.step % n_steps == 0:
+                    cb(callback_args)
+
+        return callback, min_n_steps
+
     def hook_pre_fit(self):
+        """A hook, which is invoked before optimizing"""
+
+        # Overwrite with a fresh FitInfo object
         self.info = FitInfo()
 
         logger.info("Start fitting")
@@ -138,6 +189,8 @@ class Fitter:
         self.time_fit_start = time.time()
 
     def hook_post_fit(self, opt_params: dict):
+        """A hook, which is invoked after optimizing"""
+
         self.time_fit_end = time.time()
         self.info.time_taken = self.time_fit_end - self.time_fit_start
 
@@ -163,6 +216,24 @@ class Fitter:
                     logger.warning(
                         f"    parameter = {kp}, lower = {lower}, upper = {upper}, value = {vp}"
                     )
+
+    def check_params_near_bounds(self, params, relative_tol: float) -> list:
+        """Check if any of the parameters are near the bounds"""
+
+        flat_params = flatten_dict(params)
+        flat_bounds = flatten_dict(self.bounds)
+
+        problematic_params = []
+
+        for (kp, vp), (kb, (lower, upper)) in zip(
+            flat_params.items(), flat_bounds.items()
+        ):
+            abs_tol = relative_tol * np.abs(vp)
+
+            if vp - lower < abs_tol or upper - vp < abs_tol:
+                problematic_params.append([kp, vp, lower, upper])
+
+        return problematic_params
 
     def fit_nevergrad(
         self, budget: int, optimizer_str: str = "NgIohTuned", **kwargs
@@ -196,9 +267,14 @@ class Fitter:
             params = unflatten_dict(p)
             return self.objective_function(params)
 
+        callback, n_steps = self._produce_callback()
+
+        opt_loss = self.info.initial_value
+
         for i in range(budget):
             if i == 0:
                 flat_params = flat_initial_params
+                cur_loss = self.info.initial_value
                 p = optimizer.parametrization.spawn_child()
                 p.value = (
                     (flat_params,),
@@ -208,46 +284,53 @@ class Fitter:
             else:
                 p = optimizer.ask()
                 args, kwargs = p.value
-                flat_params = args[0]
 
-                optimizer.tell(p, f_ng(flat_params))
+                flat_params = args[0]
+                cur_loss = f_ng(flat_params)
+
+                optimizer.tell(p, cur_loss)
+
+            if cur_loss < opt_loss:
+                opt_loss = cur_loss
+
+            if callback is not None and i % n_steps == 0:
+                recommendation = optimizer.provide_recommendation()
+                args, kwargs = recommendation.value
+                flat_opt_params = args[0]
+
+                opt_params = unflatten_dict(flat_opt_params)
+                cur_params = unflatten_dict(flat_params)
+
+                callback(
+                    CallbackInfo(
+                        opt_params=opt_params,
+                        opt_loss=opt_loss,
+                        cur_params=cur_params,
+                        cur_loss=cur_loss,
+                        step=i,
+                        info=self.info,
+                    )
+                )
 
         recommendation = optimizer.provide_recommendation()
         args, kwargs = recommendation.value
 
         # Our optimal params are the first positional argument
-        opt_params = args[0]
+        flat_opt_params = args[0]
 
         # loss is an optional field in the recommendation so we have to test if it has been written
         if recommendation.loss is not None:
             self.info.final_value = recommendation.loss
         else:  # otherwise we compute the optimal loss
-            self.info.final_value = self.objective_function(opt_params)
+            self.info.final_value = self.objective_function(flat_opt_params)
 
-        opt_params = unflatten_dict(opt_params)
+        opt_params = unflatten_dict(flat_opt_params)
 
         self.hook_post_fit(opt_params)
 
         return opt_params
 
-    def check_params_near_bounds(self, params, relative_tol: float) -> list:
-
-        flat_params = flatten_dict(params)
-        flat_bounds = flatten_dict(self.bounds)
-
-        problematic_params = []
-
-        for (kp, vp), (kb, (lower, upper)) in zip(
-            flat_params.items(), flat_bounds.items()
-        ):
-            abs_tol = relative_tol * np.abs(vp)
-
-            if vp - lower < abs_tol or upper - vp < abs_tol:
-                problematic_params.append([kp, vp, lower, upper])
-
-        return problematic_params
-
-    def fit_scipy(self, **kwargs) -> dict:
+    def fit_scipy(self, method: str = "L-BFGS-B", **kwargs) -> dict:
         """
         Optimize parameters using SciPy's minimize function.
 
@@ -278,13 +361,13 @@ class Fitter:
         {'x': 2.0, 'y': -1.0}
         """
 
-        from scipy.optimize import minimize
+        from scipy.optimize import minimize, OptimizeResult
 
         self.hook_pre_fit()
 
         # Scipy expects a function with n real-valued parameters f(x)
         # but our objective function takes a dictionary of parameters.
-        # Moreover, the dictionary might not be flat but nested
+        # Moreover, the dictionary might not be flat but nested.
 
         # Therefore, as a first step, we flatten the bounds and
         # initial parameter dicts
@@ -294,7 +377,7 @@ class Fitter:
         # We then capture the order of keys in the flattened dictionary
         self._keys = flat_params.keys()
 
-        # The initial value of x and the bounds are derived from that order
+        # The initial value of x and of the bounds are derived from that order
         x0 = np.array([flat_params[k] for k in self._keys])
         bounds = np.array([flat_bounds.get(k, (None, None)) for k in self._keys])
 
@@ -308,8 +391,73 @@ class Fitter:
             p = unflatten_dict(dict(zip(self._keys, x)))
             return self.objective_function(p)
 
+        # Then we need to handle some awkwardness:
+        #   1. Scipy does not mandate all of the optimizers
+        #      to write all the values we need for our callback system.
+        #      Therefore, we need to roll our own bookkeeping logic for the
+        #      number of steps taken.
+        #   2. Scipy mandates a different function signature, so we have to "translate"
+        # We do this in the following functor:
+        class CallbackScipy:
+            def __init__(
+                self,
+                keys: list[str],
+                info: FitInfo,
+                callback: Callable[[CallbackInfo], None],
+                n_steps: int,
+            ):
+                self._step = 0
+                self._keys = keys
+                self._info = info
+                self._callback = callback
+                self._n_steps = n_steps
+
+            def __call__(self, intermediate_result: OptimizeResult):
+                # This callback is executed after *every* iteration
+
+                # We may have to track the step ourselves
+                self._step += 1
+
+                # If we are given "nit", we use it instead
+                if "nit" in intermediate_result.keys():
+                    self._step = intermediate_result.nit
+
+                if self._step % self._n_steps == 0:
+                    x = intermediate_result.x
+
+                    cur_params = unflatten_dict(dict(zip(self._keys, x)))
+                    cur_loss = intermediate_result.fun
+
+                    # We assume (can be wrong though)
+                    opt_params = cur_params
+                    opt_loss = cur_loss
+
+                    self._callback(
+                        CallbackInfo(
+                            opt_params=opt_params,
+                            opt_loss=opt_loss,
+                            cur_params=cur_params,
+                            cur_loss=cur_loss,
+                            step=self._step,
+                            info=self._info,
+                        )
+                    )
+
+        # First concatenate the list of callbacks into a single function
+        callback, n_steps = self._produce_callback()
+
+        # Then, we wrap it in a way that scipy understands
+        if callback is not None:
+            callback_scipy = CallbackScipy(
+                keys=self._keys, info=self.info, callback=callback, n_steps=n_steps
+            )
+        else:
+            callback_scipy = None
+
         # ob = partial(self.ob_func_wrapper, ob_func=f_scipy)
-        res = minimize(f_scipy, x0, bounds=bounds, **kwargs)
+        res = minimize(
+            f_scipy, x0, method=method, bounds=bounds, **kwargs, callback=callback_scipy
+        )
 
         if not res.success:
             logger.warning(f"Fit did not converge: {res.message}")
