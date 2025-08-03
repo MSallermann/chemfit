@@ -5,6 +5,7 @@ except ImportError:
 
 import pytest
 
+from chemfit.utils import check_params_near_bounds
 from chemfit.fitter import Fitter, CallbackInfo
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 
@@ -104,7 +105,7 @@ def test_with_square_func_bounds():
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
 
-    assert len(fitter.check_params_near_bounds(optimal_params, 1e-2)) == 1
+    assert len(check_params_near_bounds(optimal_params, bounds, 1e-2)) == 1
     assert np.isclose(optimal_params["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
