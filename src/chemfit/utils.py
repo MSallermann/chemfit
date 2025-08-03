@@ -45,8 +45,34 @@ def create_initial_params(
     return {k: dict(default_params)[k] for k in adjustable_params}
 
 
-def check_params_near_bounds(params: dict, bounds: dict, relative_tol: float) -> list:
-    """Check if any of the parameters are near the bounds"""
+def check_params_near_bounds(
+    params: dict,
+    bounds: dict,
+    relative_tol: float,
+) -> list[tuple[str, float, float, float]]:
+    """
+    Check if any of the parameters are near or beyond the bounds.
+    The criterions checked are
+        param_value < lower + relative_tol * (upper - lower)
+        param_value > upper - relative_tol * (upper - lower)
+
+    Args:
+        params(dict): the dict of params to check
+        bounds(dict): the dict of bounds to check
+        relative_tol(float):
+            The tolerance, relative to the span of the bounds.
+            Positive numbers mean the values must fulfill a stricter bound
+            Zero means the values must fulfill the exact bound
+            Negative numbers mean the values must fulfill a looser bound
+
+    Returns:
+        A list of tuples with information about parameters, which violate the constraint.
+        Each tuple contains
+            - A string identifying the parameter in a flattened dict
+            - The value of the parameter
+            - The lower bound
+            - The upper bound
+    """
 
     flat_params = flatten_dict(params)
     flat_bounds = flatten_dict(bounds)
@@ -59,9 +85,9 @@ def check_params_near_bounds(params: dict, bounds: dict, relative_tol: float) ->
         lower, upper = flat_bounds.get(kp, (None, None))
 
         if lower is not None and upper is not None:
-            abs_tol = relative_tol * np.abs(vp)
+            abs_tol = relative_tol * np.abs(upper - lower)
 
-            if vp - lower < abs_tol or upper - vp < abs_tol:
-                problematic_params.append([kp, vp, lower, upper])
+            if vp < lower + abs_tol or vp > upper - abs_tol:
+                problematic_params.append((kp, vp, lower, upper))
 
     return problematic_params
