@@ -85,9 +85,6 @@ class ASEObjectiveFunction(ObjectiveFunctor):
     attaches a calculator, and provides an interface for evaluating energies
     given a set of parameters.
 
-    Subclasses must implement:
-      - `__call__`: Return the objective value (e.g., squared error against a target).
-
     Attributes:
         calc_factory (CalculatorFactory): Factory to create ASE calculators.
         param_applier (ParameterApplier): Function to apply parameters to the calculator.

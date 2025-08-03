@@ -52,7 +52,7 @@ def check_params_near_bounds(
 ) -> list[tuple[str, float, float, float]]:
     """
     Check if any of the parameters are near or beyond the bounds.
-    The criterions checked are
+    The criterions checked are:
         param_value < lower + relative_tol * (upper - lower)
         param_value > upper - relative_tol * (upper - lower)
 
