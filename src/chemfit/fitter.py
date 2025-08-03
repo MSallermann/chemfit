@@ -209,12 +209,11 @@ class Fitter:
 
             if len(self.problematic_params) > 0:
                 logger.warning(
-                    f"The following parameters are within {self.near_bound_tol * 100:.1f}% of the bounds."
-                    "You *may* have to loosen the bounds for an optimal result."
+                    f"The following parameters are near {self.near_bound_tol * 100:.1f}% or outside the bounds."
                 )
                 for kp, vp, lower, upper in self.problematic_params:
                     logger.warning(
-                        f"    parameter = {kp}, lower = {lower}, upper = {upper}, value = {vp}"
+                        f"    parameter = {kp}, lower = {lower}, value = {vp}, upper = {upper}"
                     )
 
     def check_params_near_bounds(self, params, relative_tol: float) -> list:
