@@ -12,6 +12,8 @@ from dataclasses import dataclass
 
 import math
 
+from chemfit.utils import check_params_near_bounds
+
 from pydictnest import (
     flatten_dict,
     unflatten_dict,
@@ -203,36 +205,18 @@ class Fitter:
         logger.info(f"    Info {self.info}")
 
         if self.near_bound_tol is not None:
-            self.problematic_params = self.check_params_near_bounds(
-                opt_params, self.near_bound_tol
+            self.problematic_params = check_params_near_bounds(
+                opt_params, self.bounds, self.near_bound_tol
             )
 
             if len(self.problematic_params) > 0:
                 logger.warning(
-                    f"The following parameters are near {self.near_bound_tol * 100:.1f}% or outside the bounds."
+                    f"The following parameters are near or outside the bounds (tolerance {self.near_bound_tol * 100:.1f}%):"
                 )
                 for kp, vp, lower, upper in self.problematic_params:
                     logger.warning(
                         f"    parameter = {kp}, lower = {lower}, value = {vp}, upper = {upper}"
                     )
-
-    def check_params_near_bounds(self, params, relative_tol: float) -> list:
-        """Check if any of the parameters are near the bounds"""
-
-        flat_params = flatten_dict(params)
-        flat_bounds = flatten_dict(self.bounds)
-
-        problematic_params = []
-
-        for (kp, vp), (kb, (lower, upper)) in zip(
-            flat_params.items(), flat_bounds.items()
-        ):
-            abs_tol = relative_tol * np.abs(vp)
-
-            if vp - lower < abs_tol or upper - vp < abs_tol:
-                problematic_params.append([kp, vp, lower, upper])
-
-        return problematic_params
 
     def fit_nevergrad(
         self, budget: int, optimizer_str: str = "NgIohTuned", **kwargs
