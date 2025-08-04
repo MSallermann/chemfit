@@ -1,23 +1,19 @@
 import logging
-import numpy as np
-from typing import Optional, Callable, Any
-import time
-
-from numbers import Real
-from functools import wraps
-
-from chemfit.exceptions import FactoryException
-
-from dataclasses import dataclass
-
 import math
+import time
+from dataclasses import dataclass
+from functools import wraps
+from numbers import Real
+from typing import Any, Callable, Optional
 
-from chemfit.utils import check_params_near_bounds
-
+import numpy as np
 from pydictnest import (
     flatten_dict,
     unflatten_dict,
 )
+
+from chemfit.exceptions import FactoryException
+from chemfit.utils import check_params_near_bounds
 
 logger = logging.getLogger(__name__)
 
@@ -49,20 +45,19 @@ class Fitter:
         near_bound_tol: Optional[float] = None,
         value_bad_params: float = 1e5,
     ):
-        """
-        Args:
-            objective_function (Callable[[dict], float]):
-                The objective function to be minimized.
-            initial_params (dict):
-                Initial values of the parameters.
-            bound (Optional[dict]):
-                Dictionary specifying bounds for each parameter.
-            near_bound_tol (Optional[float]):
-                If specified, checks whether any parameters are too close to their bounds and logs a warning if so.
-            value_bad_params (float):
-                Threshold value beyond which the objective function is considered to be in a poor or invalid region.
-        """
+        """Args:
+        objective_function (Callable[[dict], float]):
+            The objective function to be minimized.
+        initial_params (dict):
+            Initial values of the parameters.
+        bound (Optional[dict]):
+            Dictionary specifying bounds for each parameter.
+        near_bound_tol (Optional[float]):
+            If specified, checks whether any parameters are too close to their bounds and logs a warning if so.
+        value_bad_params (float):
+            Threshold value beyond which the objective function is considered to be in a poor or invalid region.
 
+        """
         self.objective_function = self.ob_func_wrapper(objective_function)
 
         self.initial_parameters = initial_params
@@ -81,8 +76,7 @@ class Fitter:
         self.callbacks: list[tuple[Callable[[dict, float, int, FitInfo]], int]] = []
 
     def register_callback(self, func: Callable[[CallbackInfo], None], n_steps: int):
-        """
-        Register a callback which is executed after every `n_steps` of the optimization.
+        """Register a callback which is executed after every `n_steps` of the optimization.
         Multiple callbacks may be registered. They are executed in the order of registration.
         The callback must be a callable with the following signature:
 
@@ -145,7 +139,6 @@ class Fitter:
 
     def _produce_callback(self) -> tuple[Optional[Callable[[CallbackInfo], None]], int]:
         """Generate a single callback from the list of callbacks"""
-
         if len(self.callbacks) == 0:
             return None, float("inf")
 
@@ -160,7 +153,6 @@ class Fitter:
 
     def hook_pre_fit(self):
         """A hook, which is invoked before optimizing"""
-
         # Overwrite with a fresh FitInfo object
         self.info = FitInfo()
 
@@ -185,7 +177,6 @@ class Fitter:
 
     def hook_post_fit(self, opt_params: dict):
         """A hook, which is invoked after optimizing"""
-
         self.time_fit_end = time.time()
         self.info.time_taken = self.time_fit_end - self.time_fit_start
 
@@ -266,8 +257,7 @@ class Fitter:
 
                 optimizer.tell(p, cur_loss)
 
-            if cur_loss < opt_loss:
-                opt_loss = cur_loss
+            opt_loss = min(opt_loss, cur_loss)
 
             if callback is not None and i % n_steps == 0:
                 recommendation = optimizer.provide_recommendation()
@@ -307,8 +297,7 @@ class Fitter:
         return opt_params
 
     def fit_scipy(self, method: str = "L-BFGS-B", **kwargs) -> dict:
-        """
-        Optimize parameters using SciPy's minimize function.
+        """Optimize parameters using SciPy's minimize function.
 
         Parameters
         ----------
@@ -335,9 +324,9 @@ class Fitter:
         >>> optimal_params = fitter.fit_scipy(initial_parameters=initial_params)
         >>> print(optimal_params)
         {'x': 2.0, 'y': -1.0}
-        """
 
-        from scipy.optimize import minimize, OptimizeResult
+        """
+        from scipy.optimize import OptimizeResult, minimize
 
         self.hook_pre_fit()
 

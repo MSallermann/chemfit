@@ -1,12 +1,14 @@
-from typing import Sequence, Callable, Optional, Union
-from typing_extensions import Self
+from collections.abc import Sequence
 from collections.abc import Sequence as ABCSequence
+from typing import Callable, Optional, Union
+
+from typing_extensions import Self
+
 from chemfit.abstract_objective_function import ObjectiveFunctor
 
 
 class CombinedObjectiveFunction(ObjectiveFunctor):
-    """
-    Represents a weighted sum of multiple objective functions.
+    """Represents a weighted sum of multiple objective functions.
 
     Each objective function accepts a dictionary of parameters (str -> float) and returns a float.
     Internally, each function is paired with a non-negative weight. Calling the instance returns
@@ -18,8 +20,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         objective_functions: Sequence[Callable[[dict], float]],
         weights: Optional[Sequence[float]] = None,
     ) -> None:
-        """
-        Initialize a CombinedObjectiveFunction.
+        """Initialize a CombinedObjectiveFunction.
 
         Args:
             objective_functions (Sequence[Callable[[dict], float]]):
@@ -32,6 +33,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         Raises:
             AssertionError: If `weights` is provided but its length differs from the number of
                 objective functions, or if any weight is negative.
+
         """
         # Convert to list internally for mutability
         self.objective_functions: list[Callable[[dict], float]] = list(
@@ -52,11 +54,11 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
     def n_terms(self) -> int:
-        """
-        Return the number of objective terms.
+        """Return the number of objective terms.
 
         Returns:
             int: The number of (function, weight) pairs stored internally.
+
         """
         return len(self.weights)
 
@@ -68,8 +70,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ],
         weights: Union[Sequence[float], float] = 1.0,
     ) -> Self:
-        """
-        Add one or more objective functions (and corresponding weights) to this instance.
+        """Add one or more objective functions (and corresponding weights) to this instance.
 
         If `obj_funcs` is a single callable, it is appended; if it is a sequence of callables,
         each is appended in order. The `weights` argument must align:
@@ -92,8 +93,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         Raises:
             AssertionError: If `weights` is a sequence but its length does not match the number
                 of functions in `obj_funcs`, or if any provided weight is negative.
-        """
 
+        """
         # Determine how many new functions are being added
         if isinstance(obj_funcs, ABCSequence) and not callable(obj_funcs):
             funcs_to_add = list(obj_funcs)  # type: ignore[assignment]
@@ -134,8 +135,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         combined_objective_functions_list: Sequence[Self],
         weights: Optional[Sequence[float]] = None,
     ) -> Self:
-        """
-        Create a new, "flat" CombinedObjectiveFunction by merging multiple existing instances.
+        """Create a new, "flat" CombinedObjectiveFunction by merging multiple existing instances.
 
         Each input instance is scaled by its corresponding weight, and all internal objective functions
         are concatenated into a single-level structure.
@@ -155,8 +155,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         Raises:
             AssertionError: If the lengths of `combined_objective_functions_list` and `weights` differ,
                 or if any weight is negative.
-        """
 
+        """
         if weights is None:
             weights = [1.0 for _ in combined_objective_functions_list]
 
@@ -186,8 +186,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
     def __call__(
         self, params: dict, idx_slice: slice = slice(None, None, None)
     ) -> float:
-        """
-        Evaluate the combined objective at a given parameter dictionary.
+        """Evaluate the combined objective at a given parameter dictionary.
 
         Each individual objective function is called (with a shallow copy of `params`), multiplied
         by its weight, and summed into a single scalar result.
@@ -198,8 +197,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         Returns:
             float: The weighted sum of all objective-function evaluations.
-        """
 
+        """
         total: float = 0.0
 
         idx_list = range(self.n_terms())
@@ -220,7 +219,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         If a slice is specified via the index argument the list only contains the results of the slice.
         If an exception occurs, `None` is appended as a result.
         """
-
         idx_list = range(self.n_terms())
 
         results = []

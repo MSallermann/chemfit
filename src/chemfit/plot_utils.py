@@ -1,12 +1,12 @@
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from pathlib import Path
 
 
 def plot_progress_curve(progress: list[float], outpath: Path) -> None:
-    """
-    Save a semi-log plot of the objective values (progress) versus iteration index.
+    """Save a semi-log plot of the objective values (progress) versus iteration index.
     """
     if len(progress) == 0:
         return

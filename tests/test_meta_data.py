@@ -47,8 +47,9 @@ def test_gather_meta_data():
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_gather_meta_data_mpi():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
     import logging
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     cob = CombinedObjectiveFunction(
         [a, MyFunctor(1), MyFunctor(2)]

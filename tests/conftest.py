@@ -3,9 +3,9 @@ try:
 except ImportError:
     mpi4py = None
 
-from ase.calculators.lj import LennardJones
-from ase import Atoms
 import numpy as np
+from ase import Atoms
+from ase.calculators.lj import LennardJones
 
 
 def e_lj(r, eps, sigma):

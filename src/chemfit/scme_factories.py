@@ -1,11 +1,13 @@
-from .scme_setup import (
-    setup_calculator,
-    check_water_is_in_OHH_order,
-    arrange_water_in_OHH_order,
-)
-from ase import Atoms
 from pathlib import Path
 from typing import Any
+
+from ase import Atoms
+
+from .scme_setup import (
+    arrange_water_in_OHH_order,
+    check_water_is_in_OHH_order,
+    setup_calculator,
+)
 
 
 class SCMECalculatorFactory:
@@ -34,7 +36,6 @@ class SCMECalculatorFactory:
 
 class SCMEParameterApplier:
     def __call__(self, atoms: Atoms, params: dict) -> None:
-        """
-        Assign SCME parameter values to the attached calculator.
+        """Assign SCME parameter values to the attached calculator.
         """
         atoms.calc.apply_params(params)

@@ -10,13 +10,13 @@ class ObjectiveFunctor(abc.ABC):
 
     @abc.abstractmethod
     def __call__(self, parameters: dict) -> float:
-        """
-        Compute the objective value given a set of parameters.
+        """Compute the objective value given a set of parameters.
 
         Args:
             parameters: Dictionary of parameter names to float values.
 
         Returns:
             float: Computed objective value (e.g., error metric).
+
         """
         ...
