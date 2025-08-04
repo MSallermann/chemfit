@@ -27,11 +27,11 @@ class ExtendedJSONEncoder(json.JSONEncoder):
         if isinstance(o, Path):
             return str(o)
         super().default(o)
+        return None
 
 
 def dump_dict_to_file(file: Path, dictionary: dict) -> None:
-    """Write `dictionary` as JSON to `file` (with indent=4).
-    """
+    """Write `dictionary` as JSON to `file` (with indent=4)."""
     file.parent.mkdir(exist_ok=True, parents=True)
     with open(file, "w") as f:
         json.dump(dictionary, f, indent=4, cls=ExtendedJSONEncoder)

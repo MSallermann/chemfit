@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from ase import Atoms
 from ase.geometry import find_mic
@@ -24,7 +24,8 @@ def setup_expansions(
     logger.debug(f"    {file = }")
 
     if not file.exists():
-        raise Exception(f"Expansion file `{file}` does not exist")
+        msg = f"Expansion file `{file}` does not exist"
+        raise Exception(msg)
 
     energy_expansion = get_energy_expansion_from_hdf5_file(
         path_to_file=file, key_to_dataset="energy"
@@ -101,14 +102,16 @@ def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
     """
     n_atoms = len(atoms)
     if n_atoms % 3 != 0:
-        raise ValueError(f"Number of atoms {n_atoms} is not a multiple of 3")
+        msg = f"Number of atoms {n_atoms} is not a multiple of 3"
+        raise ValueError(msg)
 
     mask_O = atoms.numbers == 8
     mask_H = atoms.numbers == 1
     if 2 * mask_O.sum() != mask_H.sum():
-        raise ValueError("Mismatch between O and H counts for water molecules")
+        msg = "Mismatch between O and H counts for water molecules"
+        raise ValueError(msg)
 
-    new_order: List[Atoms] = []
+    new_order: list[Atoms] = []
     for atom_O in atoms[mask_O]:
         new_order.append(atom_O)
         H_sorted = sorted(
@@ -142,7 +145,8 @@ def check_water_is_in_OHH_order(atoms: Atoms, OH_distance_tol: float = 2.0) -> b
     """
     n_atoms = len(atoms)
     if n_atoms % 3 != 0:
-        raise ValueError("Total atoms not divisible by 3")
+        msg = "Total atoms not divisible by 3"
+        raise ValueError(msg)
 
     good = True
     for i in range(n_atoms // 3):

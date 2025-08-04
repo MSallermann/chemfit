@@ -6,8 +6,7 @@ import pandas as pd
 
 
 def plot_progress_curve(progress: list[float], outpath: Path) -> None:
-    """Save a semi-log plot of the objective values (progress) versus iteration index.
-    """
+    """Save a semi-log plot of the objective values (progress) versus iteration index."""
     if len(progress) == 0:
         return
     plt.close()

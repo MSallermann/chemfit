@@ -16,7 +16,7 @@ class SCMECalculatorFactory:
         default_scme_params: dict,
         path_to_scme_expansions: Path,
         parametrization_key: str,
-    ):
+    ) -> None:
         self.default_scme_params = default_scme_params
         self.path_to_scme_expansions = path_to_scme_expansions
         self.parametrization_key = parametrization_key
@@ -36,6 +36,5 @@ class SCMECalculatorFactory:
 
 class SCMEParameterApplier:
     def __call__(self, atoms: Atoms, params: dict) -> None:
-        """Assign SCME parameter values to the attached calculator.
-        """
+        """Assign SCME parameter values to the attached calculator."""
         atoms.calc.apply_params(params)

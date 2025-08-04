@@ -34,7 +34,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         cob: CombinedObjectiveFunction,
         comm: Optional[Any] = None,
         mpi_debug_log: bool = False,
-    ):
+    ) -> None:
         self.cob = cob
         if comm is None:
             self.comm = MPI.COMM_WORLD.Dup()
@@ -117,7 +117,8 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def gather_meta_data(self) -> list[Optional[dict]]:
         # Ensure only rank 0 can call this
         if self.rank != 0:
-            raise RuntimeError("`gather_meta_data` can only be used on rank 0")
+            msg = "`gather_meta_data` can only be used on rank 0"
+            raise RuntimeError(msg)
 
         self.comm.bcast(Signal.GATHER_META_DATA, root=0)
 
@@ -142,7 +143,8 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         # Ensure only rank 0 can call this
         if self.rank != 0:
-            raise RuntimeError("`__call__` can only be used on rank 0")
+            msg = "`__call__` can only be used on rank 0"
+            raise RuntimeError(msg)
 
         self.comm.bcast(params, root=0)
 

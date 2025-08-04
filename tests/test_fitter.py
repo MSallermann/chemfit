@@ -35,7 +35,7 @@ def test_with_square_func():
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
 
-    initial_params = dict(x=0.0, y=0.0)
+    initial_params = {"x": 0.0, "y": 0.0}
     fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
 
     progress = []
@@ -89,8 +89,8 @@ def test_with_square_func_bounds():
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
 
-    initial_params = dict(x=0.0, y=0.0)
-    bounds = dict(x=(0.0, 1.5))
+    initial_params = {"x": 0.0, "y": 0.0}
+    bounds = {"x": (0.0, 1.5)}
 
     fitter = Fitter(
         objective_function=obj_func,
@@ -133,8 +133,8 @@ def test_with_nested_dict():
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
 
-    initial_params = {"params": dict(x=0.0), "y": 0.0}
-    bounds = {"params": dict(x=(0.0, 1.5))}
+    initial_params = {"params": {"x": 0.0}, "y": 0.0}
+    bounds = {"params": {"x": (0.0, 1.5)}}
 
     fitter = Fitter(
         objective_function=obj_func, initial_params=initial_params, bounds=bounds
@@ -161,7 +161,7 @@ def test_with_nested_dict():
 def test_with_complicated_dict():
     def ob(params):
         res = 0
-        for k, v in items_nested(params):
+        for _k, v in items_nested(params):
             res += v**2
         return res
 
@@ -212,7 +212,8 @@ def test_with_bad_function():
         if params["x"] < 1.0:
             return None
         if params["x"] < 2.0:
-            raise Exception("Some random exception")
+            msg = "Some random exception"
+            raise Exception(msg)
         if params["x"] < 3.0:
             return (params["x"] - 2.5) ** 2
         if params["x"] < 4.0:
@@ -256,7 +257,8 @@ def test_with_bad_function_mpi():
         if params["x"] < 1.0:
             return None
         if params["x"] < 2.0:
-            raise Exception("Some random exception")
+            msg = "Some random exception"
+            raise Exception(msg)
         if params["x"] < 3.0:
             return (params["x"] - 2.5) ** 2
         if params["x"] < 4.0:
@@ -267,7 +269,8 @@ def test_with_bad_function_mpi():
         if params["x"] < 1.0:
             return None
         if params["x"] < 2.0:
-            raise Exception("Some random exception")
+            msg = "Some random exception"
+            raise Exception(msg)
         if params["x"] < 3.0:
             return (params["x"] - 2.5) ** 2
         if params["x"] < 4.0:

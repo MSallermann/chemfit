@@ -1,4 +1,3 @@
 class FactoryException(Exception):
-    """General exception class for the lazy factory functions
-    """
+    """General exception class for the lazy factory functions."""
 
