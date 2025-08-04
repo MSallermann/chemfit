@@ -20,3 +20,22 @@ Repository = "https://github.com/MSallermann/chemfit"
 [project.optional-dependencies]
 build_docs = ["sphinx", "furo", "sphinxcontrib-napoleon", "sphinx-autobuild"]
 mpi = ["mpi4py"]
+
+[tool.ruff.lint]
+select = ['ALL']
+ignore = [
+    'PLR2004', # "magic" values
+    'S101',    # because we'r using assert in pytest
+    'D100',    # not every module needs a docstring
+    'D101',    # Missing docstring in public class
+    'D102',    # missing docstring in public method
+    'D103',    # missing docstring in public function
+    'ANN201',  # return type annotation
+    'ANN202',  # return type annotation
+    'ERA001',  # commented out code
+    'INP001',  # implicit namespace
+    'T201',    # `print`
+    'COM812',  # missing trailing comma
+    'TRY',     # lots of noise
+    'E501',    # line too long (handled by formatter)
+]
