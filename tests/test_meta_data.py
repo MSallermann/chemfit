@@ -12,6 +12,7 @@ import pytest
 class MyFunctor(ObjectiveFunctor):
 
     def __init__(self, f: float) -> None:
+        """Initialize My Functor."""
         self.f = f
         self.meta_data = {}
 
@@ -24,7 +25,7 @@ class MyFunctor(ObjectiveFunctor):
         return val
 
 
-def a(p):
+def a(p: dict):
     return p["y"] ** 2
 
 

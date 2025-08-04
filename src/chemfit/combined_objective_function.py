@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
 from collections.abc import Sequence as ABCSequence
-from typing import Callable, Optional, Union
+from typing import Callable
 
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import ObjectiveFunctor
+
+DEFAULT_SLICE = slice(None, None, None)
 
 
 class CombinedObjectiveFunction(ObjectiveFunctor):
@@ -18,7 +22,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
     def __init__(
         self,
         objective_functions: Sequence[Callable[[dict], float]],
-        weights: Optional[Sequence[float]] = None,
+        weights: Sequence[float] | None = None,
     ) -> None:
         """Initialize a CombinedObjectiveFunction.
 
@@ -64,11 +68,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
     def add(
         self,
-        obj_funcs: Union[
-            Sequence[Callable[[dict], float]],
-            Callable[[dict], float],
-        ],
-        weights: Union[Sequence[float], float] = 1.0,
+        obj_funcs: Sequence[Callable[[dict], float]] | Callable[[dict], float],
+        weights: Sequence[float] | float = 1.0,
     ) -> Self:
         """Add one or more objective functions (and corresponding weights) to this instance.
 
@@ -133,7 +134,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
     def add_flat(
         cls,
         combined_objective_functions_list: Sequence[Self],
-        weights: Optional[Sequence[float]] = None,
+        weights: Sequence[float] | None = None,
     ) -> Self:
         """Create a new, "flat" CombinedObjectiveFunction by merging multiple existing instances.
 
@@ -183,9 +184,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return cls(total_objective_functions, total_weights)
 
-    def __call__(
-        self, params: dict, idx_slice: slice = slice(None, None, None)
-    ) -> float:
+    def __call__(self, params: dict, idx_slice: slice = DEFAULT_SLICE) -> float:
         """Evaluate the combined objective at a given parameter dictionary.
 
         Each individual objective function is called (with a shallow copy of `params`), multiplied
@@ -212,10 +211,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
     def get_meta_data(self) -> dict:
         return {"n_terms": self.n_terms(), "type": type(self).__name__}
 
-    def gather_meta_data(
-        self, idx_slice: slice = slice(None, None, None)
-    ) -> list[Optional[dict]]:
+    def gather_meta_data(self, idx_slice: slice = DEFAULT_SLICE) -> list[dict | None]:
         """Gather the meta data of each term and append it to a list.
+
         If a slice is specified via the index argument the list only contains the results of the slice.
         If an exception occurs, `None` is appended as a result.
         """
@@ -224,9 +222,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         results = []
         for idx in idx_list[idx_slice]:
             meta_data = None
-            if hasattr(self.objective_functions[idx], "get_meta_data"):
-                if callable(self.objective_functions[idx].get_meta_data):
-                    meta_data = self.objective_functions[idx].get_meta_data()
+            if hasattr(self.objective_functions[idx], "get_meta_data") and callable(
+                self.objective_functions[idx].get_meta_data
+            ):
+                meta_data = self.objective_functions[idx].get_meta_data()
             results.append(meta_data)
 
         return results

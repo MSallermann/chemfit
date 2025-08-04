@@ -17,6 +17,7 @@ class SCMECalculatorFactory:
         path_to_scme_expansions: Path,
         parametrization_key: str,
     ) -> None:
+        """Create an SCME calculator."""
         self.default_scme_params = default_scme_params
         self.path_to_scme_expansions = path_to_scme_expansions
         self.parametrization_key = parametrization_key

@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import logging
 import math
 from enum import Enum
 from numbers import Real
-from typing import Any, Optional
+from typing import Any
 
 from mpi4py import MPI
 
@@ -14,12 +16,12 @@ from chemfit.exceptions import FactoryException
 logger = logging.getLogger(__name__)
 
 
-def slice_up_range(N: int, n_ranks: int):
-    chunk_size = math.ceil(N / n_ranks)
+def slice_up_range(n: int, n_ranks: int):
+    chunk_size = math.ceil(n / n_ranks)
 
     for rank in range(n_ranks):
         start = rank * chunk_size
-        end = min(start + chunk_size, N)
+        end = min(start + chunk_size, n)
         yield (start, end)
 
 
@@ -32,9 +34,11 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def __init__(
         self,
         cob: CombinedObjectiveFunction,
-        comm: Optional[Any] = None,
+        comm: Any | None = None,
         mpi_debug_log: bool = False,
     ) -> None:
+        """Initialize wrapper for combined objective function."""
+
         self.cob = cob
         if comm is None:
             self.comm = MPI.COMM_WORLD.Dup()
@@ -55,7 +59,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def __enter__(self):
         return self
 
-    def worker_process_params(self, params):
+    def worker_process_params(self, params: dict):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
         # Therefore, the error handling needs to be slightly different,
         # and we try to suppress general exceptions instead of re-raising them
@@ -114,7 +118,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
                     params = signal
                     self.worker_process_params(params)
 
-    def gather_meta_data(self) -> list[Optional[dict]]:
+    def gather_meta_data(self) -> list[dict | None]:
         # Ensure only rank 0 can call this
         if self.rank != 0:
             msg = "`gather_meta_data` can only be used on rank 0"
@@ -166,9 +170,14 @@ class MPIWrapperCOB(ObjectiveFunctor):
             global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
         return global_total
 
-    def __exit__(self, exc_type, exc, tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: object,
+    ):
 
         # Only rank 0 needs to shut down workers
         if self.rank == 0 and self.size > 1:
-            # send the poison‐pill (None) so workers break out
+            # send the poison-pill (None) so workers break out
             self.comm.bcast(Signal.ABORT, root=0)

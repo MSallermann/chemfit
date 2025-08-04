@@ -27,10 +27,10 @@ def collect_progress(
 
 
 def test_with_square_func():
-    def cont1(params):
+    def cont1(params : dict):
         return 2.0 * (params["x"] - 2) ** 2
 
-    def cont2(params):
+    def cont2(params : dict):
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
@@ -81,10 +81,10 @@ def test_with_square_func():
 
 
 def test_with_square_func_bounds():
-    def cont1(params):
+    def cont1(params : dict):
         return 2.0 * (params["x"] - 2) ** 2
 
-    def cont2(params):
+    def cont2(params : dict):
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
@@ -125,10 +125,10 @@ def test_with_square_func_bounds():
 
 
 def test_with_nested_dict():
-    def cont1(params):
+    def cont1(params : dict):
         return 2.0 * (params["params"]["x"] - 2) ** 2
 
-    def cont2(params):
+    def cont2(params : dict):
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
@@ -159,7 +159,7 @@ def test_with_nested_dict():
 
 
 def test_with_complicated_dict():
-    def ob(params):
+    def ob(params: dict):
         res = 0
         for _k, v in items_nested(params):
             res += v**2
@@ -175,7 +175,7 @@ def test_with_complicated_dict():
 
     # Every non-constrained parameter should be at 0.0
     # and every constrained parameter should be at the lower bound
-    def check_solution(opt_params):
+    def check_solution(opt_params: dict):
         for k, v in items_nested(opt_params):
             if has_nested(bounds, k):
                 lower, upper = get_nested(bounds, k)
@@ -206,9 +206,9 @@ def test_with_complicated_dict():
 
 def test_with_bad_function():
 
-    X_EXPECTED = 2.5
+    x_expected = 2.5
 
-    def ob(params):
+    def ob(params: dict):
         if params["x"] < 1.0:
             return None
         if params["x"] < 2.0:
@@ -234,7 +234,7 @@ def test_with_bad_function():
         print("NEVERGRAD")
         print(f"{optimal_params = }")
         print(f"{fitter.info = }")
-        assert np.isclose(optimal_params["x"], X_EXPECTED, atol=NG_ATOL)
+        assert np.isclose(optimal_params["x"], x_expected, atol=NG_ATOL)
 
         # SCIPY will probably fail, unless starting in the good region
         optimal_params = fitter.fit_scipy()
@@ -244,16 +244,16 @@ def test_with_bad_function():
 
         # only assert if x0 is in the good region
         if x0 >= 2.0 and x0 < 3.0:
-            assert np.isclose(optimal_params["x"], X_EXPECTED)
+            assert np.isclose(optimal_params["x"], x_expected)
 
 
 @pytest.mark.skipif(mpi4py is None, reason="Reason mpi4py not installed")
 def test_with_bad_function_mpi():
     from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
-    X_EXPECTED = 2.5
+    x_expected = 2.5
 
-    def f1(params):
+    def f1(params: dict):
         if params["x"] < 1.0:
             return None
         if params["x"] < 2.0:
@@ -265,7 +265,7 @@ def test_with_bad_function_mpi():
             return float("Nan")
         return "not even a number"
 
-    def f2(params):
+    def f2(params: dict):
         if params["x"] < 1.0:
             return None
         if params["x"] < 2.0:
@@ -306,7 +306,7 @@ def test_with_bad_function_mpi():
                 print(f"{optimal_params = }")
                 print(f"{fitter.info = }")
 
-                assert np.isclose(optimal_params["x"], X_EXPECTED, atol=NG_ATOL)
+                assert np.isclose(optimal_params["x"], x_expected, atol=NG_ATOL)
 
                 # SCIPY will probably fail, unless starting in the good region
                 optimal_params = fitter.fit_scipy()
@@ -316,7 +316,7 @@ def test_with_bad_function_mpi():
 
                 # only assert if x0 is in the good region
                 if x0 >= 2.0 and x0 < 3.0:
-                    assert np.isclose(optimal_params["x"], X_EXPECTED, atol=1e-1)
+                    assert np.isclose(optimal_params["x"], x_expected, atol=1e-1)
             else:
                 ob_mpi.worker_loop()
 

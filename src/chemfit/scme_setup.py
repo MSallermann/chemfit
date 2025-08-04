@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import Optional
 
 from ase import Atoms
 from ase.geometry import find_mic
@@ -65,7 +66,7 @@ def setup_expansions(
 def setup_calculator(
     atoms: Atoms,
     params: dict,
-    path_to_scme_expansions: Optional[Path],
+    path_to_scme_expansions: Path | None,
     parametrization_key: str,
 ) -> SCMECalculator:
     atoms.calc = SCMECalculator(atoms, **params)
@@ -81,7 +82,7 @@ def setup_calculator(
     return atoms.calc
 
 
-def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
+def arrange_water_in_ohh_order(atoms: Atoms) -> Atoms:
     """Reorder atoms so each water molecule appears as O, H, H.
 
     Parameters
@@ -105,18 +106,18 @@ def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
         msg = f"Number of atoms {n_atoms} is not a multiple of 3"
         raise ValueError(msg)
 
-    mask_O = atoms.numbers == 8
-    mask_H = atoms.numbers == 1
-    if 2 * mask_O.sum() != mask_H.sum():
+    mask_o = atoms.numbers == 8
+    mask_h = atoms.numbers == 1
+    if 2 * mask_o.sum() != mask_h.sum():
         msg = "Mismatch between O and H counts for water molecules"
         raise ValueError(msg)
 
     new_order: list[Atoms] = []
-    for atom_O in atoms[mask_O]:
-        new_order.append(atom_O)
+    for atom_o in atoms[mask_o]:
+        new_order.append(atom_o)
         H_sorted = sorted(
-            atoms[mask_H],
-            key=lambda a: find_mic(atom_O.position - a.position, cell=atoms.cell)[1],
+            atoms[mask_h],
+            key=lambda a: find_mic(atom_o.position - a.position, cell=atoms.cell)[1],
         )
         new_order.extend(H_sorted[:2])
 
@@ -127,7 +128,7 @@ def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
     return result
 
 
-def check_water_is_in_OHH_order(atoms: Atoms, OH_distance_tol: float = 2.0) -> bool:
+def check_water_is_in_ohh_order(atoms: Atoms, oh_distance_tol: float = 2.0) -> bool:
     """Validate that each water molecule is ordered O, H, H and within tolerance.
 
     Parameters
@@ -150,18 +151,18 @@ def check_water_is_in_OHH_order(atoms: Atoms, OH_distance_tol: float = 2.0) -> b
 
     good = True
     for i in range(n_atoms // 3):
-        idxO, idxH1, idxH2 = 3 * i, 3 * i + 1, 3 * i + 2
+        idx_o, idx_h1, idx_h2 = 3 * i, 3 * i + 1, 3 * i + 2
         if (
-            atoms.numbers[idxO] != 8
-            or atoms.numbers[idxH1] != 1
-            or atoms.numbers[idxH2] != 1
+            atoms.numbers[idx_o] != 8
+            or atoms.numbers[idx_h1] != 1
+            or atoms.numbers[idx_h2] != 1
         ):
             good = False
             break
 
-        d1 = atoms.get_distance(idxO, idxH1, mic=True)
-        d2 = atoms.get_distance(idxO, idxH2, mic=True)
-        if d1 > OH_distance_tol or d2 > OH_distance_tol:
+        d1 = atoms.get_distance(idx_o, idx_h1, mic=True)
+        d2 = atoms.get_distance(idx_o, idx_h2, mic=True)
+        if d1 > oh_distance_tol or d2 > oh_distance_tol:
             good = False
             break
 

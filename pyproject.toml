@@ -23,6 +23,7 @@ mpi = ["mpi4py"]
 
 [tool.ruff.lint]
 select = ['ALL']
+exclude = ["docs/*", "noxfile.py"]
 ignore = [
     'PLR2004', # "magic" values
     'S101',    # because we'r using assert in pytest
@@ -30,12 +31,34 @@ ignore = [
     'D101',    # Missing docstring in public class
     'D102',    # missing docstring in public method
     'D103',    # missing docstring in public function
+    'D104',    # missing docstring in public package
+    'D105',    # missing docstring in magic method
+    'D417',    # missing argument description in docstring
+    'D202',    # no blank lines after docstring
+    'D401',    # An imperative mood????
+    'ANN002',  # Type annotation for args
+    'ANN003',  # Type annotation of kwargs
     'ANN201',  # return type annotation
     'ANN202',  # return type annotation
+    'ANN204',  # return type annotation
+    'ANN401',  # Allow `Any` type annotation
     'ERA001',  # commented out code
     'INP001',  # implicit namespace
     'T201',    # `print`
     'COM812',  # missing trailing comma
     'TRY',     # lots of noise
     'E501',    # line too long (handled by formatter)
+    'C901',    # function too complex
+    'PT012',   # pytest.raises should contain a single line
+    'N803',    # method arguments should be lowercase
+    'N806',    # variable names should be lowercase 
+    'G004',    # Logger uses f-string
+    'TC001',   # Type checking blocks
+    'TC002',   # Type checking blocks
+    'PLR0913', # too many arguments in function definition
+    'BLE001',  # do not catch blind exceptions
+    'FBT001',  # boolean default args
+    'FBT002',  # boolean default args
+    'N818',    # pep8 naming of exceptions (ussing <Nmae>Error)
+    'PD901',   # I like df
 ]
