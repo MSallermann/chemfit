@@ -29,7 +29,8 @@ def construct_multi_energy_objective_function(
     weight_list: list[float] | None = None,
     atom_post_processor_list: list[AtomsPostProcessor] | None = None,
 ) -> CombinedObjectiveFunction:
-    """Initialize a CombinedObjectiveFunction by constructing individual EnergyObjectiveFunctions.
+    """
+    Initialize a CombinedObjectiveFunction by constructing individual EnergyObjectiveFunctions.
 
     Each element of `tag_list`, `path_to_reference_configuration_list`, and `reference_energy_list`
     defines one EnergyObjectiveFunction instance. Those instances are collected and passed to the

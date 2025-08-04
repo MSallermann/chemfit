@@ -107,7 +107,6 @@ class MPIWrapperCOB(ObjectiveFunctor):
         if self.size > 1 and self.rank != 0:
             # Worker loop: wait for params, compute slice+reduce, repeat
             while True:
-
                 signal = self.comm.bcast(None, root=0)
 
                 if signal == Signal.ABORT:
@@ -176,7 +175,6 @@ class MPIWrapperCOB(ObjectiveFunctor):
         exc: BaseException | None,
         tb: object,
     ):
-
         # Only rank 0 needs to shut down workers
         if self.rank == 0 and self.size > 1:
             # send the poison-pill (None) so workers break out

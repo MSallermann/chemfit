@@ -27,7 +27,6 @@ def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:
     )
 
 
-
 def test_lj():
     eps = 1.0
     sigma = 1.0

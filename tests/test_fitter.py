@@ -27,10 +27,10 @@ def collect_progress(
 
 
 def test_with_square_func():
-    def cont1(params : dict):
+    def cont1(params: dict):
         return 2.0 * (params["x"] - 2) ** 2
 
-    def cont2(params : dict):
+    def cont2(params: dict):
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
@@ -81,10 +81,10 @@ def test_with_square_func():
 
 
 def test_with_square_func_bounds():
-    def cont1(params : dict):
+    def cont1(params: dict):
         return 2.0 * (params["x"] - 2) ** 2
 
-    def cont2(params : dict):
+    def cont2(params: dict):
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
@@ -125,10 +125,10 @@ def test_with_square_func_bounds():
 
 
 def test_with_nested_dict():
-    def cont1(params : dict):
+    def cont1(params: dict):
         return 2.0 * (params["params"]["x"] - 2) ** 2
 
-    def cont2(params : dict):
+    def cont2(params: dict):
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
@@ -205,7 +205,6 @@ def test_with_complicated_dict():
 
 
 def test_with_bad_function():
-
     x_expected = 2.5
 
     def ob(params: dict):
@@ -283,7 +282,6 @@ def test_with_bad_function_mpi():
         print(f"{x0 = }")
 
         with MPIWrapperCOB(cob=ob) as ob_mpi:
-
             logging.basicConfig(
                 filename=f"test_fitter_bad_function_{ob_mpi.rank}.log",
                 level=logging.DEBUG,

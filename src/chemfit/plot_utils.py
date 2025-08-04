@@ -28,7 +28,6 @@ def plot_energies(
     df: pd.DataFrame,
     output_folder: Path,
 ) -> None:
-
     tags = df["tag"]
     energy_ref = df["reference_energy"]
     energy_fit = df["last_energy"]

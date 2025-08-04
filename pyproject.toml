@@ -35,6 +35,8 @@ ignore = [
     'D105',    # missing docstring in magic method
     'D417',    # missing argument description in docstring
     'D202',    # no blank lines after docstring
+    'D203',    # blank line after docstring
+    'D212',    # Summary line of rist line of docstring
     'D401',    # An imperative mood????
     'ANN002',  # Type annotation for args
     'ANN003',  # Type annotation of kwargs

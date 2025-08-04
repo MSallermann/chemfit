@@ -48,7 +48,8 @@ class Fitter:
         near_bound_tol: float | None = None,
         value_bad_params: float = 1e5,
     ) -> None:
-        """Initialize a Fitter.
+        """
+        Initialize a Fitter.
 
         Args:
             objective_function (Callable[[dict], float]):
@@ -81,7 +82,8 @@ class Fitter:
         self.callbacks: list[tuple[Callable[[dict, float, int, FitInfo]], int]] = []
 
     def register_callback(self, func: Callable[[CallbackInfo], None], n_steps: int):
-        """Register a callback which is executed after every `n_steps` of the optimization.
+        """
+        Register a callback which is executed after every `n_steps` of the optimization.
 
         Multiple callbacks may be registered. They are executed in the order of registration.
         The callback must be a callable with the following signature:
@@ -236,7 +238,7 @@ class Fitter:
 
         optimizer = OptimizerCls(parametrization=instru, budget=budget)
 
-        def f_ng(p : dict):
+        def f_ng(p: dict):
             params = unflatten_dict(p)
             return self.objective_function(params)
 
@@ -303,7 +305,8 @@ class Fitter:
         return opt_params
 
     def fit_scipy(self, method: str = "L-BFGS-B", **kwargs) -> dict:
-        """Optimize parameters using SciPy's minimize function.
+        """
+        Optimize parameters using SciPy's minimize function.
 
         Parameters
         ----------

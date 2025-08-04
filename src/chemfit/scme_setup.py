@@ -83,7 +83,8 @@ def setup_calculator(
 
 
 def arrange_water_in_ohh_order(atoms: Atoms) -> Atoms:
-    """Reorder atoms so each water molecule appears as O, H, H.
+    """
+    Reorder atoms so each water molecule appears as O, H, H.
 
     Parameters
     ----------
@@ -129,7 +130,8 @@ def arrange_water_in_ohh_order(atoms: Atoms) -> Atoms:
 
 
 def check_water_is_in_ohh_order(atoms: Atoms, oh_distance_tol: float = 2.0) -> bool:
-    """Validate that each water molecule is ordered O, H, H and within tolerance.
+    """
+    Validate that each water molecule is ordered O, H, H and within tolerance.
 
     Parameters
     ----------
