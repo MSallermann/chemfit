@@ -1,12 +1,15 @@
+from __future__ import annotations
+
 import logging
 import math
 import time
 from dataclasses import dataclass
 from functools import wraps
 from numbers import Real
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import numpy as np
+import numpy.typing as npt
 from pydictnest import (
     flatten_dict,
     unflatten_dict,
@@ -20,9 +23,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FitInfo:
-    initial_value: Optional[float] = None
-    final_value: Optional[float] = None
-    time_taken: Optional[float] = None
+    initial_value: float | None = None
+    final_value: float | None = None
+    time_taken: float | None = None
     n_evals: int = 0
 
 
@@ -41,21 +44,23 @@ class Fitter:
         self,
         objective_function: Callable[[dict], float],
         initial_params: dict,
-        bounds: Optional[dict] = None,
-        near_bound_tol: Optional[float] = None,
+        bounds: dict | None = None,
+        near_bound_tol: float | None = None,
         value_bad_params: float = 1e5,
     ) -> None:
-        """Args:
-        objective_function (Callable[[dict], float]):
-            The objective function to be minimized.
-        initial_params (dict):
-            Initial values of the parameters.
-        bound (Optional[dict]):
-            Dictionary specifying bounds for each parameter.
-        near_bound_tol (Optional[float]):
-            If specified, checks whether any parameters are too close to their bounds and logs a warning if so.
-        value_bad_params (float):
-            Threshold value beyond which the objective function is considered to be in a poor or invalid region.
+        """Initialize a Fitter.
+
+        Args:
+            objective_function (Callable[[dict], float]):
+                The objective function to be minimized.
+            initial_params (dict):
+                Initial values of the parameters.
+            bound (Optional[dict]):
+                Dictionary specifying bounds for each parameter.
+            near_bound_tol (Optional[float]):
+                If specified, checks whether any parameters are too close to their bounds and logs a warning if so.
+            value_bad_params (float):
+                Threshold value beyond which the objective function is considered to be in a poor or invalid region.
 
         """
         self.objective_function = self.ob_func_wrapper(objective_function)
@@ -77,6 +82,7 @@ class Fitter:
 
     def register_callback(self, func: Callable[[CallbackInfo], None], n_steps: int):
         """Register a callback which is executed after every `n_steps` of the optimization.
+
         Multiple callbacks may be registered. They are executed in the order of registration.
         The callback must be a callable with the following signature:
 
@@ -137,7 +143,7 @@ class Fitter:
 
         return wrapped_ob_func
 
-    def _produce_callback(self) -> tuple[Optional[Callable[[CallbackInfo], None]], int]:
+    def _produce_callback(self) -> tuple[Callable[[CallbackInfo], None] | None, int]:
         """Generate a single callback from the list of callbacks."""
         if len(self.callbacks) == 0:
             return None, float("inf")
@@ -230,7 +236,7 @@ class Fitter:
 
         optimizer = OptimizerCls(parametrization=instru, budget=budget)
 
-        def f_ng(p):
+        def f_ng(p : dict):
             params = unflatten_dict(p)
             return self.objective_function(params)
 
@@ -352,7 +358,7 @@ class Fitter:
         # The local objective function first creates a flat dictionary from the `x` array
         # by zipping it with the captured flattened keys and then unflattens the dictionary
         # to pass it to the objective functions
-        def f_scipy(x):
+        def f_scipy(x: npt.NDArray):
             p = unflatten_dict(dict(zip(self._keys, x)))
             return self.objective_function(p)
 

@@ -1,6 +1,8 @@
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Callable, Protocol
 
 import numpy as np
 from ase import Atoms
@@ -49,7 +51,8 @@ class AtomsFactory(Protocol):
 class PathAtomsFactory(AtomsFactory):
     """Implementation of AtomsFactory which reads the atoms from a path."""
 
-    def __init__(self, path: Path, index: Optional[int] = None) -> None:
+    def __init__(self, path: Path, index: int | None = None) -> None:
+        """Initialize a path atoms factory."""
         self.path = path
         self.index = index
 
@@ -88,12 +91,12 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         self,
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
-        path_to_reference_configuration: Optional[Path] = None,
-        tag: Optional[str] = None,
+        path_to_reference_configuration: Path | None = None,
+        tag: str | None = None,
         weight: float = 1.0,
-        weight_cb: Optional[Callable[[Atoms], float]] = None,
-        atoms_factory: Optional[AtomsFactory] = None,
-        atoms_post_processor: Optional[AtomsPostProcessor] = None,
+        weight_cb: Callable[[Atoms], float] | None = None,
+        atoms_factory: AtomsFactory | None = None,
+        atoms_post_processor: AtomsPostProcessor | None = None,
     ) -> None:
         """Initialize an ASEObjectiveFunction.
 
@@ -127,16 +130,14 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         if atoms_factory is None:
             if path_to_reference_configuration is None:
                 msg = "Neither `path_to_reference_configuration` nor a custom `atoms_factory` has been supplied"
-                raise Exception(
-                    msg
-                )
+                raise Exception(msg)
             self.atoms_factory = PathAtomsFactory(
                 path_to_reference_configuration, index=0
             )
         else:
             self.atoms_factory = atoms_factory
 
-        self._last_energy: Optional[float] = None
+        self._last_energy: float | None = None
 
         # NOTE: You should probably use the `self.atoms` property
         # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
@@ -245,14 +246,12 @@ class ASEObjectiveFunction(ObjectiveFunctor):
                     scale = self.weight_cb(self.atoms)
                 except Exception as e:
                     scale = 1.0
-                    logging.exception("Could not use weight callback.")
+                    logger.exception("Could not use weight callback.")
                     raise e
 
                 if scale < 0:
                     msg = "Weight callback must return a non-negative scaling factor."
-                    raise AssertionError(
-                        msg
-                    )
+                    raise AssertionError(msg)
                 self._weight *= scale
 
         return self._weight
@@ -277,7 +276,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
 
         return self._last_energy
 
-    def check_atoms(self, atoms: Atoms) -> bool:
+    def check_atoms(self, atoms: Atoms) -> bool:  # noqa: ARG002
         """Optional hook to validate or correct the Atoms object.
 
         Args:
@@ -298,12 +297,12 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
         reference_energy: float,
-        path_to_reference_configuration: Optional[Path] = None,
-        tag: Optional[str] = None,
+        path_to_reference_configuration: Path | None = None,
+        tag: str | None = None,
         weight: float = 1.0,
-        weight_cb: Optional[Callable[[Atoms], float]] = None,
-        atoms_factory: Optional[AtomsFactory] = None,
-        atoms_post_processor: Optional[AtomsPostProcessor] = None,
+        weight_cb: Callable[[Atoms], float] | None = None,
+        atoms_factory: AtomsFactory | None = None,
+        atoms_post_processor: AtomsPostProcessor | None = None,
     ) -> None:
         """Initialize an EnergyObjectiveFunction.
 
@@ -345,7 +344,9 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         return data
 
     def __call__(self, parameters: dict) -> float:
-        """Compute squared-error contribution to the objective:
+        """Compute squared-error contribution to the objective.
+
+        The equation is
         (E_computed(parameters) - E_reference)^2 * weight.
 
         Args:
@@ -368,16 +369,16 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
         reference_OO_distance: float,
-        path_to_reference_configuration: Optional[Path] = None,
+        path_to_reference_configuration: Path | None = None,
         dt: float = 1e-2,
         fmax: float = 1e-5,
         max_steps: int = 2000,
         noise_magnitude: float = 0.0,
-        tag: Optional[str] = None,
+        tag: str | None = None,
         weight: float = 1.0,
-        weight_cb: Optional[Callable[[Atoms], float]] = None,
-        atoms_factory: Optional[AtomsFactory] = None,
-        atoms_post_processor: Optional[AtomsPostProcessor] = None,
+        weight_cb: Callable[[Atoms], float] | None = None,
+        atoms_factory: AtomsFactory | None = None,
+        atoms_post_processor: AtomsPostProcessor | None = None,
     ) -> None:
         """Initialize a DimerDistanceObjectiveFunction.
 
@@ -442,9 +443,12 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         self.atoms.set_velocities(np.zeros((self.n_atoms, 3)))
         self.atoms.set_positions(self.positions_reference)
         self.atoms.calc.calculate(self.atoms)
-        self.atoms.positions += self.noise_magnitude * np.random.uniform(
+
+        rng = np.random.default_rng()
+        self.atoms.positions += self.noise_magnitude * rng.uniform(
             -1.0, 1.0, size=self.atoms.positions.shape
         )
+
         optimizer = BFGS(self.atoms)
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
         self.OO_distance = self.atoms.get_distance(0, 3, mic=True)

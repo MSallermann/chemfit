@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Union
 
 import pandas as pd
 
+DEFAULT_SLICE = slice(None, None, None)
+
 
 def process_csv(
-    paths_to_csv: Union[Path, Sequence[Path]],
-    index: Union[slice, list[slice]] = slice(None, None, None),
+    paths_to_csv: Path | Sequence[Path],
+    index: slice | list[slice] = DEFAULT_SLICE,
 ) -> tuple[list[Path], list[str], list[float]]:
     """Load a dataset CSV and extract file paths, tags, and reference energies.
+
     If a list of paths is passed it forwards them one by one to `process_single_csv` and collects
     the results.
 
@@ -35,8 +39,8 @@ def process_csv(
     tags = []
     energies = []
 
-    for index, path_to_csv in zip(index, paths_to_csv):
-        p, t, e = process_single_csv(path_to_csv, index)
+    for i, path_to_csv in zip(index, paths_to_csv):
+        p, t, e = process_single_csv(path_to_csv, i)
         paths += p
         tags += t
         energies += e
@@ -45,7 +49,7 @@ def process_csv(
 
 
 def process_single_csv(
-    path_to_csv: Path, index: slice = slice(None, None, None)
+    path_to_csv: Path, index: slice = DEFAULT_SLICE
 ) -> tuple[list[Path], list[str], list[float]]:
     """Load a dataset CSV and extract file paths, tags, and reference energies.
 
@@ -83,23 +87,17 @@ def process_single_csv(
         paths = [base / Path(fname) for fname in df["file"]]
     else:
         msg = f"Error while processing {path_to_csv}. CSV must contain either a 'path' or 'file' column."
-        raise KeyError(
-            msg
-        )
+        raise KeyError(msg)
 
     if "tag" not in df.columns or "reference_energy" not in df.columns:
         msg = "Error while processing {path_to_csv}. CSV must contain 'tag' and 'reference_energy' columns."
-        raise KeyError(
-            msg
-        )
+        raise KeyError(msg)
 
     tags = list(df["tag"])
     try:
         energies = [float(e) for e in df["reference_energy"]]
     except Exception as err:
         msg = "Error while processing {path_to_csv}. All 'reference_energy' entries must be numeric."
-        raise ValueError(
-            msg
-        ) from err
+        raise ValueError(msg) from err
 
     return paths[index], tags[index], energies[index]

@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import logging
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Callable
 
 from ase import Atoms
 
@@ -22,12 +24,10 @@ def construct_multi_energy_objective_function(
     param_applier: ParameterApplier,
     tag_list: list[str],
     reference_energy_list: list[float],
-    path_or_factory_list: list[Union[Path, AtomsFactory]],
-    weight_cb: Union[
-        None, list[Callable[[Atoms], float]], Callable[[Atoms], float]
-    ] = None,
-    weight_list: Optional[list[float]] = None,
-    atom_post_processor_list: Optional[list[AtomsPostProcessor]] = None,
+    path_or_factory_list: list[Path | AtomsFactory],
+    weight_cb: None | list[Callable[[Atoms], float]] | Callable[[Atoms], float] = None,
+    weight_list: list[float] | None = None,
+    atom_post_processor_list: list[AtomsPostProcessor] | None = None,
 ) -> CombinedObjectiveFunction:
     """Initialize a CombinedObjectiveFunction by constructing individual EnergyObjectiveFunctions.
 

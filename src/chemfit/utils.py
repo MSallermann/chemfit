@@ -1,14 +1,13 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from pydictnest import flatten_dict
 
 
 def next_free_folder(base: Path) -> Path:
-    """If 'path/to/base' does not exist, return 'path/to/base'. Otherwise attempt 'path/to/base_0', 'path/to/base_1', etc.
-    until finding a non-existent Path, then return that.
-    """
+    """If 'path/to/base' does not exist, return 'path/to/base'. Otherwise attempt 'path/to/base_0', 'path/to/base_1', etc. until finding a non-existent Path, then return that."""
     base = Path(base)
 
     if not base.exists():
@@ -23,7 +22,7 @@ def next_free_folder(base: Path) -> Path:
 
 
 class ExtendedJSONEncoder(json.JSONEncoder):
-    def default(self, o):
+    def default(self, o: Any):
         if isinstance(o, Path):
             return str(o)
         super().default(o)
@@ -33,7 +32,7 @@ class ExtendedJSONEncoder(json.JSONEncoder):
 def dump_dict_to_file(file: Path, dictionary: dict) -> None:
     """Write `dictionary` as JSON to `file` (with indent=4)."""
     file.parent.mkdir(exist_ok=True, parents=True)
-    with open(file, "w") as f:
+    with file.open("w") as f:
         json.dump(dictionary, f, indent=4, cls=ExtendedJSONEncoder)
 
 

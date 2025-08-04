@@ -25,12 +25,12 @@ def construct_atoms_bad():
     raise Exception(msg)
 
 
-def construct_calc_bad(atoms):
+def construct_calc_bad(atoms: Atoms):  # noqa: ARG001
     msg = "Construct calc exception"
     raise Exception(msg)
 
 
-def apply_params_bad(atoms: Atoms, params: dict[str, float]):
+def apply_params_bad(atoms: Atoms, params: dict[str, float]):  # noqa: ARG001
     msg = "Apply params exception"
     raise Exception(msg)
 
@@ -55,7 +55,6 @@ def get_ob_func(
             for r, bad in zip(r_list, bad_atoms_factory)
         ],
     )
-
 
 
 ### Construct the objective function on *all* ranks
@@ -117,14 +116,16 @@ def test_exceptions_mpi_all_bad():
         bad_atoms_factory=(True, True),
     )
 
-    with pytest.raises(FactoryException):
-        with MPIWrapperCOB(ob_bad, mpi_debug_log=True) as ob_mpi:
-            # The optimization needs to run on the first rank only
-            if ob_mpi.rank == 0:
-                fitter = Fitter(ob_mpi, initial_params=INITIAL_PARAMS)
-                fitter.fit_nevergrad(budget=1)
-            else:
-                ob_mpi.worker_loop()
+    with (
+        pytest.raises(FactoryException),
+        MPIWrapperCOB(ob_bad, mpi_debug_log=True) as ob_mpi,
+    ):
+        # The optimization needs to run on the first rank only
+        if ob_mpi.rank == 0:
+            fitter = Fitter(ob_mpi, initial_params=INITIAL_PARAMS)
+            fitter.fit_nevergrad(budget=1)
+        else:
+            ob_mpi.worker_loop()
 
 
 @pytest.mark.xfail(rank != 1, reason="Can only raise exception on rank 1")
@@ -150,14 +151,16 @@ def test_exceptions_mpi_good_master_bad_worker():
         bad_atoms_factory=(False, True),
     )
 
-    with pytest.raises(FactoryException):
-        with MPIWrapperCOB(ob_good_master_bad_worker, mpi_debug_log=True) as ob_mpi:
-            # The optimization needs to run on the first rank only
-            if ob_mpi.rank == 0:
-                fitter = Fitter(ob_mpi, initial_params=INITIAL_PARAMS)
-                fitter.fit_nevergrad(budget=1)
-            else:
-                ob_mpi.worker_loop()
+    with (
+        pytest.raises(FactoryException),
+        MPIWrapperCOB(ob_good_master_bad_worker, mpi_debug_log=True) as ob_mpi,
+    ):
+        # The optimization needs to run on the first rank only
+        if ob_mpi.rank == 0:
+            fitter = Fitter(ob_mpi, initial_params=INITIAL_PARAMS)
+            fitter.fit_nevergrad(budget=1)
+        else:
+            ob_mpi.worker_loop()
 
 
 @pytest.mark.xfail(rank != 0, reason="Can only raise exception on rank 0")
@@ -184,14 +187,17 @@ def test_exceptions_mpi_bad_master_good_worker():
         bad_atoms_factory=(True, False),
     )
 
-    with pytest.raises(FactoryException) as exc_info:
-        with MPIWrapperCOB(ob_bad_master_good_worker, mpi_debug_log=True) as ob_mpi:
-            # The optimization needs to run on the first rank only
-            if ob_mpi.rank == 0:
-                fitter = Fitter(ob_mpi, initial_params=INITIAL_PARAMS)
-                fitter.fit_nevergrad(budget=1)
-            else:
-                ob_mpi.worker_loop()
+    with (
+        pytest.raises(FactoryException) as exc_info,
+        MPIWrapperCOB(ob_bad_master_good_worker, mpi_debug_log=True) as ob_mpi,
+    ):
+
+        # The optimization needs to run on the first rank only
+        if ob_mpi.rank == 0:
+            fitter = Fitter(ob_mpi, initial_params=INITIAL_PARAMS)
+            fitter.fit_nevergrad(budget=1)
+        else:
+            ob_mpi.worker_loop()
 
     print(f"[Rank {rank}] {exc_info = }")
 
