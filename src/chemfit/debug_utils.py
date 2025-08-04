@@ -6,7 +6,6 @@ from typing import Callable
 def log_invocation(
     func: Callable, log_func: Callable[[str], None], log_args: bool = True
 ):
-
     @wraps(func)
     def wrapped_with_logging(*args, **kwargs):
         log_func(f"Pre {func.__name__}")

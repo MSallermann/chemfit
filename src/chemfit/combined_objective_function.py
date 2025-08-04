@@ -12,7 +12,8 @@ DEFAULT_SLICE = slice(None, None, None)
 
 
 class CombinedObjectiveFunction(ObjectiveFunctor):
-    """Represents a weighted sum of multiple objective functions.
+    """
+    Represents a weighted sum of multiple objective functions.
 
     Each objective function accepts a dictionary of parameters (str -> float) and returns a float.
     Internally, each function is paired with a non-negative weight. Calling the instance returns
@@ -24,7 +25,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         objective_functions: Sequence[Callable[[dict], float]],
         weights: Sequence[float] | None = None,
     ) -> None:
-        """Initialize a CombinedObjectiveFunction.
+        """
+        Initialize a CombinedObjectiveFunction.
 
         Args:
             objective_functions (Sequence[Callable[[dict], float]]):
@@ -51,14 +53,15 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             self.weights = list(weights)
 
         # Ensure alignment between objective functions and weights
-        assert len(self.weights) == len(
-            self.objective_functions
-        ), "Number of weights must match number of objective functions."
+        assert len(self.weights) == len(self.objective_functions), (
+            "Number of weights must match number of objective functions."
+        )
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
     def n_terms(self) -> int:
-        """Return the number of objective terms.
+        """
+        Return the number of objective terms.
 
         Returns:
             int: The number of (function, weight) pairs stored internally.
@@ -71,7 +74,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         obj_funcs: Sequence[Callable[[dict], float]] | Callable[[dict], float],
         weights: Sequence[float] | float = 1.0,
     ) -> Self:
-        """Add one or more objective functions (and corresponding weights) to this instance.
+        """
+        Add one or more objective functions (and corresponding weights) to this instance.
 
         If `obj_funcs` is a single callable, it is appended; if it is a sequence of callables,
         each is appended in order. The `weights` argument must align:
@@ -110,9 +114,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         if isinstance(weights, ABCSequence) and not isinstance(weights, (str, bytes)):
             weights_to_add = list(weights)  # type: ignore[assignment]
             # Must match number of new functions
-            assert len(weights_to_add) == len(
-                funcs_to_add
-            ), "Length of weights sequence must equal number of functions added."
+            assert len(weights_to_add) == len(funcs_to_add), (
+                "Length of weights sequence must equal number of functions added."
+            )
         else:
             # Single weight repeated for each new function
             weights_to_add = [float(weights) for _ in funcs_to_add]
@@ -124,9 +128,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         self.weights.extend(weights_to_add)
 
         # Final sanity check that lists remain aligned
-        assert len(self.weights) == len(
-            self.objective_functions
-        ), "After adding, weights and objective_functions must remain the same length."
+        assert len(self.weights) == len(self.objective_functions), (
+            "After adding, weights and objective_functions must remain the same length."
+        )
 
         return self
 
@@ -136,7 +140,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         combined_objective_functions_list: Sequence[Self],
         weights: Sequence[float] | None = None,
     ) -> Self:
-        """Create a new, "flat" CombinedObjectiveFunction by merging multiple existing instances.
+        """
+        Create a new, "flat" CombinedObjectiveFunction by merging multiple existing instances.
 
         Each input instance is scaled by its corresponding weight, and all internal objective functions
         are concatenated into a single-level structure.
@@ -162,9 +167,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             weights = [1.0 for _ in combined_objective_functions_list]
 
         # Ensure we have one scaling weight per sub-instance
-        assert len(combined_objective_functions_list) == len(
-            weights
-        ), "Must supply exactly one weight per CombinedObjectiveFunction."
+        assert len(combined_objective_functions_list) == len(weights), (
+            "Must supply exactly one weight per CombinedObjectiveFunction."
+        )
 
         # Ensure all scaling weights are non-negative
         assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
@@ -178,14 +183,15 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             total_weights.extend([w * scale for w in sub_cob.weights])
 
         # Ensure no negative weights after scaling
-        assert all(
-            w >= 0 for w in total_weights
-        ), "Resulting weights must be non-negative."
+        assert all(w >= 0 for w in total_weights), (
+            "Resulting weights must be non-negative."
+        )
 
         return cls(total_objective_functions, total_weights)
 
     def __call__(self, params: dict, idx_slice: slice = DEFAULT_SLICE) -> float:
-        """Evaluate the combined objective at a given parameter dictionary.
+        """
+        Evaluate the combined objective at a given parameter dictionary.
 
         Each individual objective function is called (with a shallow copy of `params`), multiplied
         by its weight, and summed into a single scalar result.
@@ -212,7 +218,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         return {"n_terms": self.n_terms(), "type": type(self).__name__}
 
     def gather_meta_data(self, idx_slice: slice = DEFAULT_SLICE) -> list[dict | None]:
-        """Gather the meta data of each term and append it to a list.
+        """
+        Gather the meta data of each term and append it to a list.
 
         If a slice is specified via the index argument the list only contains the results of the slice.
         If an exception occurs, `None` is appended as a result.

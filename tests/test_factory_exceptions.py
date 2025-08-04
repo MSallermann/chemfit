@@ -41,7 +41,6 @@ def get_ob_func(
     bad_atoms_factory: tuple[bool, bool] = (False, False),
     n_terms: int = 2,
 ) -> CombinedObjectiveFunction:
-
     r_min = 2 ** (1 / 6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma, num=n_terms)
 
@@ -191,7 +190,6 @@ def test_exceptions_mpi_bad_master_good_worker():
         pytest.raises(FactoryException) as exc_info,
         MPIWrapperCOB(ob_bad_master_good_worker, mpi_debug_log=True) as ob_mpi,
     ):
-
         # The optimization needs to run on the first rank only
         if ob_mpi.rank == 0:
             fitter = Fitter(ob_mpi, initial_params=INITIAL_PARAMS)

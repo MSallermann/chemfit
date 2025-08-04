@@ -47,7 +47,8 @@ def check_params_near_bounds(
     bounds: dict,
     relative_tol: float,
 ) -> list[tuple[str, float, float, float]]:
-    """Check if any of the parameters are near or beyond the bounds.
+    """
+    Check if any of the parameters are near or beyond the bounds.
 
     The criterions checked are
 
@@ -78,7 +79,6 @@ def check_params_near_bounds(
     problematic_params = []
 
     for kp, vp in flat_params.items():
-
         # Get the bounds (if they are not specified, we set them both to None)
         lower, upper = flat_bounds.get(kp, (None, None))
 

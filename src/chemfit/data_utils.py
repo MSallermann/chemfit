@@ -12,7 +12,8 @@ def process_csv(
     paths_to_csv: Path | Sequence[Path],
     index: slice | list[slice] = DEFAULT_SLICE,
 ) -> tuple[list[Path], list[str], list[float]]:
-    """Load a dataset CSV and extract file paths, tags, and reference energies.
+    """
+    Load a dataset CSV and extract file paths, tags, and reference energies.
 
     If a list of paths is passed it forwards them one by one to `process_single_csv` and collects
     the results.
@@ -51,7 +52,8 @@ def process_csv(
 def process_single_csv(
     path_to_csv: Path, index: slice = DEFAULT_SLICE
 ) -> tuple[list[Path], list[str], list[float]]:
-    """Load a dataset CSV and extract file paths, tags, and reference energies.
+    """
+    Load a dataset CSV and extract file paths, tags, and reference energies.
 
     The CSV must include the following columns:
       - Either `path` or `file`:

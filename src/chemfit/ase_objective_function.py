@@ -73,7 +73,8 @@ class AtomsPostProcessorException(FactoryException): ...
 
 
 class ASEObjectiveFunction(ObjectiveFunctor):
-    """Base class for ASE-based objective functions.
+    """
+    Base class for ASE-based objective functions.
 
     This class loads a reference configuration, optionally post-processes the structure,
     attaches a calculator, and provides an interface for evaluating energies
@@ -98,7 +99,8 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         atoms_factory: AtomsFactory | None = None,
         atoms_post_processor: AtomsPostProcessor | None = None,
     ) -> None:
-        """Initialize an ASEObjectiveFunction.
+        """
+        Initialize an ASEObjectiveFunction.
 
         Args:
             calc_factory: Factory to create an ASE calculator given an `Atoms` object.
@@ -158,7 +160,8 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         self.weight_cb = weight_cb
 
     def get_meta_data(self) -> dict[str]:
-        """Retrieve metadata for this objective function.
+        """
+        Retrieve metadata for this objective function.
 
         Returns:
             dict[str, Union[str, int, float]]: Dictionary containing:
@@ -177,7 +180,8 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         }
 
     def write_meta_data(self, path_to_folder: Path, write_config: bool = False) -> None:
-        """Write the reference configuration and metadata to disk.
+        """
+        Write the reference configuration and metadata to disk.
 
         Args:
             path_to_folder: Directory where the .xyz file (if write_config is True) and metadata JSON
@@ -196,7 +200,8 @@ class ASEObjectiveFunction(ObjectiveFunctor):
             write(path_to_folder / f"atoms_{self.tag}.xyz", self.atoms)
 
     def create_atoms_object(self) -> Atoms:
-        """Create the atoms object, check it, optionally post-processes it, and attach the calculator.
+        """
+        Create the atoms object, check it, optionally post-processes it, and attach the calculator.
 
         Returns:
             Atoms: ASE Atoms object with calculator attached.
@@ -241,7 +246,6 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         if self._weight is None:
             self._weight = self.weight_init
             if self.weight_cb is not None:
-
                 try:
                     scale = self.weight_cb(self.atoms)
                 except Exception as e:
@@ -257,7 +261,8 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         return self._weight
 
     def compute_energy(self, parameters: dict) -> float:
-        """Compute the potential energy for a given set of parameters.
+        """
+        Compute the potential energy for a given set of parameters.
 
         Args:
             parameters: Dictionary of parameter names to float values.
@@ -277,7 +282,8 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         return self._last_energy
 
     def check_atoms(self, atoms: Atoms) -> bool:  # noqa: ARG002
-        """Optional hook to validate or correct the Atoms object.
+        """
+        Optional hook to validate or correct the Atoms object.
 
         Args:
             atoms: ASE Atoms object to check.
@@ -304,7 +310,8 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         atoms_factory: AtomsFactory | None = None,
         atoms_post_processor: AtomsPostProcessor | None = None,
     ) -> None:
-        """Initialize an EnergyObjectiveFunction.
+        """
+        Initialize an EnergyObjectiveFunction.
 
         Args:
             calc_factory: Factory to create an ASE calculator.
@@ -331,7 +338,8 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         )
 
     def get_meta_data(self) -> dict[str, Any]:
-        """Extend parent metadata with reference energy.
+        """
+        Extend parent metadata with reference energy.
 
         Returns:
             dict[str, Any]: Metadata from the parent, plus:
@@ -344,7 +352,8 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         return data
 
     def __call__(self, parameters: dict) -> float:
-        """Compute squared-error contribution to the objective.
+        """
+        Compute squared-error contribution to the objective.
 
         The equation is
         (E_computed(parameters) - E_reference)^2 * weight.
@@ -380,7 +389,8 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         atoms_factory: AtomsFactory | None = None,
         atoms_post_processor: AtomsPostProcessor | None = None,
     ) -> None:
-        """Initialize a DimerDistanceObjectiveFunction.
+        """
+        Initialize a DimerDistanceObjectiveFunction.
 
         Args:
             calc_factory: Factory to create an ASE calculator.
@@ -416,7 +426,8 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         self.positions_reference = np.array(self.atoms.positions)
 
     def get_meta_data(self) -> dict[str, Any]:
-        """Extend metadata with current and target O-O distances.
+        """
+        Extend metadata with current and target O-O distances.
 
         Returns:
             dict[str, Any]: Metadata including:
@@ -430,7 +441,8 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         return data
 
     def __call__(self, parameters: dict) -> float:
-        """Apply parameters, optionally add noise, relax the dimer, and compute error.
+        """
+        Apply parameters, optionally add noise, relax the dimer, and compute error.
 
         Args:
             parameters: dict of parameter names to float values.

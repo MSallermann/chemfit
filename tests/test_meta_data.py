@@ -10,7 +10,6 @@ import pytest
 
 
 class MyFunctor(ObjectiveFunctor):
-
     def __init__(self, f: float) -> None:
         """Initialize My Functor."""
         self.f = f
