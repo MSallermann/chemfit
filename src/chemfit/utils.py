@@ -1,12 +1,12 @@
-from pathlib import Path
 import json
-from pydictnest import flatten_dict
+from pathlib import Path
+
 import numpy as np
+from pydictnest import flatten_dict
 
 
 def next_free_folder(base: Path) -> Path:
-    """
-    If 'path/to/base' does not exist, return 'path/to/base'. Otherwise attempt 'path/to/base_0', 'path/to/base_1', etc.
+    """If 'path/to/base' does not exist, return 'path/to/base'. Otherwise attempt 'path/to/base_0', 'path/to/base_1', etc.
     until finding a non-existent Path, then return that.
     """
     base = Path(base)
@@ -26,13 +26,11 @@ class ExtendedJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, Path):
             return str(o)
-        else:
-            super().default(o)
+        super().default(o)
 
 
 def dump_dict_to_file(file: Path, dictionary: dict) -> None:
-    """
-    Write `dictionary` as JSON to `file` (with indent=4).
+    """Write `dictionary` as JSON to `file` (with indent=4).
     """
     file.parent.mkdir(exist_ok=True, parents=True)
     with open(file, "w") as f:
@@ -50,8 +48,7 @@ def check_params_near_bounds(
     bounds: dict,
     relative_tol: float,
 ) -> list[tuple[str, float, float, float]]:
-    """
-    Check if any of the parameters are near or beyond the bounds.
+    """Check if any of the parameters are near or beyond the bounds.
 
     The criterions checked are
 
@@ -74,8 +71,8 @@ def check_params_near_bounds(
             - The value of the parameter
             - The lower bound
             - The upper bound
-    """
 
+    """
     flat_params = flatten_dict(params)
     flat_bounds = flatten_dict(bounds)
 

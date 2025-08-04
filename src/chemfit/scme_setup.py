@@ -1,15 +1,15 @@
-from pyscme.parameters import parameter_H2O
-from pyscme.scme_calculator import SCMECalculator
+import logging
+from pathlib import Path
+from typing import List, Optional
+
+from ase import Atoms
+from ase.geometry import find_mic
 from pyscme.expansions import (
     get_energy_expansion_from_hdf5_file,
     get_moment_expansion_from_hdf5_file,
 )
-from pathlib import Path
-from ase import Atoms
-import logging
-from ase.geometry import find_mic
-
-from typing import Optional, List
+from pyscme.parameters import parameter_H2O
+from pyscme.scme_calculator import SCMECalculator
 
 logger = logging.getLogger(__name__)
 
@@ -81,8 +81,7 @@ def setup_calculator(
 
 
 def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
-    """
-    Reorder atoms so each water molecule appears as O, H, H.
+    """Reorder atoms so each water molecule appears as O, H, H.
 
     Parameters
     ----------
@@ -98,6 +97,7 @@ def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
     ------
     ValueError
         If atom counts or ratios are inconsistent with water.
+
     """
     n_atoms = len(atoms)
     if n_atoms % 3 != 0:
@@ -125,8 +125,7 @@ def arrange_water_in_OHH_order(atoms: Atoms) -> Atoms:
 
 
 def check_water_is_in_OHH_order(atoms: Atoms, OH_distance_tol: float = 2.0) -> bool:
-    """
-    Validate that each water molecule is ordered O, H, H and within tolerance.
+    """Validate that each water molecule is ordered O, H, H and within tolerance.
 
     Parameters
     ----------
@@ -139,6 +138,7 @@ def check_water_is_in_OHH_order(atoms: Atoms, OH_distance_tol: float = 2.0) -> b
     ------
     ValueError
         If ordering or distances violate water OHH assumptions.
+
     """
     n_atoms = len(atoms)
     if n_atoms % 3 != 0:

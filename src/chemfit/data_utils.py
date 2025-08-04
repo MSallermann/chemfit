@@ -1,7 +1,8 @@
-from pathlib import Path
-import pandas as pd
-from typing import Union
 from collections.abc import Sequence
+from pathlib import Path
+from typing import Union
+
+import pandas as pd
 
 
 def process_csv(
@@ -21,8 +22,8 @@ def process_csv(
         - **paths**: List of resolved `Path` objects to each data file.
         - **tags**: List of dataset tag strings.
         - **energies**: List of reference energies as floats.
-    """
 
+    """
     # If it is a single path we just process it
     if isinstance(paths_to_csv, Path):
         return process_single_csv(paths_to_csv)
@@ -72,6 +73,7 @@ def process_single_csv(
         FileNotFoundError: If the CSV file does not exist.
         KeyError: If neither `path` nor `file`, or if `tag` or `reference_energy` columns are missing.
         ValueError: If any `reference_energy` value cannot be converted to float.
+
     """
     df = pd.read_csv(path_to_csv)
     if "path" in df.columns:

@@ -1,14 +1,15 @@
-from mpi4py import MPI
-from typing import Optional, Any
-import math
 import logging
+import math
+from enum import Enum
 from numbers import Real
+from typing import Any, Optional
+
+from mpi4py import MPI
 
 from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.exceptions import FactoryException
 from chemfit.debug_utils import log_all_methods
-from enum import Enum
+from chemfit.exceptions import FactoryException
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +108,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
                 if signal == Signal.ABORT:
                     break
-                elif signal == Signal.GATHER_META_DATA:
+                if signal == Signal.GATHER_META_DATA:
                     self.worker_gather_meta_data()
                 elif isinstance(signal, dict):
                     params = signal

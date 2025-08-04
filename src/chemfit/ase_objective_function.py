@@ -1,21 +1,21 @@
+import logging
+from pathlib import Path
+from typing import Any, Callable, Optional, Protocol
+
+import numpy as np
 from ase import Atoms
 from ase.io import read, write
-from typing import Optional, Callable, Protocol, Any
-from pathlib import Path
-import logging
-import numpy as np
 from ase.optimize import BFGS
-from chemfit.abstract_objective_function import ObjectiveFunctor
-from chemfit.utils import dump_dict_to_file
 
+from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.exceptions import FactoryException
+from chemfit.utils import dump_dict_to_file
 
 logger = logging.getLogger(__name__)
 
 
 class CalculatorFactory(Protocol):
-    """
-    Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`
+    """Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`
     """
 
     def __call__(self, atoms: Atoms) -> None:
@@ -24,8 +24,7 @@ class CalculatorFactory(Protocol):
 
 
 class ParameterApplier(Protocol):
-    """
-    Protocol for a function that applies parameters to an ASE calculator.
+    """Protocol for a function that applies parameters to an ASE calculator.
     """
 
     def __call__(self, atoms: Atoms, params: dict) -> None:
@@ -34,8 +33,7 @@ class ParameterApplier(Protocol):
 
 
 class AtomsPostProcessor(Protocol):
-    """
-    Protocol for a function that post-processes an ASE Atoms object.
+    """Protocol for a function that post-processes an ASE Atoms object.
     """
 
     def __call__(self, atoms: Atoms) -> None:
@@ -44,8 +42,7 @@ class AtomsPostProcessor(Protocol):
 
 
 class AtomsFactory(Protocol):
-    """
-    Protocol for a function that creates an ASE Atoms object.
+    """Protocol for a function that creates an ASE Atoms object.
     """
 
     def __call__(self) -> Atoms:
@@ -78,8 +75,7 @@ class AtomsPostProcessorException(FactoryException): ...
 
 
 class ASEObjectiveFunction(ObjectiveFunctor):
-    """
-    Base class for ASE-based objective functions.
+    """Base class for ASE-based objective functions.
 
     This class loads a reference configuration, optionally post-processes the structure,
     attaches a calculator, and provides an interface for evaluating energies
@@ -90,6 +86,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         param_applier (ParameterApplier): Function to apply parameters to the calculator.
         atoms_post_processor (Optional[AtomsPostProcessor]): Optional hook to process Atoms.
         tag (str): Label for this objective function.
+
     """
 
     def __init__(
@@ -103,8 +100,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ) -> None:
-        """
-        Initialize an ASEObjectiveFunction.
+        """Initialize an ASEObjectiveFunction.
 
         Args:
             calc_factory: Factory to create an ASE calculator given an `Atoms` object.
@@ -124,6 +120,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
 
         Raises:
             AssertionError: If `weight` is negative or if `weight_cb` returns a negative value.
+
         """
         self.calc_factory = calc_factory
         self.param_applier = param_applier
@@ -163,8 +160,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         self.weight_cb = weight_cb
 
     def get_meta_data(self) -> dict[str]:
-        """
-        Retrieve metadata for this objective function.
+        """Retrieve metadata for this objective function.
 
         Returns:
             dict[str, Union[str, int, float]]: Dictionary containing:
@@ -172,6 +168,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
                 n_atoms: Number of atoms in the configuration.
                 weight: Final weight after any scaling.
                 last_energy: The last computed energy
+
         """
         return {
             "tag": self.tag,
@@ -182,13 +179,13 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         }
 
     def write_meta_data(self, path_to_folder: Path, write_config: bool = False) -> None:
-        """
-        Write the reference configuration and metadata to disk.
+        """Write the reference configuration and metadata to disk.
 
         Args:
             path_to_folder: Directory where the .xyz file (if write_config is True) and metadata JSON
                 will be written. The directory is created if it does not exist.
             write_config: If True, will also write .xyz file for the configuration
+
         """
         path_to_folder = Path(path_to_folder)
         path_to_folder.mkdir(exist_ok=True, parents=True)
@@ -201,17 +198,16 @@ class ASEObjectiveFunction(ObjectiveFunctor):
             write(path_to_folder / f"atoms_{self.tag}.xyz", self.atoms)
 
     def create_atoms_object(self) -> Atoms:
-        """
-        Create the atoms object, check it, optionally post-processes it, and attach the calculator.
+        """Create the atoms object, check it, optionally post-processes it, and attach the calculator.
 
         Returns:
             Atoms: ASE Atoms object with calculator attached.
-        """
 
+        """
         try:
             atoms = self.atoms_factory()
         except Exception as e:
-            raise AtomsFactoryException() from e
+            raise AtomsFactoryException from e
 
         self.check_atoms(atoms)
 
@@ -219,12 +215,12 @@ class ASEObjectiveFunction(ObjectiveFunctor):
             try:
                 self.atoms_post_processor(atoms)
             except Exception as e:
-                raise AtomsPostProcessorException() from e
+                raise AtomsPostProcessorException from e
 
         try:
             self.calc_factory(atoms)
         except Exception as e:
-            raise CalculatorFactoryException() from e
+            raise CalculatorFactoryException from e
 
         return atoms
 
@@ -264,20 +260,19 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         return self._weight
 
     def compute_energy(self, parameters: dict) -> float:
-        """
-        Compute the potential energy for a given set of parameters.
+        """Compute the potential energy for a given set of parameters.
 
         Args:
             parameters: Dictionary of parameter names to float values.
 
         Returns:
             float: Potential energy after applying parameters.
-        """
 
+        """
         try:
             self.param_applier(self.atoms, parameters)
         except Exception as e:
-            raise ParameterApplierException() from e
+            raise ParameterApplierException from e
 
         self.atoms.calc.calculate(self.atoms)
         self._last_energy = self.atoms.get_potential_energy()
@@ -285,21 +280,20 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         return self._last_energy
 
     def check_atoms(self, atoms: Atoms) -> bool:
-        """
-        Optional hook to validate or correct the Atoms object.
+        """Optional hook to validate or correct the Atoms object.
 
         Args:
             atoms: ASE Atoms object to check.
 
         Returns:
             bool: True if the atoms pass validation, False otherwise.
+
         """
         return True
 
 
 class EnergyObjectiveFunction(ASEObjectiveFunction):
-    """
-    Objective function comparing computed energy to a reference energy.
+    """Objective function comparing computed energy to a reference energy.
     """
 
     def __init__(
@@ -314,8 +308,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ):
-        """
-        Initialize an EnergyObjectiveFunction.
+        """Initialize an EnergyObjectiveFunction.
 
         Args:
             calc_factory: Factory to create an ASE calculator.
@@ -327,6 +320,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
             weight_cb: Optional weight-scaling callback.
             atoms_factory: Optional function to process the Atoms object after loading.
             atoms_post_processor: Optional function to process the Atoms object after loading.
+
         """
         self.reference_energy = reference_energy
         super().__init__(
@@ -341,12 +335,12 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         )
 
     def get_meta_data(self) -> dict[str, Any]:
-        """
-        Extend parent metadata with reference energy.
+        """Extend parent metadata with reference energy.
 
         Returns:
             dict[str, Any]: Metadata from the parent, plus:
                 reference_energy: Target reference energy.
+
         """
         data = super().get_meta_data()
         data["reference_energy"] = self.reference_energy
@@ -354,8 +348,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         return data
 
     def __call__(self, parameters: dict) -> float:
-        """
-        Compute squared-error contribution to the objective:
+        """Compute squared-error contribution to the objective:
         (E_computed(parameters) - E_reference)^2 * weight.
 
         Args:
@@ -363,8 +356,8 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
 
         Returns:
             float: Weighted squared difference between computed and reference energies.
-        """
 
+        """
         energy = self.compute_energy(parameters)
         error = (energy - self.reference_energy) ** 2
         objective_contribution = error * self.weight
@@ -372,8 +365,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
 
 
 class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
-    """
-    Objective that relaxes a water dimer and compares its O-O distance to a target.
+    """Objective that relaxes a water dimer and compares its O-O distance to a target.
     """
 
     def __init__(
@@ -392,8 +384,7 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
     ):
-        """
-        Initialize a DimerDistanceObjectiveFunction.
+        """Initialize a DimerDistanceObjectiveFunction.
 
         Args:
             calc_factory: Factory to create an ASE calculator.
@@ -409,6 +400,7 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             weight_cb: Optional weight-scaling callback.
             atoms_factory: Optional function to create Atoms object.
             atoms_post_processor: Optional function to process the Atoms object after loading.
+
         """
         self.reference_OO_distance = reference_OO_distance
         self.dt = dt
@@ -428,13 +420,13 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         self.positions_reference = np.array(self.atoms.positions)
 
     def get_meta_data(self) -> dict[str, Any]:
-        """
-        Extend metadata with current and target O-O distances.
+        """Extend metadata with current and target O-O distances.
 
         Returns:
             dict[str, Any]: Metadata including:
             oo_distance: Current relaxed O-O distance.
             reference_OO_distance: Target O-O distance.
+
         """
         data = super().get_meta_data()
         data["oo_distance"] = getattr(self, "OO_distance", 0.0)
@@ -442,14 +434,14 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         return data
 
     def __call__(self, parameters: dict) -> float:
-        """
-        Apply parameters, optionally add noise, relax the dimer, and compute error.
+        """Apply parameters, optionally add noise, relax the dimer, and compute error.
 
         Args:
             parameters: dict of parameter names to float values.
 
         Returns:
             float: Weighted squared difference between relaxed and target O-O distances.
+
         """
         self.param_applier(self.atoms, parameters)
         self.atoms.set_velocities(np.zeros((self.n_atoms, 3)))

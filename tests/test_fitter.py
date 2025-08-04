@@ -3,16 +3,15 @@ try:
 except ImportError:
     mpi4py = None
 
-import pytest
-
-from chemfit.utils import check_params_near_bounds
-from chemfit.fitter import Fitter, CallbackInfo
-from chemfit.combined_objective_function import CombinedObjectiveFunction
-
-import numpy as np
 import logging
 
-from pydictnest import items_nested, has_nested, get_nested
+import numpy as np
+import pytest
+from pydictnest import get_nested, has_nested, items_nested
+
+from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.fitter import CallbackInfo, Fitter
+from chemfit.utils import check_params_near_bounds
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
 NG_ATOL = 5e-2
@@ -212,14 +211,13 @@ def test_with_bad_function():
     def ob(params):
         if params["x"] < 1.0:
             return None
-        elif params["x"] < 2.0:
+        if params["x"] < 2.0:
             raise Exception("Some random exception")
-        elif params["x"] < 3.0:
+        if params["x"] < 3.0:
             return (params["x"] - 2.5) ** 2
-        elif params["x"] < 4.0:
+        if params["x"] < 4.0:
             return float("Nan")
-        else:
-            return "not even a number"
+        return "not even a number"
 
     for x0 in [0.5, 1.5, 2.5, 3.5, 4.5]:
         print(f"{x0 = }")
@@ -257,26 +255,24 @@ def test_with_bad_function_mpi():
     def f1(params):
         if params["x"] < 1.0:
             return None
-        elif params["x"] < 2.0:
+        if params["x"] < 2.0:
             raise Exception("Some random exception")
-        elif params["x"] < 3.0:
+        if params["x"] < 3.0:
             return (params["x"] - 2.5) ** 2
-        elif params["x"] < 4.0:
+        if params["x"] < 4.0:
             return float("Nan")
-        else:
-            return "not even a number"
+        return "not even a number"
 
     def f2(params):
         if params["x"] < 1.0:
             return None
-        elif params["x"] < 2.0:
+        if params["x"] < 2.0:
             raise Exception("Some random exception")
-        elif params["x"] < 3.0:
+        if params["x"] < 3.0:
             return (params["x"] - 2.5) ** 2
-        elif params["x"] < 4.0:
+        if params["x"] < 4.0:
             return float("Nan")
-        else:
-            return "not even a number"
+        return "not even a number"
 
     ob = CombinedObjectiveFunction([f1, f2])
 

@@ -3,16 +3,15 @@ try:
 except ImportError:
     mpi4py = None
 
-import pytest
-
 import numpy as np
+import pytest
+from conftest import LJAtomsFactory, apply_params_lj, construct_lj, e_lj
 
+from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.fitter import Fitter
 from chemfit.multi_energy_objective_function import (
     construct_multi_energy_objective_function,
 )
-from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.fitter import Fitter
-from conftest import construct_lj, apply_params_lj, LJAtomsFactory, e_lj
 
 
 def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:

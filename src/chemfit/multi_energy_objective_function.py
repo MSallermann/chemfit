@@ -1,18 +1,18 @@
+import logging
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Callable, Optional, Union
+
+from ase import Atoms
+
 from chemfit.ase_objective_function import (
-    EnergyObjectiveFunction,
-    CalculatorFactory,
-    ParameterApplier,
     AtomsFactory,
     AtomsPostProcessor,
+    CalculatorFactory,
+    EnergyObjectiveFunction,
+    ParameterApplier,
 )
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-
-from collections.abc import Sequence
-
-from pathlib import Path
-from ase import Atoms
-from typing import Optional, Union, Callable
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +29,7 @@ def construct_multi_energy_objective_function(
     weight_list: Optional[list[float]] = None,
     atom_post_processor_list: Optional[list[AtomsPostProcessor]] = None,
 ) -> CombinedObjectiveFunction:
-    """
-    Initialize a CombinedObjectiveFunction by constructing individual EnergyObjectiveFunctions.
+    """Initialize a CombinedObjectiveFunction by constructing individual EnergyObjectiveFunctions.
 
     Each element of `tag_list`, `path_to_reference_configuration_list`, and `reference_energy_list`
     defines one EnergyObjectiveFunction instance. Those instances are collected and passed to the
@@ -52,8 +51,8 @@ def construct_multi_energy_objective_function(
     Raises:
         AssertionError: If lengths of `tag_list`, `path_to_reference_configuration_list`, and
             `reference_energy_list` differ, or if any provided weight is negative.
-    """
 
+    """
     ob_funcs: list[EnergyObjectiveFunction] = []
 
     n_terms = len(path_or_factory_list)

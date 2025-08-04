@@ -8,15 +8,16 @@ except ImportError:
     mpi4py = None
     rank = 0
 
-from chemfit.fitter import Fitter
-from chemfit.exceptions import FactoryException
+import numpy as np
+from ase import Atoms
+from conftest import LJAtomsFactory, apply_params_lj, construct_lj, e_lj
+
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.exceptions import FactoryException
+from chemfit.fitter import Fitter
 from chemfit.multi_energy_objective_function import (
     construct_multi_energy_objective_function,
 )
-from ase import Atoms
-from conftest import construct_lj, apply_params_lj, LJAtomsFactory, e_lj
-import numpy as np
 
 
 def construct_atoms_bad():
@@ -63,9 +64,11 @@ INITIAL_PARAMS = {"epsilon": 2.0, "sigma": 1.5}
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_all_good():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
     import logging
+
     from mpi4py import MPI
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",
@@ -92,9 +95,11 @@ def test_exceptions_mpi_all_good():
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_all_bad():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
     import logging
+
     from mpi4py import MPI
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",
@@ -123,9 +128,11 @@ def test_exceptions_mpi_all_bad():
 @pytest.mark.xfail(rank != 1, reason="Can only raise exception on rank 1")
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_good_master_bad_worker():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
     import logging
+
     from mpi4py import MPI
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",
@@ -154,10 +161,11 @@ def test_exceptions_mpi_good_master_bad_worker():
 @pytest.mark.xfail(rank != 0, reason="Can only raise exception on rank 0")
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_bad_master_good_worker():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     import logging
+
     from mpi4py import MPI
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",

@@ -1,5 +1,5 @@
-from functools import wraps
 import inspect
+from functools import wraps
 from typing import Callable
 
 
@@ -22,7 +22,7 @@ def log_invocation(func, log_func: Callable[[str], None], log_args: bool = True)
 def log_all_methods(obj, log_func: Callable[[str], None]):
     """Creates a dummy object which logs all method invocations."""
 
-    class Dummy(object): ...
+    class Dummy: ...
 
     dummy = Dummy()
 
@@ -31,7 +31,7 @@ def log_all_methods(obj, log_func: Callable[[str], None]):
         if inspect.ismethod(attr):
             try:
                 setattr(dummy, attr_name, log_invocation(attr, log_func))
-            except Exception as e:
+            except Exception:
                 print(f"Readonly attribute {attr_name}")
 
     return dummy

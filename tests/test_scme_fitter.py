@@ -8,26 +8,24 @@ try:
 except ImportError:
     mpi4py = None
 
+import logging
+from pathlib import Path
+
+import numpy as np
 import pytest
+from ase import Atoms
+from ase.units import Bohr
 
-from chemfit.fitter import Fitter
 from chemfit.ase_objective_function import (
-    EnergyObjectiveFunction,
     DimerDistanceObjectiveFunction,
+    EnergyObjectiveFunction,
 )
-
-from chemfit.utils import dump_dict_to_file
+from chemfit.data_utils import process_csv
+from chemfit.fitter import Fitter
 from chemfit.multi_energy_objective_function import (
     construct_multi_energy_objective_function,
 )
-from chemfit.data_utils import process_csv
-
-import logging
-from pathlib import Path
-from ase import Atoms
-from ase.units import Bohr
-import numpy as np
-import time
+from chemfit.utils import dump_dict_to_file
 
 logging.basicConfig(filename="./output/test_scme_fitter.log", level=logging.INFO)
 
@@ -190,12 +188,11 @@ def test_multi_energy_ob_function_fitting():
     pyscme is None or mpi4py is None, reason="Cannot import pyscme or mpi4py or both"
 )
 def test_multi_energy_ob_function_fitting_mpi():
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
     from chemfit.scme_factories import (
         SCMECalculatorFactory,
         SCMEParameterApplier,
     )
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     ob = construct_multi_energy_objective_function(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
