@@ -18,7 +18,7 @@ def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:
     r_min = 2 ** (1 / 6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
-    ob = construct_multi_energy_objective_function(
+    return construct_multi_energy_objective_function(
         calc_factory=construct_lj,
         param_applier=apply_params_lj,
         tag_list=[f"lj_{r:.2f}" for r in r_list],
@@ -26,7 +26,6 @@ def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:
         path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
     )
 
-    return ob
 
 
 def test_lj():

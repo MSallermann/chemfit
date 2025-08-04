@@ -44,7 +44,7 @@ class Fitter:
         bounds: Optional[dict] = None,
         near_bound_tol: Optional[float] = None,
         value_bad_params: float = 1e5,
-    ):
+    ) -> None:
         """Args:
         objective_function (Callable[[dict], float]):
             The objective function to be minimized.
@@ -94,7 +94,7 @@ class Fitter:
         self.callbacks.append((func, n_steps))
 
     def ob_func_wrapper(self, ob_func: Any) -> float:
-        """Wraps the objective function and applies some checks plus logging"""
+        """Wraps the objective function and applies some checks plus logging."""
 
         @wraps(ob_func)
         def wrapped_ob_func(params: dict):
@@ -138,7 +138,7 @@ class Fitter:
         return wrapped_ob_func
 
     def _produce_callback(self) -> tuple[Optional[Callable[[CallbackInfo], None]], int]:
-        """Generate a single callback from the list of callbacks"""
+        """Generate a single callback from the list of callbacks."""
         if len(self.callbacks) == 0:
             return None, float("inf")
 
@@ -152,7 +152,7 @@ class Fitter:
         return callback, min_n_steps
 
     def hook_pre_fit(self):
-        """A hook, which is invoked before optimizing"""
+        """A hook, which is invoked before optimizing."""
         # Overwrite with a fresh FitInfo object
         self.info = FitInfo()
 
@@ -176,7 +176,7 @@ class Fitter:
         self.time_fit_start = time.time()
 
     def hook_post_fit(self, opt_params: dict):
-        """A hook, which is invoked after optimizing"""
+        """A hook, which is invoked after optimizing."""
         self.time_fit_end = time.time()
         self.info.time_taken = self.time_fit_end - self.time_fit_start
 
@@ -370,7 +370,7 @@ class Fitter:
                 info: FitInfo,
                 callback: Callable[[CallbackInfo], None],
                 n_steps: int,
-            ):
+            ) -> None:
                 self._step = 0
                 self._keys = keys
                 self._info = info
@@ -384,7 +384,7 @@ class Fitter:
                 self._step += 1
 
                 # If we are given "nit", we use it instead
-                if "nit" in intermediate_result.keys():
+                if "nit" in intermediate_result:
                     self._step = intermediate_result.nit
 
                 if self._step % self._n_steps == 0:

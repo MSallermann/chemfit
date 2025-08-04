@@ -131,7 +131,7 @@ def test_single_energy_objective_function():
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
+    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": True})
 
     output_folder = Path(__file__).parent / "output/single_energy"
 
@@ -157,7 +157,7 @@ def test_dimer_distance_objective_function():
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=1e-4, options=dict(maxiter=50, disp=True))
+    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": True})
     print(f"{optimal_params = }")
 
 
@@ -179,7 +179,7 @@ def test_multi_energy_ob_function_fitting():
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=0, options=dict(maxiter=50, disp=True))
+    optimal_params = fitter.fit_scipy(tol=0, options={"maxiter": 50, "disp": True})
     print(f"{optimal_params = }")
     print(f"time taken = {fitter.info.time_taken} seconds")
 
@@ -207,7 +207,7 @@ def test_multi_energy_ob_function_fitting_mpi():
         if ob_mpi.rank == 0:
             fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
             optimal_params = fitter.fit_scipy(
-                tol=0, options=dict(maxiter=50, disp=True)
+                tol=0, options={"maxiter": 50, "disp": True}
             )
             print(f"{optimal_params = }")
             print(f"time taken = {fitter.info.time_taken} seconds")

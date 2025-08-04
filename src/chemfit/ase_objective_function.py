@@ -15,17 +15,15 @@ logger = logging.getLogger(__name__)
 
 
 class CalculatorFactory(Protocol):
-    """Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`
-    """
+    """Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`."""
 
     def __call__(self, atoms: Atoms) -> None:
-        """Construct a calculator and overwrite `atoms.calc`"""
+        """Construct a calculator and overwrite `atoms.calc`."""
         ...
 
 
 class ParameterApplier(Protocol):
-    """Protocol for a function that applies parameters to an ASE calculator.
-    """
+    """Protocol for a function that applies parameters to an ASE calculator."""
 
     def __call__(self, atoms: Atoms, params: dict) -> None:
         """Applies a parameter dictionary to `atoms.calc` in-place."""
@@ -33,33 +31,30 @@ class ParameterApplier(Protocol):
 
 
 class AtomsPostProcessor(Protocol):
-    """Protocol for a function that post-processes an ASE Atoms object.
-    """
+    """Protocol for a function that post-processes an ASE Atoms object."""
 
     def __call__(self, atoms: Atoms) -> None:
-        """Modify the atoms in-place"""
+        """Modify the atoms in-place."""
         ...
 
 
 class AtomsFactory(Protocol):
-    """Protocol for a function that creates an ASE Atoms object.
-    """
+    """Protocol for a function that creates an ASE Atoms object."""
 
     def __call__(self) -> Atoms:
-        """Create an atoms object"""
+        """Create an atoms object."""
         ...
 
 
 class PathAtomsFactory(AtomsFactory):
     """Implementation of AtomsFactory which reads the atoms from a path."""
 
-    def __init__(self, path: Path, index: Optional[int] = None):
+    def __init__(self, path: Path, index: Optional[int] = None) -> None:
         self.path = path
         self.index = index
 
     def __call__(self) -> Atoms:
-        atoms = read(self.path, self.index, parallel=False)
-        return atoms
+        return read(self.path, self.index, parallel=False)
 
 
 class CalculatorFactoryException(FactoryException): ...
@@ -131,8 +126,9 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         # If no custom `atoms_factory` has been supplied, we try to create a `PathAtomsFactory` from the path to the reference configuration
         if atoms_factory is None:
             if path_to_reference_configuration is None:
+                msg = "Neither `path_to_reference_configuration` nor a custom `atoms_factory` has been supplied"
                 raise Exception(
-                    "Neither `path_to_reference_configuration` nor a custom `atoms_factory` has been supplied"
+                    msg
                 )
             self.atoms_factory = PathAtomsFactory(
                 path_to_reference_configuration, index=0
@@ -155,7 +151,8 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         self.weight_init: float = weight
 
         if self.weight_init < 0:
-            raise AssertionError("Weight must be non-negative.")
+            msg = "Weight must be non-negative."
+            raise AssertionError(msg)
 
         self.weight_cb = weight_cb
 
@@ -252,8 +249,9 @@ class ASEObjectiveFunction(ObjectiveFunctor):
                     raise e
 
                 if scale < 0:
+                    msg = "Weight callback must return a non-negative scaling factor."
                     raise AssertionError(
-                        "Weight callback must return a non-negative scaling factor."
+                        msg
                     )
                 self._weight *= scale
 
@@ -293,8 +291,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
 
 
 class EnergyObjectiveFunction(ASEObjectiveFunction):
-    """Objective function comparing computed energy to a reference energy.
-    """
+    """Objective function comparing computed energy to a reference energy."""
 
     def __init__(
         self,
@@ -307,7 +304,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         weight_cb: Optional[Callable[[Atoms], float]] = None,
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
-    ):
+    ) -> None:
         """Initialize an EnergyObjectiveFunction.
 
         Args:
@@ -360,13 +357,11 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         """
         energy = self.compute_energy(parameters)
         error = (energy - self.reference_energy) ** 2
-        objective_contribution = error * self.weight
-        return objective_contribution
+        return error * self.weight
 
 
 class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
-    """Objective that relaxes a water dimer and compares its O-O distance to a target.
-    """
+    """Objective that relaxes a water dimer and compares its O-O distance to a target."""
 
     def __init__(
         self,
@@ -383,7 +378,7 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         weight_cb: Optional[Callable[[Atoms], float]] = None,
         atoms_factory: Optional[AtomsFactory] = None,
         atoms_post_processor: Optional[AtomsPostProcessor] = None,
-    ):
+    ) -> None:
         """Initialize a DimerDistanceObjectiveFunction.
 
         Args:
@@ -454,5 +449,4 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
         self.OO_distance = self.atoms.get_distance(0, 3, mic=True)
         diff = self.OO_distance - self.reference_OO_distance
-        objective_value = self.weight * diff**2
-        return objective_value
+        return self.weight * diff**2

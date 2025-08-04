@@ -82,21 +82,24 @@ def process_single_csv(
         base = path_to_csv.parent.resolve()
         paths = [base / Path(fname) for fname in df["file"]]
     else:
+        msg = f"Error while processing {path_to_csv}. CSV must contain either a 'path' or 'file' column."
         raise KeyError(
-            f"Error while processing {path_to_csv}. CSV must contain either a 'path' or 'file' column."
+            msg
         )
 
     if "tag" not in df.columns or "reference_energy" not in df.columns:
+        msg = "Error while processing {path_to_csv}. CSV must contain 'tag' and 'reference_energy' columns."
         raise KeyError(
-            "Error while processing {path_to_csv}. CSV must contain 'tag' and 'reference_energy' columns."
+            msg
         )
 
     tags = list(df["tag"])
     try:
         energies = [float(e) for e in df["reference_energy"]]
     except Exception as err:
+        msg = "Error while processing {path_to_csv}. All 'reference_energy' entries must be numeric."
         raise ValueError(
-            "Error while processing {path_to_csv}. All 'reference_energy' entries must be numeric."
+            msg
         ) from err
 
     return paths[index], tags[index], energies[index]

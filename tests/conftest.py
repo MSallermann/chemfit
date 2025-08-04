@@ -13,7 +13,7 @@ def e_lj(r, eps, sigma):
 
 
 class LJAtomsFactory:
-    def __init__(self, r: float):
+    def __init__(self, r: float) -> None:
         p0 = np.zeros(3)
         p1 = np.array([r, 0.0, 0.0])
         self.atoms = Atoms(positions=[p0, p1])

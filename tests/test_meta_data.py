@@ -11,7 +11,7 @@ import pytest
 
 class MyFunctor(ObjectiveFunctor):
 
-    def __init__(self, f: float):
+    def __init__(self, f: float) -> None:
         self.f = f
         self.meta_data = {}
 
@@ -37,7 +37,7 @@ def test_gather_meta_data():
     )  # is equivalent to y**2 + x**2 + 2.0*x**2
 
     # Evaluate the objective function
-    val = cob(INITIAL_PARAMS)
+    cob(INITIAL_PARAMS)
     meta_data = cob.gather_meta_data()
 
     expected = [None, {"last_value": 1.0}, {"last_value": 2.0}]
@@ -64,7 +64,7 @@ def test_gather_meta_data_mpi():
             level=logging.INFO,
         )
         if ob_mpi.rank == 0:
-            val = ob_mpi(INITIAL_PARAMS)
+            ob_mpi(INITIAL_PARAMS)
             meta_data = ob_mpi.gather_meta_data()
             print(f"{meta_data = }")
             expected = [None, {"last_value": 1.0}, {"last_value": 2.0}]

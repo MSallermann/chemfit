@@ -5,7 +5,7 @@ class ObjectiveFunctor(abc.ABC):
 
     @abc.abstractmethod
     def get_meta_data(self) -> dict:
-        """Get meta data"""
+        """Get meta data."""
         ...
 
     @abc.abstractmethod
