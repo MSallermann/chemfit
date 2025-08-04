@@ -41,10 +41,6 @@ class CallbackInfo:
 
 
 class Fitter:
-    """
-    Fits parameters by minimizing an objective function.
-    """
-
     def __init__(
         self,
         objective_function: Callable[[dict], float],
@@ -55,17 +51,16 @@ class Fitter:
     ):
         """
         Args:
-           objective_function (Callable[[dict], float]):
-               The objective function to be minimized.
+            objective_function (Callable[[dict], float]):
+                The objective function to be minimized.
             initial_params (dict):
-                Initial values of the parameters
+                Initial values of the parameters.
             bound (Optional[dict]):
-                Dictionary of parameter bounds
-            near_bound_tol(Optional[float]):
-                If specified, performs a check to see if any of the parameters
-                is too close to the bounds and logs a warning if so
+                Dictionary specifying bounds for each parameter.
+            near_bound_tol (Optional[float]):
+                If specified, checks whether any parameters are too close to their bounds and logs a warning if so.
             value_bad_params (float):
-                A value beyond which the objective function is considered to be in a bad region
+                Threshold value beyond which the objective function is considered to be in a poor or invalid region.
         """
 
         self.objective_function = self.ob_func_wrapper(objective_function)
@@ -87,22 +82,20 @@ class Fitter:
 
     def register_callback(self, func: Callable[[CallbackInfo], None], n_steps: int):
         """
-        Register a callback which is run after every `n_steps` of the optimization.
+        Register a callback which is executed after every `n_steps` of the optimization.
+        Multiple callbacks may be registered. They are executed in the order of registration.
+        The callback must be a callable with the following signature:
 
-        Multiple callbacks may be registered. They are executed in order of registration.
+            func(arg: CallbackInfo)
 
-        The callback needs to be callable with
-            func( arg : CallbackInfo )
-
-        The `CallbackInfo` is a dataclass with the following members
-
-            - `opt_params` are the optimal parameters at the time the callback is invoked
-            - `opt_loss` is the loss with those optimal parameters
-            - `cur_params` are the parameters which have been tested lasts at the time the callback is invoked.
-            - `cur_loss` are the parameters which have been tested lasts at the time the callback is invoked.
-            - `step` is the number of optimization steps performed thus far
-                    (in general not equal to the number of evaluations of the loss function)
-            - `info` is the current `FitInfo` of the fitter at the time the callback is invoked
+        The `CallbackInfo` is a dataclass with the following attributes:
+            - `opt_params`: The optimal parameters at the time the callback is invoked.
+            - `opt_loss`: The loss value corresponding to the optimal parameters.
+            - `cur_params`: The parameters tested most recently when the callback is invoked.
+            - `cur_loss`: The loss value associated with the most recently tested parameters.
+            - `step`: The number of optimization steps performed so far
+                    (generally not equal to the number of loss function evaluations).
+            - `info`: The current `FitInfo` instance of the fitter at the time the callback is invoked.
         """
         self.callbacks.append((func, n_steps))
 
