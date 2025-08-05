@@ -36,9 +36,9 @@ def process_csv(
     if not isinstance(index, Sequence):
         index = [index] * len(paths_to_csv)
 
-    paths = []
-    tags = []
-    energies = []
+    paths: list[Path] = []
+    tags: list[str] = []
+    energies: list[float] = []
 
     for i, path_to_csv in zip(index, paths_to_csv):
         p, t, e = process_single_csv(path_to_csv, i)
@@ -95,7 +95,9 @@ def process_single_csv(
         msg = "Error while processing {path_to_csv}. CSV must contain 'tag' and 'reference_energy' columns."
         raise KeyError(msg)
 
-    tags = list(df["tag"])
+    assert isinstance(df["tag"][0], str)
+
+    tags: list[str] = list(df["tag"])
     try:
         energies = [float(e) for e in df["reference_energy"]]
     except Exception as err:

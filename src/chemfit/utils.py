@@ -37,14 +37,14 @@ def dump_dict_to_file(file: Path, dictionary: dict) -> None:
 
 
 def create_initial_params(
-    adjustable_params: list[str], default_params: dict
+    adjustable_params: list[str], default_params: dict[str, Any]
 ) -> dict[str, float]:
     return {k: dict(default_params)[k] for k in adjustable_params}
 
 
 def check_params_near_bounds(
-    params: dict,
-    bounds: dict,
+    params: dict[str, Any],
+    bounds: dict[str, Any],
     relative_tol: float,
 ) -> list[tuple[str, float, float, float]]:
     """

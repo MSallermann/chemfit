@@ -3,6 +3,7 @@ from __future__ import annotations
 import functools
 import logging
 from pathlib import Path
+from typing import Any
 
 from ase import Atom, Atoms
 from ase.geometry import find_mic
@@ -66,7 +67,7 @@ def setup_expansions(
 
 def setup_calculator(
     atoms: Atoms,
-    params: dict,
+    params: dict[str, Any],
     path_to_scme_expansions: Path | None,
     parametrization_key: str | None,
 ) -> SCMECalculator:

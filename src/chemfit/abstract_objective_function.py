@@ -1,14 +1,15 @@
 import abc
+from typing import Any
 
 
 class ObjectiveFunctor(abc.ABC):
     @abc.abstractmethod
-    def get_meta_data(self) -> dict:
+    def get_meta_data(self) -> dict[str, Any]:
         """Get meta data."""
         ...
 
     @abc.abstractmethod
-    def __call__(self, parameters: dict) -> float:
+    def __call__(self, parameters: dict[str, Any]) -> float:
         """
         Compute the objective value given a set of parameters.
 

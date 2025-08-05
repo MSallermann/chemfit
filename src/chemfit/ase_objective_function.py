@@ -27,7 +27,7 @@ class CalculatorFactory(Protocol):
 class ParameterApplier(Protocol):
     """Protocol for a function that applies parameters to an ASE calculator."""
 
-    def __call__(self, atoms: Atoms, params: dict) -> None:
+    def __call__(self, atoms: Atoms, params: dict[str, Any]) -> None:
         """Applies a parameter dictionary to `atoms.calc` in-place."""
         ...
 
@@ -165,7 +165,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
 
         self.weight_cb = weight_cb
 
-    def get_meta_data(self) -> dict:
+    def get_meta_data(self) -> dict[str, Any]:
         """
         Retrieve metadata for this objective function.
 
@@ -269,7 +269,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
 
         return self._weight
 
-    def compute_energy(self, parameters: dict) -> float:
+    def compute_energy(self, parameters: dict[str, Any]) -> float:
         """
         Compute the potential energy for a given set of parameters.
 
@@ -362,7 +362,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
 
         return data
 
-    def __call__(self, parameters: dict) -> float:
+    def __call__(self, parameters: dict[str, Any]) -> float:
         """
         Compute squared-error contribution to the objective.
 
@@ -451,7 +451,7 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         data["reference_OO_distance"] = self.reference_OO_distance
         return data
 
-    def __call__(self, parameters: dict) -> float:
+    def __call__(self, parameters: dict[str, Any]) -> float:
         """
         Apply parameters, optionally add noise, relax the dimer, and compute error.
 
