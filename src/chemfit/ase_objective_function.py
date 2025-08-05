@@ -57,7 +57,13 @@ class PathAtomsFactory(AtomsFactory):
         self.index = index
 
     def __call__(self) -> Atoms:
-        return read(self.path, self.index, parallel=False)
+        atoms = read(self.path, self.index, parallel=False)
+
+        if isinstance(atoms, list):
+            msg = f"Index {self.index} selects multiple images from path {self.path}."
+            raise AtomsFactoryException(msg)
+
+        return atoms
 
 
 class CalculatorFactoryException(FactoryException): ...
@@ -159,7 +165,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
 
         self.weight_cb = weight_cb
 
-    def get_meta_data(self) -> dict[str]:
+    def get_meta_data(self) -> dict:
         """
         Retrieve metadata for this objective function.
 
@@ -225,6 +231,9 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         except Exception as e:
             raise CalculatorFactoryException from e
 
+        if atoms.calc is None:
+            raise CalculatorFactoryException
+
         return atoms
 
     @property
@@ -276,7 +285,9 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         except Exception as e:
             raise ParameterApplierException from e
 
+        assert self.atoms.calc is not None
         self.atoms.calc.calculate(self.atoms)
+
         self._last_energy = self.atoms.get_potential_energy()
 
         return self._last_energy
@@ -454,6 +465,8 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         self.param_applier(self.atoms, parameters)
         self.atoms.set_velocities(np.zeros((self.n_atoms, 3)))
         self.atoms.set_positions(self.positions_reference)
+
+        assert self.atoms.calc is not None
         self.atoms.calc.calculate(self.atoms)
 
         rng = np.random.default_rng()

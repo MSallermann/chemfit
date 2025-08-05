@@ -4,8 +4,8 @@ from typing import Any
 from ase import Atoms
 
 from .scme_setup import (
-    arrange_water_in_OHH_order,
-    check_water_is_in_OHH_order,
+    arrange_water_in_ohh_order,
+    check_water_is_in_ohh_order,
     setup_calculator,
 )
 
@@ -24,8 +24,8 @@ class SCMECalculatorFactory:
 
     def __call__(self, atoms: Atoms) -> Any:
         # Attach a fresh copy of default SCME parameters to this Atoms object
-        if not check_water_is_in_OHH_order(atoms=atoms):
-            atoms = arrange_water_in_OHH_order(atoms)
+        if not check_water_is_in_ohh_order(atoms=atoms):
+            atoms = arrange_water_in_ohh_order(atoms)
 
         setup_calculator(
             atoms,

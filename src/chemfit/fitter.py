@@ -8,12 +8,14 @@ from functools import wraps
 from numbers import Real
 from typing import Any, Callable
 
+import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
 from pydictnest import (
     flatten_dict,
     unflatten_dict,
 )
+from scipy.optimize import OptimizeResult, minimize
 
 from chemfit.exceptions import FactoryException
 from chemfit.utils import check_params_near_bounds
@@ -73,13 +75,13 @@ class Fitter:
         else:
             self.bounds = bounds
 
-        self.value_bad_params = value_bad_params
+        self.value_bad_params: float = value_bad_params
 
         self.near_bound_tol = near_bound_tol
 
         self.info = FitInfo()
 
-        self.callbacks: list[tuple[Callable[[dict, float, int, FitInfo]], int]] = []
+        self.callbacks: list[tuple[Callable[[CallbackInfo], None], int]] = []
 
     def register_callback(self, func: Callable[[CallbackInfo], None], n_steps: int):
         """
@@ -101,11 +103,11 @@ class Fitter:
         """
         self.callbacks.append((func, n_steps))
 
-    def ob_func_wrapper(self, ob_func: Any) -> float:
+    def ob_func_wrapper(self, ob_func: Any) -> Callable[[dict], float]:
         """Wraps the objective function and applies some checks plus logging."""
 
         @wraps(ob_func)
-        def wrapped_ob_func(params: dict):
+        def wrapped_ob_func(params: dict) -> float:
             # first we try if we can get a value at all
             try:
                 value = ob_func(params)
@@ -133,7 +135,7 @@ class Fitter:
                 logger.debug(
                     f"Objective function did not return a single float, but returned `{value}` with type {type(value)}. Clipping loss to {self.value_bad_params}"
                 )
-                value = self.value_bad_params
+                value = float(self.value_bad_params)
 
             if math.isnan(value):
                 logger.debug(
@@ -141,14 +143,16 @@ class Fitter:
                 )
                 value = self.value_bad_params
 
-            return value
+            return float(value)
 
         return wrapped_ob_func
 
-    def _produce_callback(self) -> tuple[Callable[[CallbackInfo], None] | None, int]:
+    def _produce_callback(
+        self,
+    ) -> tuple[Callable[[CallbackInfo], None], int] | tuple[None, int]:
         """Generate a single callback from the list of callbacks."""
         if len(self.callbacks) == 0:
-            return None, float("inf")
+            return None, 0
 
         min_n_steps = min([n_steps for (_, n_steps) in self.callbacks])
 
@@ -188,6 +192,8 @@ class Fitter:
         self.time_fit_end = time.time()
         self.info.time_taken = self.time_fit_end - self.time_fit_start
 
+        assert self.info.final_value is not None
+
         if self.info.final_value >= self.value_bad_params:
             logger.warning(
                 f"Ending optimization in a `bad` region. Loss is greater or equal to {self.value_bad_params = }"
@@ -213,8 +219,6 @@ class Fitter:
     def fit_nevergrad(
         self, budget: int, optimizer_str: str = "NgIohTuned", **kwargs
     ) -> dict:
-        import nevergrad as ng
-
         self.hook_pre_fit()
 
         flat_bounds = flatten_dict(self.bounds)
@@ -244,6 +248,8 @@ class Fitter:
 
         callback, n_steps = self._produce_callback()
 
+        assert self.info.initial_value is not None
+
         opt_loss = self.info.initial_value
 
         for i in range(budget):
@@ -251,7 +257,7 @@ class Fitter:
                 flat_params = flat_initial_params
                 cur_loss = self.info.initial_value
                 p = optimizer.parametrization.spawn_child()
-                p.value = (
+                p.value = (  # type: ignore  # noqa: PGH003
                     (flat_params,),
                     {},
                 )
@@ -335,7 +341,6 @@ class Fitter:
         {'x': 2.0, 'y': -1.0}
 
         """
-        from scipy.optimize import OptimizeResult, minimize
 
         self.hook_pre_fit()
 
@@ -353,15 +358,16 @@ class Fitter:
 
         # The initial value of x and of the bounds are derived from that order
         x0 = np.array([flat_params[k] for k in self._keys])
-        bounds = np.array([flat_bounds.get(k, (None, None)) for k in self._keys])
 
-        if len(bounds) == 0:
+        if len(flat_bounds) == 0:
             bounds = None
+        else:
+            bounds = np.array([flat_bounds.get(k, (None, None)) for k in self._keys])
 
         # The local objective function first creates a flat dictionary from the `x` array
         # by zipping it with the captured flattened keys and then unflattens the dictionary
         # to pass it to the objective functions
-        def f_scipy(x: npt.NDArray):
+        def f_scipy(x: npt.NDArray) -> float:
             p = unflatten_dict(dict(zip(self._keys, x)))
             return self.objective_function(p)
 
@@ -423,7 +429,10 @@ class Fitter:
         # Then, we wrap it in a way that scipy understands
         if callback is not None:
             callback_scipy = CallbackScipy(
-                keys=self._keys, info=self.info, callback=callback, n_steps=n_steps
+                keys=list(self._keys),
+                info=self.info,
+                callback=callback,
+                n_steps=n_steps,
             )
         else:
             callback_scipy = None

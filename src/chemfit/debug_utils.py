@@ -1,6 +1,6 @@
 import inspect
 from functools import wraps
-from typing import Callable
+from typing import Any, Callable, TypeVar, cast
 
 
 def log_invocation(
@@ -20,19 +20,41 @@ def log_invocation(
     return wrapped_with_logging
 
 
-def log_all_methods(obj: object, log_func: Callable[[str], None]):
-    """Creates a dummy object which logs all method invocations."""
+LoggedObject = TypeVar("LoggedObject", bound=object)
 
-    class Dummy: ...
 
-    dummy = Dummy()
+def log_all_methods(obj: LoggedObject, log_func: Callable[[str], None]) -> LoggedObject:
+    """Return a proxy object that logs method calls and delegates everything to `obj`."""
 
-    for attr_name in dir(obj):
-        attr = getattr(obj, attr_name)
-        if inspect.ismethod(attr):
+    class Proxy:
+        def __init__(self, wrapped: LoggedObject):
+            super().__setattr__("_wrapped", wrapped)
+
+        def __getattribute__(self, name: str):
+            if name == "_wrapped":
+                return super().__getattribute__(name)
+
+            wrapped = super().__getattribute__("_wrapped")
+            attr = getattr(wrapped, name)
+
+            if inspect.ismethod(attr) or inspect.isfunction(attr):
+                # Use your log_invocation directly
+                return log_invocation(attr, log_func)
+            return attr
+
+        def __setattr__(self, name: str, value: Any):
+            wrapped = super().__getattribute__("_wrapped")
+            setattr(wrapped, name, value)
+
+        def __delattr__(self, name: str):
+            wrapped = super().__getattribute__("_wrapped")
             try:
-                setattr(dummy, attr_name, log_invocation(attr, log_func))
-            except Exception:
-                print(f"Readonly attribute {attr_name}")
+                delattr(wrapped, name)
+            except AttributeError:
+                super().__delattr__(name)
 
-    return dummy
+        def __dir__(self):
+            wrapped = super().__getattribute__("_wrapped")
+            return sorted(set(dir(type(self)) + dir(wrapped)))
+
+    return cast("LoggedObject", Proxy(obj))
