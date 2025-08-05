@@ -141,7 +141,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         d["type"] = type(self).__name__
         return d
 
-    def __call__(self, params: dict) -> float:
+    def __call__(self, params: dict) -> float | None:
         # Function to evaluate the objective function, to be called from rank 0
 
         # Ensure only rank 0 can call this

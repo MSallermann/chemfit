@@ -53,7 +53,7 @@ ignore = [
     'C901',    # function too complex
     'PT012',   # pytest.raises should contain a single line
     'N803',    # method arguments should be lowercase
-    'N806',    # variable names should be lowercase 
+    'N806',    # variable names should be lowercase
     'G004',    # Logger uses f-string
     'TC001',   # Type checking blocks
     'TC002',   # Type checking blocks
@@ -63,4 +63,5 @@ ignore = [
     'FBT002',  # boolean default args
     'N818',    # pep8 naming of exceptions (ussing <Nmae>Error)
     'PD901',   # I like df
+    'FIX002'
 ]

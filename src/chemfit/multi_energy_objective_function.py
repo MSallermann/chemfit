@@ -25,7 +25,9 @@ def construct_multi_energy_objective_function(
     tag_list: list[str],
     reference_energy_list: list[float],
     path_or_factory_list: list[Path | AtomsFactory],
-    weight_cb: None | list[Callable[[Atoms], float]] | Callable[[Atoms], float] = None,
+    weight_cb: (
+        None | list[Callable[[Atoms], float] | None] | Callable[[Atoms], float]
+    ) = None,
     weight_list: list[float] | None = None,
     atom_post_processor_list: list[AtomsPostProcessor] | None = None,
 ) -> CombinedObjectiveFunction:
