@@ -1,5 +1,7 @@
 try:
     import mpi4py
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 except ImportError:
     mpi4py = None
 
@@ -47,8 +49,13 @@ def test_with_square_func():
     print(f"{optimal_params = }")
     assert np.isclose(optimal_params["x"], 2.0)
     assert np.isclose(optimal_params["y"], -1.0)
-    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
+
+    init_val = obj_func(initial_params)
+    opt_val = obj_func(optimal_params)
+    assert fitter.info.initial_value is not None
+    assert fitter.info.final_value is not None
+    assert np.isclose(init_val, fitter.info.initial_value)
+    assert np.isclose(opt_val, fitter.info.final_value)
 
     for opt in NG_SOLVERS:
         progress = []
@@ -71,7 +78,6 @@ def test_with_square_func():
         # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
         # obj_func(optimal_params) value may be very slightly different
         assert np.isclose(progress[-1].opt_loss, obj_func(optimal_params))
-
         assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
         assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
         assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
@@ -107,6 +113,8 @@ def test_with_square_func_bounds():
     assert len(check_params_near_bounds(optimal_params, bounds, 1e-2)) == 1
     assert np.isclose(optimal_params["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
+    assert fitter.info.initial_value is not None
+    assert fitter.info.final_value is not None
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
@@ -145,6 +153,8 @@ def test_with_nested_dict():
     print(f"{fitter.info = }")
     assert np.isclose(optimal_params["params"]["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
+    assert fitter.info.initial_value is not None
+    assert fitter.info.final_value is not None
     assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
     assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
@@ -191,6 +201,8 @@ def test_with_complicated_dict():
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
     check_solution(optimal_params)
+    assert fitter.info.initial_value is not None
+    assert fitter.info.final_value is not None
     assert np.isclose(ob(initial_params), fitter.info.initial_value)
     assert np.isclose(ob(optimal_params), fitter.info.final_value)
 
@@ -198,6 +210,9 @@ def test_with_complicated_dict():
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
     check_solution(optimal_params)
+    assert fitter.info.initial_value is not None
+    assert fitter.info.final_value is not None
+
     assert np.isclose(ob(initial_params), fitter.info.initial_value)
     assert np.isclose(ob(optimal_params), fitter.info.final_value)
 
@@ -207,9 +222,9 @@ def test_with_complicated_dict():
 def test_with_bad_function():
     x_expected = 2.5
 
-    def ob(params: dict):
+    def ob(params: dict) -> float:
         if params["x"] < 1.0:
-            return None
+            return None  # type: ignore
         if params["x"] < 2.0:
             msg = "Some random exception"
             raise Exception(msg)
@@ -217,7 +232,7 @@ def test_with_bad_function():
             return (params["x"] - 2.5) ** 2
         if params["x"] < 4.0:
             return float("Nan")
-        return "not even a number"
+        return "not even a number"  # type: ignore
 
     for x0 in [0.5, 1.5, 2.5, 3.5, 4.5]:
         print(f"{x0 = }")
@@ -248,13 +263,11 @@ def test_with_bad_function():
 
 @pytest.mark.skipif(mpi4py is None, reason="Reason mpi4py not installed")
 def test_with_bad_function_mpi():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     x_expected = 2.5
 
-    def f1(params: dict):
+    def f1(params: dict) -> float:
         if params["x"] < 1.0:
-            return None
+            return None  # type: ignore
         if params["x"] < 2.0:
             msg = "Some random exception"
             raise Exception(msg)
@@ -262,11 +275,11 @@ def test_with_bad_function_mpi():
             return (params["x"] - 2.5) ** 2
         if params["x"] < 4.0:
             return float("Nan")
-        return "not even a number"
+        return "not even a number"  # type: ignore
 
-    def f2(params: dict):
+    def f2(params: dict) -> float:
         if params["x"] < 1.0:
-            return None
+            return None  # type: ignore
         if params["x"] < 2.0:
             msg = "Some random exception"
             raise Exception(msg)
@@ -274,7 +287,7 @@ def test_with_bad_function_mpi():
             return (params["x"] - 2.5) ** 2
         if params["x"] < 4.0:
             return float("Nan")
-        return "not even a number"
+        return "not even a number"  # type: ignore
 
     ob = CombinedObjectiveFunction([f1, f2])
 

@@ -288,7 +288,7 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         assert self.atoms.calc is not None
         self.atoms.calc.calculate(self.atoms)
 
-        self._last_energy = self.atoms.get_potential_energy()
+        self._last_energy = float(self.atoms.get_potential_energy())
 
         return self._last_energy
 

@@ -47,6 +47,6 @@ def test_debug_log():
     assert obj_logged._b == obj.b  # noqa: SLF001
 
     with pytest.raises(AttributeError):
-        obj_logged.b = 4  # type: ignore  # noqa: PGH003
+        obj_logged.b = 4  # type: ignore
 
     assert len(log_recs) > 0

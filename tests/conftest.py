@@ -28,5 +28,7 @@ def construct_lj(atoms: Atoms):
 
 
 def apply_params_lj(atoms: Atoms, params: dict[str, float]):
+    assert atoms.calc is not None
+    assert atoms.calc is not None
     atoms.calc.parameters.sigma = params["sigma"]
     atoms.calc.parameters.epsilon = params["epsilon"]

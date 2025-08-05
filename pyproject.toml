@@ -52,6 +52,7 @@ ignore = [
     'E501',    # line too long (handled by formatter)
     'C901',    # function too complex
     'PT012',   # pytest.raises should contain a single line
+    'PGH003',  # use specific rule codes
     'N803',    # method arguments should be lowercase
     'N806',    # variable names should be lowercase
     'G004',    # Logger uses f-string

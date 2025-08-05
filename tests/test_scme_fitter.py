@@ -1,10 +1,14 @@
 try:
     import pyscme
+
+    from chemfit.scme_factories import SCMECalculatorFactory, SCMEParameterApplier
 except ImportError:
     pyscme = None
 
 try:
     import mpi4py
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 except ImportError:
     mpi4py = None
 
@@ -75,11 +79,6 @@ INITIAL_PARAMS = {
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_factories():
-    from chemfit.scme_factories import (
-        SCMECalculatorFactory,
-        SCMEParameterApplier,
-    )
-
     atoms = Atoms()
     calc_factory = SCMECalculatorFactory(DEFAULT_PARAMS, None, None)
     calc_factory(atoms)
@@ -116,11 +115,6 @@ def test_factories():
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_single_energy_objective_function():
-    from chemfit.scme_factories import (
-        SCMECalculatorFactory,
-        SCMEParameterApplier,
-    )
-
     ob = EnergyObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
@@ -140,11 +134,6 @@ def test_single_energy_objective_function():
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_dimer_distance_objective_function():
-    from chemfit.scme_factories import (
-        SCMECalculatorFactory,
-        SCMEParameterApplier,
-    )
-
     ob = DimerDistanceObjectiveFunction(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
@@ -163,11 +152,6 @@ def test_dimer_distance_objective_function():
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_multi_energy_ob_function_fitting():
-    from chemfit.scme_factories import (
-        SCMECalculatorFactory,
-        SCMEParameterApplier,
-    )
-
     ob = construct_multi_energy_objective_function(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),
@@ -188,12 +172,6 @@ def test_multi_energy_ob_function_fitting():
     pyscme is None or mpi4py is None, reason="Cannot import pyscme or mpi4py or both"
 )
 def test_multi_energy_ob_function_fitting_mpi():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-    from chemfit.scme_factories import (
-        SCMECalculatorFactory,
-        SCMEParameterApplier,
-    )
-
     ob = construct_multi_energy_objective_function(
         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
         param_applier=SCMEParameterApplier(),

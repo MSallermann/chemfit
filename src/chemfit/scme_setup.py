@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import functools
 import logging
 from pathlib import Path
 
-from ase import Atoms
+from ase import Atom, Atoms
 from ase.geometry import find_mic
 from pyscme.expansions import (
     get_energy_expansion_from_hdf5_file,
@@ -67,7 +68,7 @@ def setup_calculator(
     atoms: Atoms,
     params: dict,
     path_to_scme_expansions: Path | None,
-    parametrization_key: str,
+    parametrization_key: str | None,
 ) -> SCMECalculator:
     atoms.calc = SCMECalculator(atoms, **params)
     parameter_H2O.Assign_parameters_H2O(atoms.calc.scme)
@@ -113,14 +114,28 @@ def arrange_water_in_ohh_order(atoms: Atoms) -> Atoms:
         msg = "Mismatch between O and H counts for water molecules"
         raise ValueError(msg)
 
-    new_order: list[Atoms] = []
-    for atom_o in atoms[mask_o]:
+    atoms_filtered_o = atoms[mask_o]
+    atoms_filtered_h = atoms[mask_h]
+
+    assert isinstance(atoms_filtered_o, Atoms)
+    assert isinstance(atoms_filtered_h, Atoms)
+
+    new_order: list[Atom] = []
+
+    def sort_func(atom_h: Atom | Atoms, atom_o: Atom) -> float:
+        assert not isinstance(atom_h, Atoms)
+        return find_mic(atom_o.position - atom_h.position, cell=atoms.cell)[1]
+
+    for atom_o in atoms_filtered_o:
+        assert isinstance(atom_o, Atom)
+
         new_order.append(atom_o)
         H_sorted = sorted(
-            atoms[mask_h],
-            key=lambda a: find_mic(atom_o.position - a.position, cell=atoms.cell)[1],
+            atoms_filtered_h,
+            key=functools.partial(sort_func, atom_o=atom_o),
         )
-        new_order.extend(H_sorted[:2])
+        extend_by = H_sorted[:2]
+        new_order.extend(extend_by)  # type: ignore
 
     result = atoms.copy()
     result.set_constraint()

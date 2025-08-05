@@ -1,7 +1,12 @@
+import logging
+
 import pytest
 
 try:
     import mpi4py
+    from mpi4py import MPI
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
     rank = mpi4py.MPI.COMM_WORLD.Get_rank()
 except ImportError:
@@ -64,12 +69,6 @@ INITIAL_PARAMS = {"epsilon": 2.0, "sigma": 1.5}
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_all_good():
-    import logging
-
-    from mpi4py import MPI
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",
         level=logging.INFO,
@@ -95,12 +94,6 @@ def test_exceptions_mpi_all_good():
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_all_bad():
-    import logging
-
-    from mpi4py import MPI
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",
         level=logging.INFO,
@@ -130,12 +123,6 @@ def test_exceptions_mpi_all_bad():
 @pytest.mark.xfail(rank != 1, reason="Can only raise exception on rank 1")
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_good_master_bad_worker():
-    import logging
-
-    from mpi4py import MPI
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",
         level=logging.INFO,
@@ -165,12 +152,6 @@ def test_exceptions_mpi_good_master_bad_worker():
 @pytest.mark.xfail(rank != 0, reason="Can only raise exception on rank 0")
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_exceptions_mpi_bad_master_good_worker():
-    import logging
-
-    from mpi4py import MPI
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     logging.basicConfig(
         filename=f"text_exceptions_rank_{MPI.COMM_WORLD.Get_rank()}.log",
         level=logging.INFO,
