@@ -6,8 +6,8 @@ The :py:class:`~chemfit.fitter.Fitter` class is a wrapper around optimization ba
 
 Currently it supports the following backends:
 
-1. `Nevergrad <https://github.com/facebookresearch/nevergrad>`_ 
-2. `Scipy <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_ 
+1. `Nevergrad <https://github.com/facebookresearch/nevergrad>`_
+2. `Scipy <https://docs.scipy.org/doc/scipy/reference/generated/scipy.optimize.minimize.html>`_
 
 What can be minimized with Fitter
 ----------------------------------
@@ -20,7 +20,7 @@ Any python function with the signature:
         # implementation
         ...
 
-Params dict format 
+Params dict format
 ----------------------------------
 
 
@@ -57,7 +57,7 @@ Bounds
 
 
 Bounds for parameters (of the form ``lower < param < upper`` ) may be specified, alongside the initial parameters.
-They are specified as a dictionary of tuples with the same keys as the ``initial_params``. 
+They are specified as a dictionary of tuples with the same keys as the ``initial_params``.
 The same rules as for the params dict apply, **except** that each leaf node needs to be a tuple of two floats.
 
 
@@ -70,7 +70,7 @@ Example:
                     "bar" : {
                         "a" : (0.0, 2.0)
                     }
-                    "b" : (-1.0, 3.0) 
+                    "b" : (-1.0, 3.0)
                 }
             }
 

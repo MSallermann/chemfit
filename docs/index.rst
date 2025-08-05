@@ -71,7 +71,7 @@ The following toy example shows how to fit the parameters of a Lennard Jones pot
       def __call__(self):
          return self.atoms
 
-   # This tells the objective function how to construct the LennardJones calculator 
+   # This tells the objective function how to construct the LennardJones calculator
    def construct_lj(atoms: Atoms):
       atoms.calc = LennardJones(rc=1000)
 

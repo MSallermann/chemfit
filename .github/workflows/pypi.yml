@@ -59,7 +59,7 @@ jobs:
         with:
           name: dist_artifact_test
           path: dist/*
-  
+
       - name: Setup MPI
         uses: mpi4py/setup-mpi@v1
 
@@ -67,7 +67,7 @@ jobs:
         uses: wntrblm/nox@2024.04.15
 
       - name: Make sure wheel is installable
-        run: | 
+        run: |
           pip install dist/* pytest
           pytest -k lj
 

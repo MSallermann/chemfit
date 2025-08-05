@@ -66,7 +66,7 @@ Optional factories
 ---------------------
 
 
-In the following some optional factories, besides **ParameterApplier** and **CalculatorFactory**, are described. 
+In the following some optional factories, besides **ParameterApplier** and **CalculatorFactory**, are described.
 These can be used to make the **ASEObjectiveFunction** more flexible.
 
 AtomsFactory
@@ -76,7 +76,7 @@ Frequently, the ``ase.Atoms`` object is simply read from a path to a configurati
 In such cases the py:class:`chemfit.ase_objective_function.ASEObjectiveFunction` provides a convenience argument ``path_to_reference_configuration``.
 
 Sometimes, however, it might be required to have more fine grained control over the creation of the atoms object.
-For such situations, :py:class:`~chemfit.ase_objective_function.ASEObjectiveFunction` provides the option to pass an implementation 
+For such situations, :py:class:`~chemfit.ase_objective_function.ASEObjectiveFunction` provides the option to pass an implementation
 of an :py:class:`~chemfit.ase_objective_function.AtomsFactory` protocol in the ``atoms_factory`` argument of :py:meth:`~chemfit.ase_objective_function.ASEObjectiveFunction.__init__`.
 
 .. note::
@@ -92,9 +92,9 @@ One example, where we might want to specify the ``atoms_factory`` explicitly is 
     from chemfit.ase_objective_function import EnergyObjectiveFunction, PathAtomsFactory
 
     # explicitly instantiate the PathAtomsFactory to read the second image in 'atoms.xyz'
-    ob = EnergyObjectiveFunction( 
+    ob = EnergyObjectiveFunction(
         # ... pass all other args
-        atoms_factory = PathAtomsFactory(path="atoms.xyz", index=1) 
+        atoms_factory = PathAtomsFactory(path="atoms.xyz", index=1)
     )
 
 As a more complex example, lets define a **LJAtomsFactory** to simplify the construction of the LennardJones objective function from above:
