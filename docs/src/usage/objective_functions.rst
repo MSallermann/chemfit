@@ -136,9 +136,9 @@ If the individual terms of the :py:class:`~chemfit.combined_objective_function.C
 ASE based objective functions
 -----------------------------------
 
-The ASE based objective functions derive from :py:class:`chemfit.ase_objective_function.ASEObjectiveFunction`. 
+The ASE based objective functions derive from :py:class:`chemfit.ase_objective_function.ASEObjectiveFunction`.
 They are meant for use with the "atomic simulation environment" (ASE).
-All of these functions are designed for flexibility (See :ref:`ase_objective_function_api`) and can accommodate any ase calculator. 
+All of these functions are designed for flexibility (See :ref:`ase_objective_function_api`) and can accommodate any ase calculator.
 
 ``ChemFit`` provides a few pre-defined objective functions of that type, which are explained in the following.
 
@@ -168,7 +168,7 @@ If we want to use this objective function in isolation, we need at least
 .. note::
     The reference atom positions should be saved in a format, which is parseable by ASE's ``io.read`` function (https://wiki.fysik.dtu.dk/ase/ase/io/io.html#ase.io.read) function.
 
-    **Important**: If the file contains multiple "images" of atoms, the **first image** will be selected as the reference configuration. 
+    **Important**: If the file contains multiple "images" of atoms, the **first image** will be selected as the reference configuration.
 
 
 From these pieces of information we can construct the objective function:
@@ -192,7 +192,7 @@ From these pieces of information we can construct the objective function:
 
     # assume we have the atom positions saved as `atoms.xyz` and we know the reference energy is 1.0 eV
     objective_function = EnergyObjectiveFunction(
-            calc_factory= MyCalculatorFactory(some_parameter=2), 
+            calc_factory= MyCalculatorFactory(some_parameter=2),
             param_applier = MyCalculatorParameterApplier(),
             path_to_reference_configuration = "atoms.xyz",
             tag = "my_tag",
@@ -230,7 +230,7 @@ Crucially, the objective function takes only a single ``parameter_applier`` and 
     # ... assume the same definitions for `MyCalculatorFactory` and `MyCalculatorParameterApplier` from above
 
     objective_function = construct_multi_energy_objective_function(
-            calc_factory = MyCalculatorFactory(some_parameter=2), 
+            calc_factory = MyCalculatorFactory(some_parameter=2),
             param_applier = MyCalculatorParameterApplier(),
             path_to_reference_configuration_list = ["atoms_1.xyz", "atoms_2.xyz"],
             tag_list = ["my_tag_1", "my_tag_2"],
