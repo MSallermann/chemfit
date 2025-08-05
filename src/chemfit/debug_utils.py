@@ -2,12 +2,14 @@ import inspect
 from functools import wraps
 from typing import Any, Callable, TypeVar, cast
 
+T = TypeVar("T")
+
 
 def log_invocation(
-    func: Callable, log_func: Callable[[str], None], log_args: bool = True
-):
+    func: Callable[[Any], T], log_func: Callable[[str], None], log_args: bool = True
+) -> Callable[[Any], T]:
     @wraps(func)
-    def wrapped_with_logging(*args, **kwargs):
+    def wrapped_with_logging(*args, **kwargs) -> T:
         log_func(f"Pre {func.__name__}")
         if log_args and len(args) > 0:
             log_func(f"    {args = }")
@@ -30,7 +32,7 @@ def log_all_methods(obj: LoggedObject, log_func: Callable[[str], None]) -> Logge
         def __init__(self, wrapped: LoggedObject):
             super().__setattr__("_wrapped", wrapped)
 
-        def __getattribute__(self, name: str):
+        def __getattribute__(self, name: str) -> Any:
             if name == "_wrapped":
                 return super().__getattribute__(name)
 

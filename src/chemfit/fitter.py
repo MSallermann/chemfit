@@ -33,9 +33,9 @@ class FitInfo:
 
 @dataclass
 class CallbackInfo:
-    opt_params: dict
+    opt_params: dict[str, Any]
     opt_loss: float
-    cur_params: dict
+    cur_params: dict[str, Any]
     cur_loss: float
     step: int
     info: FitInfo
@@ -44,9 +44,9 @@ class CallbackInfo:
 class Fitter:
     def __init__(
         self,
-        objective_function: Callable[[dict], float],
-        initial_params: dict,
-        bounds: dict | None = None,
+        objective_function: Callable[[dict[str, Any]], float],
+        initial_params: dict[str, Any],
+        bounds: dict[str, Any] | None = None,
         near_bound_tol: float | None = None,
         value_bad_params: float = 1e5,
     ) -> None:
@@ -103,11 +103,11 @@ class Fitter:
         """
         self.callbacks.append((func, n_steps))
 
-    def ob_func_wrapper(self, ob_func: Any) -> Callable[[dict], float]:
+    def ob_func_wrapper(self, ob_func: Any) -> Callable[[dict[str, Any]], float]:
         """Wraps the objective function and applies some checks plus logging."""
 
         @wraps(ob_func)
-        def wrapped_ob_func(params: dict) -> float:
+        def wrapped_ob_func(params: dict[str, Any]) -> float:
             # first we try if we can get a value at all
             try:
                 value = ob_func(params)
@@ -187,7 +187,7 @@ class Fitter:
         self.info.n_evals = 0
         self.time_fit_start = time.time()
 
-    def hook_post_fit(self, opt_params: dict):
+    def hook_post_fit(self, opt_params: dict[str, Any]):
         """A hook, which is invoked after optimizing."""
         self.time_fit_end = time.time()
         self.info.time_taken = self.time_fit_end - self.time_fit_start
@@ -218,7 +218,7 @@ class Fitter:
 
     def fit_nevergrad(
         self, budget: int, optimizer_str: str = "NgIohTuned", **kwargs
-    ) -> dict:
+    ) -> dict[str, Any]:
         self.hook_pre_fit()
 
         flat_bounds = flatten_dict(self.bounds)
@@ -242,8 +242,8 @@ class Fitter:
 
         optimizer = OptimizerCls(parametrization=instru, budget=budget)
 
-        def f_ng(p: dict):
-            params = unflatten_dict(p)
+        def f_ng(p: dict[str, Any]) -> float:
+            params = unflatten_dict(p, dict_factory=dict[str, Any])
             return self.objective_function(params)
 
         callback, n_steps = self._produce_callback()
@@ -278,8 +278,10 @@ class Fitter:
                 args, kwargs = recommendation.value
                 flat_opt_params = args[0]
 
-                opt_params = unflatten_dict(flat_opt_params)
-                cur_params = unflatten_dict(flat_params)
+                opt_params = unflatten_dict(
+                    flat_opt_params, dict_factory=dict[str, Any]
+                )
+                cur_params = unflatten_dict(flat_params, dict_factory=dict[str, Any])
 
                 callback(
                     CallbackInfo(
@@ -304,13 +306,13 @@ class Fitter:
         else:  # otherwise we compute the optimal loss
             self.info.final_value = self.objective_function(flat_opt_params)
 
-        opt_params = unflatten_dict(flat_opt_params)
+        opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
 
         self.hook_post_fit(opt_params)
 
         return opt_params
 
-    def fit_scipy(self, method: str = "L-BFGS-B", **kwargs) -> dict:
+    def fit_scipy(self, method: str = "L-BFGS-B", **kwargs) -> dict[str, Any]:
         """
         Optimize parameters using SciPy's minimize function.
 
@@ -368,7 +370,7 @@ class Fitter:
         # by zipping it with the captured flattened keys and then unflattens the dictionary
         # to pass it to the objective functions
         def f_scipy(x: npt.NDArray) -> float:
-            p = unflatten_dict(dict(zip(self._keys, x)))
+            p = unflatten_dict(dict(zip(self._keys, x)), dict_factory=dict[str, Any])
             return self.objective_function(p)
 
         # Then we need to handle some awkwardness:
@@ -386,11 +388,11 @@ class Fitter:
                 callback: Callable[[CallbackInfo], None],
                 n_steps: int,
             ) -> None:
-                self._step = 0
+                self._step: int = 0
                 self._keys = keys
                 self._info = info
                 self._callback = callback
-                self._n_steps = n_steps
+                self._n_steps: int = n_steps
 
             def __call__(self, intermediate_result: OptimizeResult):
                 # This callback is executed after *every* iteration

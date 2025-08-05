@@ -13,7 +13,7 @@ from .scme_setup import (
 class SCMECalculatorFactory:
     def __init__(
         self,
-        default_scme_params: dict,
+        default_scme_params: dict[str, Any],
         path_to_scme_expansions: Path,
         parametrization_key: str,
     ) -> None:
@@ -36,7 +36,7 @@ class SCMECalculatorFactory:
 
 
 class SCMEParameterApplier:
-    def __call__(self, atoms: Atoms, params: dict) -> None:
+    def __call__(self, atoms: Atoms, params: dict[str, Any]) -> None:
         """Assign SCME parameter values to the attached calculator."""
         assert atoms.calc is not None
         atoms.calc.apply_params(params)

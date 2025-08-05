@@ -59,7 +59,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def __enter__(self):
         return self
 
-    def worker_process_params(self, params: dict):
+    def worker_process_params(self, params: dict[str, Any]):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
         # Therefore, the error handling needs to be slightly different,
         # and we try to suppress general exceptions instead of re-raising them
@@ -67,6 +67,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         # The reason that it makes no sense is that these  exceptions are connected to being unable to construct internals
         # of the objective functions.
         # (remember due to lazy evaluation such constructions can happen inside `__call__`)
+        local_total = float("Nan")
         try:
             # First we try to obtain a value the normal way
             local_total = self.cob(params, idx_slice=slice(self.start, self.end))
@@ -79,7 +80,6 @@ class MPIWrapperCOB(ObjectiveFunctor):
                 local_total = float("NaN")
         except FactoryException as e:
             # If we catch a factory exception we should just crash the code
-            local_total = float("NaN")
             logger.exception(e, stack_info=True, stacklevel=2)
             raise e  # <-- from here we enter the __exit__ method, the worker rank will crash and consequently all processes are stopped
         except Exception as e:
@@ -91,7 +91,6 @@ class MPIWrapperCOB(ObjectiveFunctor):
                 stack_info=True,
                 stacklevel=2,
             )
-            local_total = float("NaN")
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on the master rank
@@ -114,10 +113,10 @@ class MPIWrapperCOB(ObjectiveFunctor):
                 if signal == Signal.GATHER_META_DATA:
                     self.worker_gather_meta_data()
                 elif isinstance(signal, dict):
-                    params = signal
+                    params: dict[str, Any] = signal
                     self.worker_process_params(params)
 
-    def gather_meta_data(self) -> list[dict | None]:
+    def gather_meta_data(self) -> list[dict[str, Any] | None]:
         # Ensure only rank 0 can call this
         if self.rank != 0:
             msg = "`gather_meta_data` can only be used on rank 0"
@@ -131,14 +130,14 @@ class MPIWrapperCOB(ObjectiveFunctor):
         gathered = self.comm.gather(local_meta_data)
 
         # Since gathered will now be a list of list, we unpack it
-        total_meta_data = []
+        total_meta_data: list[dict[str, Any] | None] = []
 
         if gathered is not None:
             [total_meta_data.extend(m) for m in gathered]
 
         return total_meta_data
 
-    def get_meta_data(self) -> dict:
+    def get_meta_data(self) -> dict[str, Any]:
         d = self.cob.get_meta_data()
         d["type"] = type(self).__name__
         return d
@@ -153,17 +152,16 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         self.comm.bcast(params, root=0)
 
+        local_total = float("NaN")
         try:
             local_total = self.cob(params, idx_slice=slice(self.start, self.end))
         except FactoryException as e:
             # If we catch a factory exception we should just crash the code
-            local_total = float("NaN")
             raise e
         except Exception as e:
             # If an exception occurs on the master rank, we set the local total to "NaN"
             # (so that the later reduce works fine and gives NaN)
             # then we simply re-raise and the exception can be handled higher up (or not)
-            local_total = float("NaN")
             raise e
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks

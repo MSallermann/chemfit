@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Callable
+from typing import Any, Callable
 
 from typing_extensions import Self
 
@@ -21,7 +21,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
     def __init__(
         self,
-        objective_functions: Sequence[Callable[[dict], float]],
+        objective_functions: Sequence[Callable[[dict[str, Any]], float]],
         weights: Sequence[float] | None = None,
     ) -> None:
         """
@@ -41,7 +41,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         """
         # Convert to list internally for mutability
-        self.objective_functions: list[Callable[[dict], float]] = list(
+        self.objective_functions: list[Callable[[dict[str, Any]], float]] = list(
             objective_functions
         )
 
@@ -70,7 +70,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
     def add(
         self,
-        obj_funcs: Sequence[Callable[[dict], float]] | Callable[[dict], float],
+        obj_funcs: (
+            Sequence[Callable[[dict[str, Any]], float]]
+            | Callable[[dict[str, Any]], float]
+        ),
         weights: Sequence[float] | float = 1.0,
     ) -> Self:
         """
@@ -173,7 +176,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         # Ensure all scaling weights are non-negative
         assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
 
-        total_objective_functions: list[Callable[[dict], float]] = []
+        total_objective_functions: list[Callable[[dict[str, Any]], float]] = []
         total_weights: list[float] = []
 
         for sub_cob, scale in zip(combined_objective_functions_list, weights):
@@ -188,7 +191,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return cls(total_objective_functions, total_weights)
 
-    def __call__(self, params: dict, idx_slice: slice = DEFAULT_SLICE) -> float:
+    def __call__(
+        self, params: dict[str, Any], idx_slice: slice = DEFAULT_SLICE
+    ) -> float:
         """
         Evaluate the combined objective at a given parameter dictionary.
 
@@ -213,10 +218,12 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return total
 
-    def get_meta_data(self) -> dict:
+    def get_meta_data(self) -> dict[str, Any]:
         return {"n_terms": self.n_terms(), "type": type(self).__name__}
 
-    def gather_meta_data(self, idx_slice: slice = DEFAULT_SLICE) -> list[dict | None]:
+    def gather_meta_data(
+        self, idx_slice: slice = DEFAULT_SLICE
+    ) -> list[dict[str, Any] | None]:
         """
         Gather the meta data of each term and append it to a list.
 
