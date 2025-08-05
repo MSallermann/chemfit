@@ -257,7 +257,7 @@ class Fitter:
                 flat_params = flat_initial_params
                 cur_loss = self.info.initial_value
                 p = optimizer.parametrization.spawn_child()
-                p.value = (  # type: ignore  # noqa: PGH003
+                p.value = (  # type: ignore
                     (flat_params,),
                     {},
                 )

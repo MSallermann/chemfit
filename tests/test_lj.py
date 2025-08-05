@@ -1,5 +1,8 @@
 try:
     import mpi4py
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
+
 except ImportError:
     mpi4py = None
 
@@ -48,8 +51,6 @@ def test_lj():
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_lj_mpi():
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     ### Construct the objective function on *all* ranks
     eps = 1.0
     sigma = 1.0

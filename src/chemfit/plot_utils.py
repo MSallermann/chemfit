@@ -1,8 +1,10 @@
+from collections.abc import Sequence
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.axes import Axes
 
 
 def plot_progress_curve(progress: list[float], outpath: Path) -> None:
@@ -19,7 +21,7 @@ def plot_progress_curve(progress: list[float], outpath: Path) -> None:
     plt.close()
 
 
-def tags_as_ticks(ax: plt.Axes, tags: list[str], **kwargs):
+def tags_as_ticks(ax: Axes, tags: list[str], **kwargs):
     ax.set_xticks(range(len(tags)))
     ax.set_xticklabels(tags, rotation=90, **kwargs)
 
@@ -57,7 +59,11 @@ def plot_energies(
 
     ax.legend()
     ax.set_ylabel("energy [eV] / n_atoms")
+
+    assert tags is Sequence[str]
+
     tags_as_ticks(ax, tags)
+
     fig.tight_layout()
     fig.savefig(output_folder / "plot_energy.png", dpi=300)
     plt.close()

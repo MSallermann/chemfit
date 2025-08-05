@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from collections.abc import Sequence as ABCSequence
 from typing import Callable
 
 from typing_extensions import Self
@@ -101,7 +100,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         """
         # Determine how many new functions are being added
-        if isinstance(obj_funcs, ABCSequence) and not callable(obj_funcs):
+        if isinstance(obj_funcs, Sequence) and not callable(obj_funcs):
             funcs_to_add = list(obj_funcs)  # type: ignore[assignment]
         else:
             funcs_to_add = [obj_funcs]  # type: ignore[assignment]
@@ -111,7 +110,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             self.objective_functions.append(fn)
 
         # Handle weights
-        if isinstance(weights, ABCSequence) and not isinstance(weights, (str, bytes)):
+        if isinstance(weights, Sequence) and not isinstance(weights, (str, bytes)):
             weights_to_add = list(weights)  # type: ignore[assignment]
             # Must match number of new functions
             assert len(weights_to_add) == len(funcs_to_add), (

@@ -38,4 +38,5 @@ class SCMECalculatorFactory:
 class SCMEParameterApplier:
     def __call__(self, atoms: Atoms, params: dict) -> None:
         """Assign SCME parameter values to the attached calculator."""
+        assert atoms.calc is not None
         atoms.calc.apply_params(params)

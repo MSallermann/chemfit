@@ -132,7 +132,9 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         # Since gathered will now be a list of list, we unpack it
         total_meta_data = []
-        [total_meta_data.extend(m) for m in gathered]
+
+        if gathered is not None:
+            [total_meta_data.extend(m) for m in gathered]
 
         return total_meta_data
 
@@ -141,7 +143,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         d["type"] = type(self).__name__
         return d
 
-    def __call__(self, params: dict) -> float | None:
+    def __call__(self, params: dict[str, Any]) -> float:
         # Function to evaluate the objective function, to be called from rank 0
 
         # Ensure only rank 0 can call this
@@ -167,6 +169,9 @@ class MPIWrapperCOB(ObjectiveFunctor):
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank
             global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+            if global_total is None:
+                global_total = float("NaN")
+
         return global_total
 
     def __exit__(

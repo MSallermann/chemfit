@@ -3,8 +3,12 @@ from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 try:
     import mpi4py
+
+    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 except ImportError:
     mpi4py = None
+
+import logging
 
 import pytest
 
@@ -47,10 +51,6 @@ def test_gather_meta_data():
 
 @pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_gather_meta_data_mpi():
-    import logging
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
     cob = CombinedObjectiveFunction(
         [a, MyFunctor(1), MyFunctor(2)]
     )  # is equivalent to y**2 + x**2 + 2.0*x**2

@@ -10,7 +10,7 @@ DEFAULT_SLICE = slice(None, None, None)
 
 def process_csv(
     paths_to_csv: Path | Sequence[Path],
-    index: slice | list[slice] = DEFAULT_SLICE,
+    index: slice | Sequence[slice] = DEFAULT_SLICE,
 ) -> tuple[list[Path], list[str], list[float]]:
     """
     Load a dataset CSV and extract file paths, tags, and reference energies.

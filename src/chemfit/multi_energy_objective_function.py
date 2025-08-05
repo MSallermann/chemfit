@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 def construct_multi_energy_objective_function(
     calc_factory: CalculatorFactory,
     param_applier: ParameterApplier,
-    tag_list: list[str],
-    reference_energy_list: list[float],
-    path_or_factory_list: list[Path | AtomsFactory],
+    tag_list: Sequence[str],
+    reference_energy_list: Sequence[float],
+    path_or_factory_list: Sequence[Path | AtomsFactory],
     weight_cb: (
-        None | list[Callable[[Atoms], float] | None] | Callable[[Atoms], float]
+        None | Sequence[Callable[[Atoms], float] | None] | Callable[[Atoms], float]
     ) = None,
-    weight_list: list[float] | None = None,
-    atom_post_processor_list: list[AtomsPostProcessor] | None = None,
+    weight_list: Sequence[float] | None = None,
+    atom_post_processor_list: Sequence[AtomsPostProcessor | None] | None = None,
 ) -> CombinedObjectiveFunction:
     """
     Initialize a CombinedObjectiveFunction by constructing individual EnergyObjectiveFunctions.
