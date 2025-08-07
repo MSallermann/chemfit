@@ -21,6 +21,12 @@ Repository = "https://github.com/MSallermann/chemfit"
 build_docs = ["sphinx", "furo", "sphinxcontrib-napoleon", "sphinx-autobuild"]
 mpi = ["mpi4py"]
 
+[tool.pyright]
+include = ["src/chemfit"]
+defineConstant = { DEBUG = true }
+stubPath = "src/stubs"
+strict = []
+
 [tool.ruff.lint]
 select = ['ALL']
 exclude = ["docs/*", "noxfile.py"]
