@@ -23,6 +23,7 @@ from ase.units import Bohr
 from chemfit.ase_objective_function import (
     DimerDistanceObjectiveFunction,
     EnergyObjectiveFunction,
+    KabschObjectiveFunction,
 )
 from chemfit.data_utils import process_csv
 from chemfit.fitter import Fitter
@@ -148,6 +149,28 @@ def test_dimer_distance_objective_function():
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": True})
     print(f"{optimal_params = }")
+    print(f"{fitter.info = }")
+    print(f"{ob.get_meta_data() = }")
+
+
+@pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
+def test_kabsch_objective_function():
+    ob = KabschObjectiveFunction(
+        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+        param_applier=SCMEParameterApplier(),
+        path_to_reference_configuration=REFERENCE_CONFIGS[5],
+        dt=1.0,
+        max_steps=500,
+        tag="kabsch",
+    )
+
+    fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
+
+    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": True})
+
+    print(f"{optimal_params = }")
+    print(f"{fitter.info}")
+    print(f"{ob.get_meta_data() = }")
 
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
@@ -163,7 +186,7 @@ def test_multi_energy_ob_function_fitting():
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=0, options={"maxiter": 50, "disp": True})
+    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": False})
     print(f"{optimal_params = }")
     print(f"time taken = {fitter.info.time_taken} seconds")
 
@@ -193,8 +216,8 @@ def test_multi_energy_ob_function_fitting_mpi():
             ob_mpi.worker_loop()
 
 
-if __name__ == "__main__":
-    # test_single_energy_objective_function()
-    # test_dimer_distance_objective_function()
-    # test_multi_energy_ob_function_fitting()
-    test_multi_energy_ob_function_fitting_mpi()
+# if __name__ == "__main__":
+#     # test_single_energy_objective_function()
+#     # test_dimer_distance_objective_function()
+#     # test_multi_energy_ob_function_fitting()
+#     # test_multi_energy_ob_function_fitting_mpi()
