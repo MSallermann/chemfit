@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, cast
 
 import numpy as np
 from ase import Atoms
@@ -281,8 +281,9 @@ class ASEObjectiveFunction(ObjectiveFunctor):
 
         assert self.atoms.calc is not None
         self.atoms.calc.calculate(self.atoms)
-
-        self._last_energy = float(self.atoms.get_potential_energy())
+        e = self.atoms.get_potential_energy()
+        cast("float", e)
+        self._last_energy = float(e)
 
         return self._last_energy
 
@@ -449,7 +450,9 @@ class DimerDistanceObjectiveFunction(StructureObjectiveFunction):
 
     def __call__(self, parameters: dict[str, Any]) -> float:
         self.relax_structure(parameters)
-        self.OO_distance = self.atoms.get_distance(0, 3, mic=True)
+        self.OO_distance = cast(
+            "float", self.atoms.get_distance(0, 3, mic=True)
+        )  # Missing type hint in ASE
         diff = self.OO_distance - self.reference_OO_distance
         return self.weight * diff**2
 
