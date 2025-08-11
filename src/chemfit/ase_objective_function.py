@@ -85,13 +85,6 @@ class ASEObjectiveFunction(ObjectiveFunctor):
     This class loads a reference configuration, optionally post-processes the structure,
     attaches a calculator, and provides an interface for evaluating energies
     given a set of parameters.
-
-    Attributes:
-        calc_factory (CalculatorFactory): Factory to create ASE calculators.
-        param_applier (ParameterApplier): Function to apply parameters to the calculator.
-        atoms_post_processor (Optional[AtomsPostProcessor]): Optional hook to process Atoms.
-        tag (str): Label for this objective function.
-
     """
 
     def __init__(
@@ -324,16 +317,10 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         """
         Initialize an EnergyObjectiveFunction.
 
+        See `ASEObjectiveFunction.__init__` for shared parameters.
+
         Args:
-            calc_factory: Factory to create an ASE calculator.
-            param_applier: Function to apply parameters.
-            path_to_reference_configuration: Path to the reference configuration.
-            reference_energy: Target energy for the objective.
-            tag: Optional label for this objective.
-            weight: Base weight for the error term.
-            weight_cb: Optional weight-scaling callback.
-            atoms_factory: Optional function to process the Atoms object after loading.
-            atoms_post_processor: Optional function to process the Atoms object after loading.
+            reference_energy : The energy of the reference configurations. AKA the target energy.
 
         """
         self.reference_energy = reference_energy
