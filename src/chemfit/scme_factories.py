@@ -1,4 +1,9 @@
-from pathlib import Path
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 from typing import Any
 
 from ase import Atoms
@@ -14,8 +19,8 @@ class SCMECalculatorFactory:
     def __init__(
         self,
         default_scme_params: dict[str, Any],
-        path_to_scme_expansions: Path,
-        parametrization_key: str,
+        path_to_scme_expansions: Path | None,
+        parametrization_key: str | None,
     ) -> None:
         """Create an SCME calculator."""
         self.default_scme_params = default_scme_params

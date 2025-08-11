@@ -9,6 +9,7 @@ from ase import Atoms
 from ase.io import read, write
 from ase.optimize import BFGS
 
+from chemfit import kabsch
 from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.exceptions import FactoryException
 from chemfit.utils import dump_dict_to_file
@@ -368,19 +369,17 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
         return error * self.weight
 
 
-class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
-    """Objective that relaxes a water dimer and compares its O-O distance to a target."""
+class StructureObjectiveFunction(ASEObjectiveFunction):
+    """Objective that relaxes compares minimum energy structures."""
 
     def __init__(
         self,
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
-        reference_OO_distance: float,
         path_to_reference_configuration: Path | None = None,
         dt: float = 1e-2,
         fmax: float = 1e-5,
         max_steps: int = 2000,
-        noise_magnitude: float = 0.0,
         tag: str | None = None,
         weight: float = 1.0,
         weight_cb: Callable[[Atoms], float] | None = None,
@@ -394,11 +393,9 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             calc_factory: Factory to create an ASE calculator.
             param_applier: Function to apply calculator parameters.
             path_to_reference_configuration: Path to the water dimer configuration.
-            reference_OO_distance: Target O-O distance.
             dt: Time step for relaxation.
             fmax: Force convergence criterion.
             max_steps: Maximum optimizer steps.
-            noise_magnitude: Amplitude of random noise added to positions.
             tag: Optional label for this objective.
             weight: Base weight for the error term.
             weight_cb: Optional weight-scaling callback.
@@ -406,11 +403,9 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             atoms_post_processor: Optional function to process the Atoms object after loading.
 
         """
-        self.reference_OO_distance = reference_OO_distance
         self.dt = dt
         self.fmax = fmax
         self.max_steps = max_steps
-        self.noise_magnitude = noise_magnitude
         super().__init__(
             calc_factory=calc_factory,
             param_applier=param_applier,
@@ -421,34 +416,11 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
             atoms_factory=atoms_factory,
             atoms_post_processor=atoms_post_processor,
         )
-        self.positions_reference = np.array(self.atoms.positions)
 
-    def get_meta_data(self) -> dict[str, Any]:
-        """
-        Extend metadata with current and target O-O distances.
+        # We load the atoms object and make a copy of its positions
+        self.positions_reference = np.array(self.atoms.positions, copy=True)
 
-        Returns:
-            dict[str, Any]: Metadata including:
-            oo_distance: Current relaxed O-O distance.
-            reference_OO_distance: Target O-O distance.
-
-        """
-        data = super().get_meta_data()
-        data["oo_distance"] = getattr(self, "OO_distance", 0.0)
-        data["reference_OO_distance"] = self.reference_OO_distance
-        return data
-
-    def __call__(self, parameters: dict[str, Any]) -> float:
-        """
-        Apply parameters, optionally add noise, relax the dimer, and compute error.
-
-        Args:
-            parameters: dict of parameter names to float values.
-
-        Returns:
-            float: Weighted squared difference between relaxed and target O-O distances.
-
-        """
+    def relax_structure(self, parameters: dict[str, Any]) -> None:
         self.param_applier(self.atoms, parameters)
         self.atoms.set_velocities(np.zeros((self.n_atoms, 3)))
         self.atoms.set_positions(self.positions_reference)
@@ -456,13 +428,66 @@ class DimerDistanceObjectiveFunction(ASEObjectiveFunction):
         assert self.atoms.calc is not None
         self.atoms.calc.calculate(self.atoms)
 
-        rng = np.random.default_rng()
-        self.atoms.positions += self.noise_magnitude * rng.uniform(
-            -1.0, 1.0, size=self.atoms.positions.shape
-        )
-
-        optimizer = BFGS(self.atoms)
+        optimizer = BFGS(self.atoms, logfile=None)
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
+
+
+class DimerDistanceObjectiveFunction(StructureObjectiveFunction):
+    """Objective function based on the oxygen-oxygen distance in a water dimer."""
+
+    def __init__(self, reference_OO_distance: float, *args, **kwargs):
+        """Initialize objective function with reference distance."""
+
+        self.reference_OO_distance = reference_OO_distance
+        self.OO_distance: float | None = None
+        super().__init__(*args, **kwargs)
+
+    def get_meta_data(self) -> dict[str, Any]:
+        data = super().get_meta_data()
+        data["last_OO_distance"] = self.OO_distance
+        return data
+
+    def __call__(self, parameters: dict[str, Any]) -> float:
+        self.relax_structure(parameters)
         self.OO_distance = self.atoms.get_distance(0, 3, mic=True)
         diff = self.OO_distance - self.reference_OO_distance
         return self.weight * diff**2
+
+
+class KabschObjectiveFunction(StructureObjectiveFunction):
+    """Computes the objective function based on the RMS from Kabsch rotation matrix."""
+
+    def __init__(self, *args, **kwargs):
+        """Initialize the Kabsch objective function."""
+
+        self._kabsch_r: np.ndarray | None = None
+        self._kabsch_t: np.ndarray | None = None
+        self._kabsch_rmsd: float | None = None
+        super().__init__(*args, **kwargs)
+
+    def get_meta_data(self) -> dict[str, Any]:
+        data = super().get_meta_data()
+        data["last_kabsch_r"] = (
+            self._kabsch_r.tolist() if self._kabsch_r is not None else None
+        )
+        data["last_kabsch_t"] = (
+            self._kabsch_t.tolist() if self._kabsch_t is not None else None
+        )
+        data["last_kabsch_rmsd"] = self._kabsch_rmsd
+        return data
+
+    def __call__(self, parameters: dict[str, Any]) -> float:
+        self.relax_structure(parameters)
+
+        self._kabsch_r, self._kabsch_t = kabsch.kabsch(
+            self.atoms.positions, self.positions_reference
+        )
+
+        positions_aligned = kabsch.apply_transform(
+            self.atoms.positions, self._kabsch_r, self._kabsch_t
+        )
+        self._kabsch_rmsd = kabsch.rmsd(positions_aligned, self.positions_reference)
+
+        print(self._kabsch_rmsd)
+
+        return self.weight * self._kabsch_rmsd
