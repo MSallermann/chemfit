@@ -5,7 +5,7 @@ from typing import Any, Callable
 
 from typing_extensions import Self
 
-from chemfit.abstract_objective_function import ObjectiveFunctor
+from chemfit.abstract_objective_function import ObjectiveFunctor, SupportsGetMetaData
 
 DEFAULT_SLICE = slice(None, None, None)
 
@@ -228,17 +228,16 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         Gather the meta data of each term and append it to a list.
 
         If a slice is specified via the index argument the list only contains the results of the slice.
-        If an exception occurs, `None` is appended as a result.
         """
         idx_list = range(self.n_terms())
 
         results = []
         for idx in idx_list[idx_slice]:
             meta_data = None
-            if hasattr(self.objective_functions[idx], "get_meta_data") and callable(
-                self.objective_functions[idx].get_meta_data
-            ):
-                meta_data = self.objective_functions[idx].get_meta_data()
+            ob = self.objective_functions[idx]
+            if isinstance(ob, SupportsGetMetaData):
+                meta_data = ob.get_meta_data()
+
             results.append(meta_data)
 
         return results

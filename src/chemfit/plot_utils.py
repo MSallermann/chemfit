@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -21,7 +22,7 @@ def plot_progress_curve(progress: list[float], outpath: Path) -> None:
     plt.close()
 
 
-def tags_as_ticks(ax: Axes, tags: list[str], **kwargs):
+def tags_as_ticks(ax: Axes, tags: Sequence[str], **kwargs):
     ax.set_xticks(range(len(tags)))
     ax.set_xticklabels(tags, rotation=90, **kwargs)
 
@@ -30,7 +31,9 @@ def plot_energies(
     df: pd.DataFrame,
     output_folder: Path,
 ) -> None:
-    tags = df["tag"]
+    tags = list(df["tag"])
+    cast("list[str]", tags)
+
     energy_ref = df["reference_energy"]
     energy_fit = df["last_energy"]
     n_atoms = df["n_atoms"]
@@ -59,8 +62,6 @@ def plot_energies(
 
     ax.legend()
     ax.set_ylabel("energy [eV] / n_atoms")
-
-    assert tags is Sequence[str]
 
     tags_as_ticks(ax, tags)
 

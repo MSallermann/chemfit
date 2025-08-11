@@ -1,5 +1,5 @@
 import abc
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 
 class ObjectiveFunctor(abc.ABC):
@@ -21,3 +21,8 @@ class ObjectiveFunctor(abc.ABC):
 
         """
         ...
+
+
+@runtime_checkable
+class SupportsGetMetaData(Protocol):
+    def get_meta_data(self) -> dict[str, Any]: ...
