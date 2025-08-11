@@ -371,7 +371,7 @@ class EnergyObjectiveFunction(ASEObjectiveFunction):
 
 
 class StructureObjectiveFunction(ASEObjectiveFunction):
-    """Objective that relaxes compares minimum energy structures."""
+    """Objective that compares the structure of minimum energy configurationss."""
 
     def __init__(
         self,
@@ -388,20 +388,14 @@ class StructureObjectiveFunction(ASEObjectiveFunction):
         atoms_post_processor: AtomsPostProcessor | None = None,
     ) -> None:
         """
-        Initialize a DimerDistanceObjectiveFunction.
+        Initialize a StructureObjectiveFunction.
+
+        See `ASEObjectiveFunction.__init__` for shared parameters.
 
         Args:
-            calc_factory: Factory to create an ASE calculator.
-            param_applier: Function to apply calculator parameters.
-            path_to_reference_configuration: Path to the water dimer configuration.
             dt: Time step for relaxation.
             fmax: Force convergence criterion.
             max_steps: Maximum optimizer steps.
-            tag: Optional label for this objective.
-            weight: Base weight for the error term.
-            weight_cb: Optional weight-scaling callback.
-            atoms_factory: Optional function to create Atoms object.
-            atoms_post_processor: Optional function to process the Atoms object after loading.
 
         """
         self.dt = dt
@@ -436,24 +430,39 @@ class StructureObjectiveFunction(ASEObjectiveFunction):
 class DimerDistanceObjectiveFunction(StructureObjectiveFunction):
     """Objective function based on the oxygen-oxygen distance in a water dimer."""
 
-    def __init__(self, reference_OO_distance: float, *args, **kwargs):
-        """Initialize objective function with reference distance."""
+    def __init__(self, reference_OO_distance: float | None, *args, **kwargs):
+        """
+        Initialize a DimerDistanceObjectiveFunction.
 
-        self.reference_OO_distance = reference_OO_distance
-        self.OO_distance: float | None = None
+        See `StructureObjectiveFunction.__init__` for shared parameters.
+
+        Args:
+            reference_OO_distance: Target distance between oxygens.
+
+        """
+
         super().__init__(*args, **kwargs)
+
+        if reference_OO_distance is None:
+            self.reference_OO_distance = cast(
+                "float", self.atoms.get_distance(0, 3, mic=True)
+            )
+        else:
+            self.reference_OO_distance = reference_OO_distance
+
+        self._OO_distance: float | None = None
 
     def get_meta_data(self) -> dict[str, Any]:
         data = super().get_meta_data()
-        data["last_OO_distance"] = self.OO_distance
+        data["last_OO_distance"] = self._OO_distance
         return data
 
     def __call__(self, parameters: dict[str, Any]) -> float:
         self.relax_structure(parameters)
-        self.OO_distance = cast(
+        self._OO_distance = cast(
             "float", self.atoms.get_distance(0, 3, mic=True)
         )  # Missing type hint in ASE
-        diff = self.OO_distance - self.reference_OO_distance
+        diff = self._OO_distance - self.reference_OO_distance
         return self.weight * diff**2
 
 
@@ -461,7 +470,11 @@ class KabschObjectiveFunction(StructureObjectiveFunction):
     """Computes the objective function based on the RMS from Kabsch rotation matrix."""
 
     def __init__(self, *args, **kwargs):
-        """Initialize the Kabsch objective function."""
+        """
+        Initialize the Kabsch objective function.
+
+        See `StructureObjectiveFunction.__init__` for shared parameters.
+        """
 
         self._kabsch_r: np.ndarray | None = None
         self._kabsch_t: np.ndarray | None = None
@@ -490,7 +503,5 @@ class KabschObjectiveFunction(StructureObjectiveFunction):
             self.atoms.positions, self._kabsch_r, self._kabsch_t
         )
         self._kabsch_rmsd = kabsch.rmsd(positions_aligned, self.positions_reference)
-
-        print(self._kabsch_rmsd)
 
         return self.weight * self._kabsch_rmsd
