@@ -1,18 +1,19 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any, Callable, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
 from ase import Atoms
-from ase.io import read, write
+from ase.calculators.calculator import Calculator
+from ase.io import read
 from ase.optimize import BFGS
 
-from chemfit import kabsch
-from chemfit.abstract_objective_function import ObjectiveFunctor
+from chemfit.abstract_objective_function import QuantityComputer
 from chemfit.exceptions import FactoryException
-from chemfit.utils import dump_dict_to_file
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,14 @@ class AtomsFactory(Protocol):
         ...
 
 
+class QuantitiesProcessor(Protocol):
+    """Protocol for a function that returns the quantities after the `calculate` function."""
+
+    def __call__(
+        self, calc: Calculator, atoms: Atoms | None = None
+    ) -> dict[str, Any]: ...
+
+
 class PathAtomsFactory(AtomsFactory):
     """Implementation of AtomsFactory which reads the atoms from a path."""
 
@@ -79,13 +88,12 @@ class ParameterApplierException(FactoryException): ...
 class AtomsPostProcessorException(FactoryException): ...
 
 
-class ASEObjectiveFunction(ObjectiveFunctor):
+class SinglePointASEComputer(QuantityComputer):
     """
-    Base class for ASE-based objective functions.
+    Base class for a single point ASE-based computer.
 
     This class loads a reference configuration, optionally post-processes the structure,
-    attaches a calculator, and provides an interface for evaluating energies
-    given a set of parameters.
+    attaches a calculator, and provides an interface for evaluating parameters
     """
 
     def __init__(
@@ -94,10 +102,9 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         param_applier: ParameterApplier,
         path_to_reference_configuration: Path | None = None,
         tag: str | None = None,
-        weight: float = 1.0,
-        weight_cb: Callable[[Atoms], float] | None = None,
         atoms_factory: AtomsFactory | None = None,
         atoms_post_processor: AtomsPostProcessor | None = None,
+        quantities_processor: QuantitiesProcessor | None = None,
     ) -> None:
         """
         Initialize an ASEObjectiveFunction.
@@ -108,23 +115,24 @@ class ASEObjectiveFunction(ObjectiveFunctor):
             path_to_reference_configuration: Optional path to an ASE-readable file (e.g., .xyz) containing
                 the molecular configuration. Only the first snapshot is used.
             tag: Optional label for this objective. Defaults to "tag_None" if None.
-            weight: Base weight for this objective. Must be non-negative.
-            weight_cb: Optional callback that returns a non-negative scaling factor
-                given the `Atoms` object. The base weight is multiplied by this factor.
             atoms_factory: Optional[AtomsFactory] Optional function to create the Atoms object.
             atoms_post_processor: Optional function to modify or validate the Atoms object
                 immediately after loading and before attaching the calculator.
+            quantities_processor: this is called after the calculate function to return the
 
         **Important**: One of `atoms_factory` or `path_to_reference_configuration` has to be specified.
         If both are specified `atoms_factory` takes precedence.
 
-        Raises:
-            AssertionError: If `weight` is negative or if `weight_cb` returns a negative value.
-
         """
+
         self.calc_factory = calc_factory
         self.param_applier = param_applier
         self.atoms_post_processor = atoms_post_processor
+
+        if quantities_processor is None:
+            self.quantities_processor = lambda calc, atoms: calc.results  # noqa: ARG005
+        else:
+            self.quantities_processor = quantities_processor
 
         self.tag = tag or "tag_None"
 
@@ -139,25 +147,9 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         else:
             self.atoms_factory = atoms_factory
 
-        self._last_energy: float | None = None
-
         # NOTE: You should probably use the `self.atoms` property
         # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
         self._atoms = None  # <- signals that atoms haven't been loaded yet
-
-        # NOTE: You should probably use the `self.weight` property
-        # The final weight depends on the atoms object which is loaded lazily,
-        # therefore we can only find it after the atoms object has been created
-        self._weight = None  # <- signals that weights haven't been created yet
-
-        # This is the initial weight, which is a simple float so we can just assign it
-        self.weight_init: float = weight
-
-        if self.weight_init < 0:
-            msg = "Weight must be non-negative."
-            raise AssertionError(msg)
-
-        self.weight_cb = weight_cb
 
     def get_meta_data(self) -> dict[str, Any]:
         """
@@ -171,33 +163,15 @@ class ASEObjectiveFunction(ObjectiveFunctor):
                 last_energy: The last computed energy
 
         """
-        return {
-            "tag": self.tag,
-            "n_atoms": self.n_atoms,
-            "weight": self.weight,
-            "last_energy": self._last_energy,
-            "type": type(self).__name__,
-        }
-
-    def write_meta_data(self, path_to_folder: Path, write_config: bool = False) -> None:
-        """
-        Write the reference configuration and metadata to disk.
-
-        Args:
-            path_to_folder: Directory where the .xyz file (if write_config is True) and metadata JSON
-                will be written. The directory is created if it does not exist.
-            write_config: If True, will also write .xyz file for the configuration
-
-        """
-        path_to_folder = Path(path_to_folder)
-        path_to_folder.mkdir(exist_ok=True, parents=True)
-
-        meta_data = self.get_meta_data()
-
-        dump_dict_to_file(path_to_folder / f"meta_{self.tag}.json", meta_data)
-
-        if write_config:
-            write(path_to_folder / f"atoms_{self.tag}.xyz", self.atoms)
+        meta_data = super().get_meta_data()
+        meta_data.update(
+            {
+                "tag": self.tag,
+                "n_atoms": self.n_atoms,
+                "type": type(self).__name__,
+            }
+        )
+        return meta_data
 
     def create_atoms_object(self) -> Atoms:
         """
@@ -243,50 +217,6 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         """The number of atoms in the atoms object. May trigger creation of the atoms object."""
         return len(self.atoms)
 
-    @property
-    def weight(self):
-        """The weight. May trigger creation of the atoms object."""
-        if self._weight is None:
-            self._weight = self.weight_init
-            if self.weight_cb is not None:
-                try:
-                    scale = self.weight_cb(self.atoms)
-                except Exception as e:
-                    scale = 1.0
-                    logger.exception("Could not use weight callback.")
-                    raise e
-
-                if scale < 0:
-                    msg = "Weight callback must return a non-negative scaling factor."
-                    raise AssertionError(msg)
-                self._weight *= scale
-
-        return self._weight
-
-    def compute_energy(self, parameters: dict[str, Any]) -> float:
-        """
-        Compute the potential energy for a given set of parameters.
-
-        Args:
-            parameters: Dictionary of parameter names to float values.
-
-        Returns:
-            float: Potential energy after applying parameters.
-
-        """
-        try:
-            self.param_applier(self.atoms, parameters)
-        except Exception as e:
-            raise ParameterApplierException from e
-
-        assert self.atoms.calc is not None
-        self.atoms.calc.calculate(self.atoms)
-        e = self.atoms.get_potential_energy()
-        cast("float", e)
-        self._last_energy = float(e)
-
-        return self._last_energy
-
     def check_atoms(self, atoms: Atoms) -> bool:  # noqa: ARG002
         """
         Optional hook to validate or correct the Atoms object.
@@ -300,97 +230,40 @@ class ASEObjectiveFunction(ObjectiveFunctor):
         """
         return True
 
-
-class EnergyObjectiveFunction(ASEObjectiveFunction):
-    """Objective function comparing computed energy to a reference energy."""
-
-    def __init__(
-        self,
-        calc_factory: CalculatorFactory,
-        param_applier: ParameterApplier,
-        reference_energy: float,
-        path_to_reference_configuration: Path | None = None,
-        tag: str | None = None,
-        weight: float = 1.0,
-        weight_cb: Callable[[Atoms], float] | None = None,
-        atoms_factory: AtomsFactory | None = None,
-        atoms_post_processor: AtomsPostProcessor | None = None,
-    ) -> None:
+    def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
         """
-        Initialize an EnergyObjectiveFunction.
-
-        See `ASEObjectiveFunction.__init__` for shared parameters.
+        Compute the quantities. This default implementation simply calls the `calculate` function and then returns the results dict from the calculator.
 
         Args:
-            reference_energy : The energy of the reference configurations. AKA the target energy.
+            parameters: Dictionary of parameter names to float values.
 
         """
-        self.reference_energy = reference_energy
-        super().__init__(
-            calc_factory=calc_factory,
-            param_applier=param_applier,
-            path_to_reference_configuration=path_to_reference_configuration,
-            tag=tag,
-            weight=weight,
-            weight_cb=weight_cb,
-            atoms_factory=atoms_factory,
-            atoms_post_processor=atoms_post_processor,
-        )
+        try:
+            self.param_applier(self.atoms, parameters)
+        except Exception as e:
+            raise ParameterApplierException from e
 
-    def get_meta_data(self) -> dict[str, Any]:
-        """
-        Extend parent metadata with reference energy.
+        assert self.atoms.calc is not None
 
-        Returns:
-            dict[str, Any]: Metadata from the parent, plus:
-                reference_energy: Target reference energy.
+        self.atoms.calc.calculate(self.atoms)
 
-        """
-        data = super().get_meta_data()
-        data["reference_energy"] = self.reference_energy
+        quants = self.quantities_processor(self.atoms.calc, self.atoms)
 
-        return data
+        self._last_quantities = quants
 
-    def __call__(self, parameters: dict[str, Any]) -> float:
-        """
-        Compute squared-error contribution to the objective.
-
-        The equation is
-        (E_computed(parameters) - E_reference)^2 * weight.
-
-        Args:
-            parameters: Parameter names to values; applied before energy evaluation.
-
-        Returns:
-            float: Weighted squared difference between computed and reference energies.
-
-        """
-        energy = self.compute_energy(parameters)
-        error = (energy - self.reference_energy) ** 2
-        return error * self.weight
+        return quants
 
 
-class StructureObjectiveFunction(ASEObjectiveFunction):
-    """Objective that compares the structure of minimum energy configurationss."""
+class MinimizationASEComputer(SinglePointASEComputer):
+    """Computer based on the closes local minimum."""
 
     def __init__(
-        self,
-        calc_factory: CalculatorFactory,
-        param_applier: ParameterApplier,
-        path_to_reference_configuration: Path | None = None,
-        dt: float = 1e-2,
-        fmax: float = 1e-5,
-        max_steps: int = 2000,
-        tag: str | None = None,
-        weight: float = 1.0,
-        weight_cb: Callable[[Atoms], float] | None = None,
-        atoms_factory: AtomsFactory | None = None,
-        atoms_post_processor: AtomsPostProcessor | None = None,
+        self, dt: float = 1e-2, fmax: float = 1e-5, max_steps: int = 2000, **kwargs
     ) -> None:
         """
-        Initialize a StructureObjectiveFunction.
+        Initialize a MinimizationASEComputer.
 
-        See `ASEObjectiveFunction.__init__` for shared parameters.
+        All kwargs are passed to `SinglePointASEComputer.__init__`.
 
         Args:
             dt: Time step for relaxation.
@@ -398,110 +271,111 @@ class StructureObjectiveFunction(ASEObjectiveFunction):
             max_steps: Maximum optimizer steps.
 
         """
+
         self.dt = dt
         self.fmax = fmax
         self.max_steps = max_steps
-        super().__init__(
-            calc_factory=calc_factory,
-            param_applier=param_applier,
-            path_to_reference_configuration=path_to_reference_configuration,
-            tag=tag,
-            weight=weight,
-            weight_cb=weight_cb,
-            atoms_factory=atoms_factory,
-            atoms_post_processor=atoms_post_processor,
-        )
+        super().__init__(**kwargs)
 
         # We load the atoms object and make a copy of its positions
         self.positions_reference = np.array(self.atoms.positions, copy=True)
 
     def relax_structure(self, parameters: dict[str, Any]) -> None:
         self.param_applier(self.atoms, parameters)
+
         self.atoms.set_velocities(np.zeros((self.n_atoms, 3)))
         self.atoms.set_positions(self.positions_reference)
 
         assert self.atoms.calc is not None
+
         self.atoms.calc.calculate(self.atoms)
 
         optimizer = BFGS(self.atoms, logfile=None)
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
 
+    def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        # First relax the structure
+        self.relax_structure(parameters=parameters)
 
-class DimerDistanceObjectiveFunction(StructureObjectiveFunction):
-    """Objective function based on the oxygen-oxygen distance in a water dimer."""
-
-    def __init__(self, reference_OO_distance: float | None, *args, **kwargs):
-        """
-        Initialize a DimerDistanceObjectiveFunction.
-
-        See `StructureObjectiveFunction.__init__` for shared parameters.
-
-        Args:
-            reference_OO_distance: Target distance between oxygens.
-
-        """
-
-        super().__init__(*args, **kwargs)
-
-        if reference_OO_distance is None:
-            self.reference_OO_distance = cast(
-                "float", self.atoms.get_distance(0, 3, mic=True)
-            )
-        else:
-            self.reference_OO_distance = reference_OO_distance
-
-        self._OO_distance: float | None = None
-
-    def get_meta_data(self) -> dict[str, Any]:
-        data = super().get_meta_data()
-        data["last_OO_distance"] = self._OO_distance
-        return data
-
-    def __call__(self, parameters: dict[str, Any]) -> float:
-        self.relax_structure(parameters)
-        self._OO_distance = cast(
-            "float", self.atoms.get_distance(0, 3, mic=True)
-        )  # Missing type hint in ASE
-        diff = self._OO_distance - self.reference_OO_distance
-        return self.weight * diff**2
+        # Then call the single point compute function
+        return super()._compute(parameters=parameters)
 
 
-class KabschObjectiveFunction(StructureObjectiveFunction):
-    """Computes the objective function based on the RMS from Kabsch rotation matrix."""
+# class DimerDistanceObjectiveFunction(StructureObjectiveFunction):
+#     """Objective function based on the oxygen-oxygen distance in a water dimer."""
 
-    def __init__(self, *args, **kwargs):
-        """
-        Initialize the Kabsch objective function.
+#     def __init__(self, reference_OO_distance: float | None, *args, **kwargs):
+#         """
+#         Initialize a DimerDistanceObjectiveFunction.
 
-        See `StructureObjectiveFunction.__init__` for shared parameters.
-        """
+#         See `StructureObjectiveFunction.__init__` for shared parameters.
 
-        self._kabsch_r: np.ndarray | None = None
-        self._kabsch_t: np.ndarray | None = None
-        self._kabsch_rmsd: float | None = None
-        super().__init__(*args, **kwargs)
+#         Args:
+#             reference_OO_distance: Target distance between oxygens.
 
-    def get_meta_data(self) -> dict[str, Any]:
-        data = super().get_meta_data()
-        data["last_kabsch_r"] = (
-            self._kabsch_r.tolist() if self._kabsch_r is not None else None
-        )
-        data["last_kabsch_t"] = (
-            self._kabsch_t.tolist() if self._kabsch_t is not None else None
-        )
-        data["last_kabsch_rmsd"] = self._kabsch_rmsd
-        return data
+#         """
 
-    def __call__(self, parameters: dict[str, Any]) -> float:
-        self.relax_structure(parameters)
+#         super().__init__(*args, **kwargs)
 
-        self._kabsch_r, self._kabsch_t = kabsch.kabsch(
-            self.atoms.positions, self.positions_reference
-        )
+#         if reference_OO_distance is None:
+#             self.reference_OO_distance = cast(
+#                 "float", self.atoms.get_distance(0, 3, mic=True)
+#             )
+#         else:
+#             self.reference_OO_distance = reference_OO_distance
 
-        positions_aligned = kabsch.apply_transform(
-            self.atoms.positions, self._kabsch_r, self._kabsch_t
-        )
-        self._kabsch_rmsd = kabsch.rmsd(positions_aligned, self.positions_reference)
+#         self._OO_distance: float | None = None
 
-        return self.weight * self._kabsch_rmsd
+#     def get_meta_data(self) -> dict[str, Any]:
+#         data = super().get_meta_data()
+#         data["last_OO_distance"] = self._OO_distance
+#         return data
+
+#     def __call__(self, parameters: dict[str, Any]) -> float:
+#         self.relax_structure(parameters)
+#         self._OO_distance = cast(
+#             "float", self.atoms.get_distance(0, 3, mic=True)
+#         )  # Missing type hint in ASE
+#         diff = self._OO_distance - self.reference_OO_distance
+#         return self.weight * diff**2
+
+
+# class KabschObjectiveFunction(StructureObjectiveFunction):
+#     """Computes the objective function based on the RMS from Kabsch rotation matrix."""
+
+#     def __init__(self, *args, **kwargs):
+#         """
+#         Initialize the Kabsch objective function.
+
+#         See `StructureObjectiveFunction.__init__` for shared parameters.
+#         """
+
+#         self._kabsch_r: np.ndarray | None = None
+#         self._kabsch_t: np.ndarray | None = None
+#         self._kabsch_rmsd: float | None = None
+#         super().__init__(*args, **kwargs)
+
+#     def get_meta_data(self) -> dict[str, Any]:
+#         data = super().get_meta_data()
+#         data["last_kabsch_r"] = (
+#             self._kabsch_r.tolist() if self._kabsch_r is not None else None
+#         )
+#         data["last_kabsch_t"] = (
+#             self._kabsch_t.tolist() if self._kabsch_t is not None else None
+#         )
+#         data["last_kabsch_rmsd"] = self._kabsch_rmsd
+#         return data
+
+#     def __call__(self, parameters: dict[str, Any]) -> float:
+#         self.relax_structure(parameters)
+
+#         self._kabsch_r, self._kabsch_t = kabsch.kabsch(
+#             self.atoms.positions, self.positions_reference
+#         )
+
+#         positions_aligned = kabsch.apply_transform(
+#             self.atoms.positions, self._kabsch_r, self._kabsch_t
+#         )
+#         self._kabsch_rmsd = kabsch.rmsd(positions_aligned, self.positions_reference)
+
+#         return self.weight * self._kabsch_rmsd
