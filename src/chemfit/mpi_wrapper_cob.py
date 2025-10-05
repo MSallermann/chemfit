@@ -11,7 +11,6 @@ from mpi4py import MPI
 from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.debug_utils import log_all_methods
-from chemfit.exceptions import FactoryException
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +60,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
     def worker_process_params(self, params: dict[str, Any]):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
-        # Therefore, the error handling needs to be slightly different,
-        # and we try to suppress general exceptions instead of re-raising them
-        # We do not suppress `FactoryException`s, however, because, it makes no sense to continue execution.
-        # The reason that it makes no sense is that these exceptions are connected to being unable to construct internals
-        # of the objective functions.
-        # (remember due to lazy evaluation such constructions can happen inside `__call__`)
+        # Therefore, the error handling is slightly different than on rank 0 and we log the exception here before re-raising
         local_total = float("Nan")
         try:
             # First we try to obtain a value the normal way
@@ -78,21 +72,13 @@ class MPIWrapperCOB(ObjectiveFunctor):
                     f"Index ({self.start},{self.end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
                 )
                 local_total = float("NaN")
-        except FactoryException as e:
-            # If we catch a factory exception we should just crash the code
+        except Exception as e:
+            # If we catch an exception we should just crash the code
             logger.exception(e, stack_info=True, stacklevel=2)
             raise e  # <-- from here we enter the __exit__ method, the worker rank will crash and consequently all processes are stopped
-        except Exception as e:
-            # We assume all other exceptions stem from going into bad parameter regions
-            # In such a case we dont propagate the exception, but instead set the local_total to "Nan"
-            # We only log this at the debug level otherwise we might create *huge* log files when the objective function is called in a loop
-            logger.debug(
-                e,
-                stack_info=True,
-                stacklevel=2,
-            )
         finally:
-            # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
+            # Finally, we have to run the reduce.
+            # This must always happen, otherwise, we might cause deadlocks because other ranks might wait on a reduce.
             # Sum up all local_totals into a global_total on the master rank
             _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
 
@@ -110,6 +96,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         # Worker loop: wait for params, compute slice+reduce, repeat
         while True:
+            # receive a signal from rank 0
             signal = self.comm.bcast(None, root=0)
 
             if signal == Signal.ABORT:
@@ -159,14 +146,6 @@ class MPIWrapperCOB(ObjectiveFunctor):
         local_total = float("NaN")
         try:
             local_total = self.cob(params, idx_slice=slice(self.start, self.end))
-        except FactoryException as e:
-            # If we catch a factory exception we should just crash the code
-            raise e
-        except Exception as e:
-            # If an exception occurs on the master rank, we set the local total to "NaN"
-            # (so that the later reduce works fine and gives NaN)
-            # then we simply re-raise and the exception can be handled higher up (or not)
-            raise e
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank

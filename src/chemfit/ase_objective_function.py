@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 from ase import Atoms
@@ -10,7 +10,6 @@ from ase.io import read
 from ase.optimize import BFGS
 
 from chemfit.abstract_objective_function import QuantityComputer
-from chemfit.exceptions import FactoryException
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -18,6 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
 class CalculatorFactory(Protocol):
     """Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`."""
 
@@ -26,6 +26,7 @@ class CalculatorFactory(Protocol):
         ...
 
 
+@runtime_checkable
 class ParameterApplier(Protocol):
     """Protocol for a function that applies parameters to an ASE calculator."""
 
@@ -34,6 +35,7 @@ class ParameterApplier(Protocol):
         ...
 
 
+@runtime_checkable
 class AtomsPostProcessor(Protocol):
     """Protocol for a function that post-processes an ASE Atoms object."""
 
@@ -42,6 +44,7 @@ class AtomsPostProcessor(Protocol):
         ...
 
 
+@runtime_checkable
 class AtomsFactory(Protocol):
     """Protocol for a function that creates an ASE Atoms object."""
 
@@ -50,6 +53,7 @@ class AtomsFactory(Protocol):
         ...
 
 
+@runtime_checkable
 class QuantitiesProcessor(Protocol):
     """Protocol for a function that returns the quantities after the `calculate` function."""
 
@@ -71,21 +75,15 @@ class PathAtomsFactory(AtomsFactory):
 
         if isinstance(atoms, list):
             msg = f"Index {self.index} selects multiple images from path {self.path}. This is not compatible with AtomsFactory."
-            raise AtomsFactoryException(msg)
+            raise Exception(msg)
 
         return atoms
 
 
-class CalculatorFactoryException(FactoryException): ...
-
-
-class AtomsFactoryException(FactoryException): ...
-
-
-class ParameterApplierException(FactoryException): ...
-
-
-class AtomsPostProcessorException(FactoryException): ...
+def check_protocol(obj: Any | None, prot: Any):
+    if obj is not None and not isinstance(obj, prot):
+        msg = f"{obj} does not implement the {prot} protocol"
+        raise Exception(msg)
 
 
 class SinglePointASEComputer(QuantityComputer):
@@ -121,6 +119,14 @@ class SinglePointASEComputer(QuantityComputer):
         If both are specified `atoms_factory` takes precedence.
 
         """
+
+        # Make sure all the protocols are properly implemented
+
+        check_protocol(calc_factory, CalculatorFactory)
+        check_protocol(param_applier, ParameterApplier)
+        check_protocol(atoms_factory, AtomsFactory)
+        check_protocol(atoms_post_processor, AtomsPostProcessor)
+        check_protocol(quantities_processor, QuantitiesProcessor)
 
         self.calc_factory = calc_factory
         self.param_applier = param_applier
@@ -172,24 +178,13 @@ class SinglePointASEComputer(QuantityComputer):
             Atoms: ASE Atoms object with calculator attached.
 
         """
-        try:
-            atoms = self.atoms_factory()
-        except Exception as e:
-            raise AtomsFactoryException from e
+
+        atoms = self.atoms_factory()
 
         if self.atoms_post_processor is not None:
-            try:
-                self.atoms_post_processor(atoms)
-            except Exception as e:
-                raise AtomsPostProcessorException from e
+            self.atoms_post_processor(atoms)
 
-        try:
-            self.calc_factory(atoms)
-        except Exception as e:
-            raise CalculatorFactoryException from e
-
-        if atoms.calc is None:
-            raise CalculatorFactoryException
+        self.calc_factory(atoms)
 
         return atoms
 
@@ -216,10 +211,7 @@ class SinglePointASEComputer(QuantityComputer):
         """
         assert self.atoms.calc is not None
 
-        try:
-            self.param_applier(self.atoms, parameters)
-        except Exception as e:
-            raise ParameterApplierException from e
+        self.param_applier(self.atoms, parameters)
 
         self.atoms.calc.calculate(self.atoms)
 

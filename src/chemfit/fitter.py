@@ -17,7 +17,6 @@ from pydictnest import (
 )
 from scipy.optimize import OptimizeResult, minimize
 
-from chemfit.exceptions import FactoryException
 from chemfit.utils import check_params_near_bounds
 
 logger = logging.getLogger(__name__)
@@ -112,23 +111,14 @@ class Fitter:
             try:
                 value = ob_func(params)
                 self.info.n_evals += 1
-            except FactoryException as e:
-                # If we catch a factory exception we should just crash the code, therefore we re-raise
+            except Exception as e:
+                # If we catch an exception we should just crash the code -> log and re-raise
                 logger.exception(
-                    "Caught factory exception while evaluating objective function.",
+                    "Caught exception while evaluating objective function.",
                     stack_info=True,
                     stacklevel=2,
                 )
                 raise e
-            except Exception:
-                # On a general exception we continue execution, since it might just be a bad parameter region
-                logger.debug(
-                    f"Caught exception with {params = }. Clipping loss to {self.value_bad_params}",
-                    exc_info=True,
-                    stack_info=True,
-                    stacklevel=2,
-                )
-                value = self.value_bad_params
 
             # then we make sure that the value is a float
             if not isinstance(value, Real):
