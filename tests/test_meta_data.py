@@ -1,16 +1,7 @@
+import pytest
+
 from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-
-try:
-    import mpi4py
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-except ImportError:
-    mpi4py = None
-
-import logging
-
-import pytest
 
 
 class MyFunctor(ObjectiveFunctor):
@@ -49,20 +40,15 @@ def test_gather_meta_data():
     assert meta_data == expected
 
 
-@pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_gather_meta_data_mpi():
+    mpi_wrapper_cob = pytest.importorskip("chemfit.mpi_wrapper_cob")
+
     cob = CombinedObjectiveFunction(
         [a, MyFunctor(1), MyFunctor(2)]
     )  # is equivalent to y**2 + x**2 + 2.0*x**2
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    with MPIWrapperCOB(cob, mpi_debug_log=False) as ob_mpi:
-        logging.basicConfig(
-            filename=f"meta_data_{ob_mpi.rank}.log",
-            filemode="w",
-            force=False,
-            level=logging.INFO,
-        )
+    with mpi_wrapper_cob.MPIWrapperCOB(cob, mpi_debug_log=False) as ob_mpi:
         if ob_mpi.rank == 0:
             ob_mpi(INITIAL_PARAMS)
             meta_data = ob_mpi.gather_meta_data()

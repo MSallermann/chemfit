@@ -1,11 +1,3 @@
-try:
-    import mpi4py
-
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-
-except ImportError:
-    mpi4py = None
-
 import functools
 
 import numpy as np
@@ -63,8 +55,11 @@ def test_lj():
     assert np.isclose(opt_params["sigma"], sigma)
 
 
-@pytest.mark.skipif(mpi4py is None, reason="Cannot import mpi4py")
 def test_lj_mpi():
+    mpi_wrapper_cob = pytest.importorskip(
+        "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
+    )
+
     ### Construct the objective function on *all* ranks
     eps = 1.0
     sigma = 1.0
@@ -74,7 +69,7 @@ def test_lj_mpi():
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    with MPIWrapperCOB(ob) as mpi:
+    with mpi_wrapper_cob.MPIWrapperCOB(ob) as mpi:
         if mpi.rank == 0:
             fitter = Fitter(mpi, initial_params=initial_params)
             opt_params = fitter.fit_scipy()
