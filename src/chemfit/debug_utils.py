@@ -6,7 +6,10 @@ T = TypeVar("T")
 
 
 def log_invocation(
-    func: Callable[[Any], T], log_func: Callable[[str], None], log_args: bool = True
+    func: Callable[[Any], T],
+    log_func: Callable[[str], None],
+    log_args: bool = True,
+    log_res: bool = True,
 ) -> Callable[[Any], T]:
     @wraps(func)
     def wrapped_with_logging(*args, **kwargs) -> T:
@@ -16,6 +19,8 @@ def log_invocation(
         if log_args and len(kwargs) > 0:
             log_func(f"    {kwargs = }")
         res = func(*args, **kwargs)
+        if log_res:
+            log_func(f"    {res = }")
         log_func(f"Post {func.__name__}")
         return res
 
@@ -25,7 +30,9 @@ def log_invocation(
 LoggedObject = TypeVar("LoggedObject", bound=object)
 
 
-def log_all_methods(obj: LoggedObject, log_func: Callable[[str], None]) -> LoggedObject:
+def log_all_methods(
+    obj: LoggedObject, log_func: Callable[[str], None], *args, **kwargs
+) -> LoggedObject:
     """Return a proxy object that logs method calls and delegates everything to `obj`."""
 
     class Proxy:
@@ -41,7 +48,7 @@ def log_all_methods(obj: LoggedObject, log_func: Callable[[str], None]) -> Logge
 
             if inspect.ismethod(attr) or inspect.isfunction(attr):
                 # Use your log_invocation directly
-                return log_invocation(attr, log_func)
+                return log_invocation(attr, log_func, *args, **kwargs)
             return attr
 
         def __setattr__(self, name: str, value: Any):
@@ -54,6 +61,16 @@ def log_all_methods(obj: LoggedObject, log_func: Callable[[str], None]) -> Logge
                 delattr(wrapped, name)
             except AttributeError:
                 super().__delattr__(name)
+
+        def __call__(self, *args, **kwargs):
+            wrapped = super().__getattribute__("_wrapped")
+
+            if not callable(wrapped):
+                msg = "Wrapped object is not callable"
+                raise Exception(msg)
+
+            tmp = log_invocation(wrapped.__call__, log_func, *args, **kwargs)
+            return tmp(*args, **kwargs)
 
         def __dir__(self):
             wrapped = super().__getattribute__("_wrapped")
