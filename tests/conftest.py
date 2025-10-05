@@ -1,8 +1,3 @@
-try:
-    import mpi4py
-except ImportError:
-    mpi4py = None
-
 import numpy as np
 from ase import Atoms
 from ase.calculators.lj import LennardJones
