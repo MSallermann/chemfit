@@ -18,18 +18,22 @@ from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.fitter import Fitter
 
 
-class LJComputer(SinglePointASEComputer):
-    def __init__(self, r: float):  # noqa: D107
-        super().__init__(
-            calc_factory=construct_lj,
-            param_applier=apply_params_lj,
-            atoms_factory=LJAtomsFactory(r),
-            tag=f"lj_{r:.2f}",
-        )
-
-
 def loss_function(quants: dict, e_ref: float):
     return (quants["energy"] - e_ref) ** 2
+
+
+def lj_ob_term(r: float, eps: float, sigma: float) -> QuantityComputerObjectiveFunction:
+    computer = SinglePointASEComputer(
+        calc_factory=construct_lj,
+        param_applier=apply_params_lj,
+        atoms_factory=LJAtomsFactory(r),
+        tag="lj_{r}",
+    )
+
+    return QuantityComputerObjectiveFunction(
+        loss_function=functools.partial(loss_function, e_ref=e_lj(r, eps, sigma)),
+        quantity_computer=computer,
+    )
 
 
 def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:
@@ -37,13 +41,7 @@ def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
     return CombinedObjectiveFunction(
-        objective_functions=[
-            QuantityComputerObjectiveFunction(
-                functools.partial(loss_function, e_ref=e_lj(r, eps, sigma)),
-                quantity_computer=LJComputer(r),
-            )
-            for r in r_list
-        ]
+        objective_functions=[lj_ob_term(r, eps, sigma) for r in r_list]
     )
 
 
@@ -58,7 +56,6 @@ def test_lj():
     fitter = Fitter(ob, initial_params=initial_params)
     opt_params = fitter.fit_scipy()
 
-    ob.gather_meta_data()
     meta_data = ob.gather_meta_data()
 
     assert ob.n_terms() == len(meta_data)
