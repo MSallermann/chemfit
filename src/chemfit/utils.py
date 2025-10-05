@@ -36,12 +36,6 @@ def dump_dict_to_file(file: Path, dictionary: dict) -> None:
         json.dump(dictionary, f, indent=4, cls=ExtendedJSONEncoder)
 
 
-def create_initial_params(
-    adjustable_params: list[str], default_params: dict[str, Any]
-) -> dict[str, float]:
-    return {k: dict(default_params)[k] for k in adjustable_params}
-
-
 def check_params_near_bounds(
     params: dict[str, Any],
     bounds: dict[str, Any],
