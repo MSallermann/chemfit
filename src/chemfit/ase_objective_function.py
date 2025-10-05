@@ -129,7 +129,10 @@ class SinglePointASEComputer(QuantityComputer):
         self.atoms_post_processor = atoms_post_processor
 
         if quantities_processor is None:
-            self.quantities_processor = lambda calc, atoms: calc.results  # noqa: ARG005
+            self.quantities_processor = lambda calc, atoms: {
+                **calc.results,
+                "n_atoms": len(atoms),
+            }
         else:
             self.quantities_processor = quantities_processor
 
