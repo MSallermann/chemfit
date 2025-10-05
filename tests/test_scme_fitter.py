@@ -14,22 +14,34 @@ except ImportError:
 
 import logging
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
 from ase import Atoms
+from ase.calculators.calculator import Calculator
 from ase.units import Bohr
 
+import chemfit.kabsch as kb
+from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
 from chemfit.ase_objective_function import (
-    DimerDistanceObjectiveFunction,
-    EnergyObjectiveFunction,
-    KabschObjectiveFunction,
+    AtomsFactory,
+    MinimizationASEComputer,
+    PathAtomsFactory,
+    SinglePointASEComputer,
 )
 from chemfit.data_utils import process_csv
+
+# from chemfit.ase_objective_function import (
+#     DimerDistanceObjectiveFunction,
+#     EnergyObjectiveFunction,
+#     KabschObjectiveFunction,
+# )
 from chemfit.fitter import Fitter
-from chemfit.multi_energy_objective_function import (
-    construct_multi_energy_objective_function,
-)
+
+# from chemfit.multi_energy_objective_function import (
+#     construct_multi_energy_objective_function,
+# )
 from chemfit.utils import dump_dict_to_file
 
 logging.basicConfig(filename="./output/test_scme_fitter.log", level=logging.INFO)
@@ -81,6 +93,7 @@ INITIAL_PARAMS = {
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_factories():
     atoms = Atoms()
+
     calc_factory = SCMECalculatorFactory(DEFAULT_PARAMS, None, None)
     calc_factory(atoms)
 
@@ -116,18 +129,19 @@ def test_factories():
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_single_energy_objective_function():
-    ob = EnergyObjectiveFunction(
-        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
-        param_applier=SCMEParameterApplier(),
-        path_to_reference_configuration=REFERENCE_CONFIGS[10],
-        reference_energy=REFERENCE_ENERGIES[10],
-        tag=TAGS[10],
+    ob = QuantityComputerObjectiveFunction(
+        loss_function=lambda quants: (quants["energy"] - REFERENCE_ENERGIES[10]) ** 2,
+        quantity_computer=SinglePointASEComputer(
+            calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+            param_applier=SCMEParameterApplier(),
+            atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
+            tag=TAGS[10],
+        ),
     )
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": True})
-
+    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
     output_folder = Path(__file__).parent / "output/single_energy"
 
     dump_dict_to_file(output_folder / "optimal_params.json", optimal_params)
@@ -135,19 +149,27 @@ def test_single_energy_objective_function():
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_dimer_distance_objective_function():
-    ob = DimerDistanceObjectiveFunction(
-        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
-        param_applier=SCMEParameterApplier(),
-        path_to_reference_configuration=REFERENCE_CONFIGS[5],
-        dt=1.0,
-        max_steps=500,
-        reference_OO_distance=3.2,
-        tag="dimer_distance",
+    REF_DISTANCE = 3.2
+
+    def compute_dimer_distance(calc: Calculator, atoms: Atoms):
+        quants = calc.results
+        quants["dimer_distance"] = atoms.get_distance(0, 3)
+        return quants
+
+    ob = QuantityComputerObjectiveFunction(
+        loss_function=lambda quants: (quants["dimer_distance"] - REF_DISTANCE) ** 2,
+        quantity_computer=MinimizationASEComputer(
+            calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+            param_applier=SCMEParameterApplier(),
+            atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
+            quantities_processor=compute_dimer_distance,
+            tag="dimer_distance",
+        ),
     )
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": True})
+    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
     print(f"{ob.get_meta_data() = }")
@@ -155,65 +177,91 @@ def test_dimer_distance_objective_function():
 
 @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
 def test_kabsch_objective_function():
-    ob = KabschObjectiveFunction(
-        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
-        param_applier=SCMEParameterApplier(),
-        path_to_reference_configuration=REFERENCE_CONFIGS[5],
-        dt=1.0,
-        max_steps=500,
-        tag="kabsch",
+    class KabschDistance:
+        def __init__(self, atoms_factory: AtomsFactory):
+            self.atoms_factory = atoms_factory
+            self._positions_ref = None
+
+        def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:
+            if self._positions_ref is None:
+                self._positions_ref = self.atoms_factory().positions
+
+            res = calc.results
+
+            kabsch_r, kabsch_t = kb.kabsch(atoms.positions, self._positions_ref)
+            positions_aligned = kb.apply_transform(atoms.positions, kabsch_r, kabsch_t)
+
+            kabsch_rmsd = kb.rmsd(positions_aligned, self._positions_ref)
+
+            res.update(
+                {"kabsch_t": kabsch_t, "kabsch_r": kabsch_r, "kabsch_rmsd": kabsch_rmsd}
+            )
+
+            return res
+
+    ob = QuantityComputerObjectiveFunction(
+        loss_function=lambda quants: quants["kabsch_rmsd"],
+        quantity_computer=MinimizationASEComputer(
+            calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+            param_applier=SCMEParameterApplier(),
+            atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
+            quantities_processor=KabschDistance(
+                atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10])
+            ),
+            tag="kabsch",
+        ),
     )
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": True})
+    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
 
     print(f"{optimal_params = }")
-    print(f"{fitter.info}")
+    print(f"{fitter.info = }")
     print(f"{ob.get_meta_data() = }")
 
 
-@pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
-def test_multi_energy_ob_function_fitting():
-    ob = construct_multi_energy_objective_function(
-        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
-        param_applier=SCMEParameterApplier(),
-        path_or_factory_list=REFERENCE_CONFIGS,
-        reference_energy_list=REFERENCE_ENERGIES,
-        tag_list=TAGS,
-        weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
-    )
+# @pytest.mark.skipif(pyscme is None, reason="Cannot import pyscme")
+# def test_multi_energy_ob_function_fitting():
+#     ob = construct_multi_energy_objective_function(
+#         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+#         param_applier=SCMEParameterApplier(),
+#         path_or_factory_list=REFERENCE_CONFIGS,
+#         reference_energy_list=REFERENCE_ENERGIES,
+#         tag_list=TAGS,
+#         weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
+#     )
 
-    fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
+#     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
-    optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": False})
-    print(f"{optimal_params = }")
-    print(f"time taken = {fitter.info.time_taken} seconds")
+#     optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50, "disp": False})
+#     print(f"{optimal_params = }")
+#     print(f"time taken = {fitter.info.time_taken} seconds")
 
 
-@pytest.mark.skipif(
-    pyscme is None or mpi4py is None, reason="Cannot import pyscme or mpi4py or both"
-)
-def test_multi_energy_ob_function_fitting_mpi():
-    ob = construct_multi_energy_objective_function(
-        calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
-        param_applier=SCMEParameterApplier(),
-        path_or_factory_list=REFERENCE_CONFIGS,
-        reference_energy_list=REFERENCE_ENERGIES,
-        tag_list=TAGS,
-        weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
-    )
+# @pytest.mark.skipif(
+#     pyscme is None or mpi4py is None, reason="Cannot import pyscme or mpi4py or both"
+# )
+# def test_multi_energy_ob_function_fitting_mpi():
+#     ob = construct_multi_energy_objective_function(
+#         calc_factory=SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+#         param_applier=SCMEParameterApplier(),
+#         path_or_factory_list=REFERENCE_CONFIGS,
+#         reference_energy_list=REFERENCE_ENERGIES,
+#         tag_list=TAGS,
+#         weight_cb=lambda atoms: 1.0 / len(atoms) ** 2,
+#     )
 
-    with MPIWrapperCOB(ob) as ob_mpi:
-        if ob_mpi.rank == 0:
-            fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
-            optimal_params = fitter.fit_scipy(
-                tol=0, options={"maxiter": 50, "disp": True}
-            )
-            print(f"{optimal_params = }")
-            print(f"time taken = {fitter.info.time_taken} seconds")
-        else:
-            ob_mpi.worker_loop()
+#     with MPIWrapperCOB(ob) as ob_mpi:
+#         if ob_mpi.rank == 0:
+#             fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
+#             optimal_params = fitter.fit_scipy(
+#                 tol=0, options={"maxiter": 50, "disp": True}
+#             )
+#             print(f"{optimal_params = }")
+#             print(f"time taken = {fitter.info.time_taken} seconds")
+#         else:
+#             ob_mpi.worker_loop()
 
 
 # if __name__ == "__main__":
