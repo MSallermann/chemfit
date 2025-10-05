@@ -64,7 +64,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         # Therefore, the error handling needs to be slightly different,
         # and we try to suppress general exceptions instead of re-raising them
         # We do not suppress `FactoryException`s, however, because, it makes no sense to continue execution.
-        # The reason that it makes no sense is that these  exceptions are connected to being unable to construct internals
+        # The reason that it makes no sense is that these exceptions are connected to being unable to construct internals
         # of the objective functions.
         # (remember due to lazy evaluation such constructions can happen inside `__call__`)
         local_total = float("Nan")
@@ -103,18 +103,22 @@ class MPIWrapperCOB(ObjectiveFunctor):
         self.comm.gather(local_meta_data, root=0)
 
     def worker_loop(self):
-        if self.size > 1 and self.rank != 0:
-            # Worker loop: wait for params, compute slice+reduce, repeat
-            while True:
-                signal = self.comm.bcast(None, root=0)
+        # Ensure only rank 0 can call this
+        if self.rank == 0:
+            msg = "`worker_loop` cannot be used on rank 0"
+            raise RuntimeError(msg)
 
-                if signal == Signal.ABORT:
-                    break
-                if signal == Signal.GATHER_META_DATA:
-                    self.worker_gather_meta_data()
-                elif isinstance(signal, dict):
-                    params: dict[str, Any] = signal
-                    self.worker_process_params(params)
+        # Worker loop: wait for params, compute slice+reduce, repeat
+        while True:
+            signal = self.comm.bcast(None, root=0)
+
+            if signal == Signal.ABORT:
+                break
+            if signal == Signal.GATHER_META_DATA:
+                self.worker_gather_meta_data()
+            elif isinstance(signal, dict):
+                params: dict[str, Any] = signal
+                self.worker_process_params(params)
 
     def gather_meta_data(self) -> list[dict[str, Any] | None]:
         # Ensure only rank 0 can call this

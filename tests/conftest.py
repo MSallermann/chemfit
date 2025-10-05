@@ -15,12 +15,11 @@ def e_lj(r: float, eps: float, sigma: float) -> float:
 class LJAtomsFactory:
     def __init__(self, r: float) -> None:
         """Construct two atoms at a distance r."""
-        p0 = np.zeros(3)
-        p1 = np.array([r, 0.0, 0.0])
-        self.atoms = Atoms(positions=[p0, p1])
+        self.p0 = np.zeros(3)
+        self.p1 = np.array([r, 0.0, 0.0])
 
     def __call__(self) -> Atoms:
-        return self.atoms
+        return Atoms(positions=[self.p0, self.p1])
 
 
 def construct_lj(atoms: Atoms):
