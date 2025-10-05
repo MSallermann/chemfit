@@ -60,7 +60,7 @@ def test_lj_mpi():
         "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
     )
 
-    ### Construct the objective function on *all* ranks
+    # Construct the objective function on *all* ranks
     eps = 1.0
     sigma = 1.0
 

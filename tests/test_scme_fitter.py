@@ -154,6 +154,7 @@ def test_dimer_distance_objective_function():
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
+
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
     print(f"{ob.get_meta_data() = }")
@@ -236,6 +237,7 @@ def test_multi_energy_ob_function_fitting():
     ob = construct_objective_function(
         paths=REFERENCE_CONFIGS, tags=TAGS, energies=REFERENCE_ENERGIES
     )
+
     print(ob(INITIAL_PARAMS))
     print("--")
 
