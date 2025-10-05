@@ -109,14 +109,11 @@ class SinglePointASEComputer(QuantityComputer):
         Args:
             calc_factory: Factory to create an ASE calculator given an `Atoms` object.
             param_applier: Function that applies a dict of parameters to `atoms.calc`.
-            atoms_factory: Optional[AtomsFactory] Optional function to create the Atoms object.
+            atoms_factory: Optional function to create the Atoms object.
             tag: Optional label for this objective. Defaults to "tag_None" if None.
             atoms_post_processor: Optional function to modify or validate the Atoms object
                 immediately after loading and before attaching the calculator.
             quantities_processor: this is called after the calculate function to return the
-
-        **Important**: One of `atoms_factory` or `path_to_reference_configuration` has to be specified.
-        If both are specified `atoms_factory` takes precedence.
 
         """
 
@@ -267,83 +264,3 @@ class MinimizationASEComputer(SinglePointASEComputer):
 
         # Then call the single point compute function
         return super()._compute(parameters=parameters)
-
-
-# class DimerDistanceObjectiveFunction(StructureObjectiveFunction):
-#     """Objective function based on the oxygen-oxygen distance in a water dimer."""
-
-#     def __init__(self, reference_OO_distance: float | None, *args, **kwargs):
-#         """
-#         Initialize a DimerDistanceObjectiveFunction.
-
-#         See `StructureObjectiveFunction.__init__` for shared parameters.
-
-#         Args:
-#             reference_OO_distance: Target distance between oxygens.
-
-#         """
-
-#         super().__init__(*args, **kwargs)
-
-#         if reference_OO_distance is None:
-#             self.reference_OO_distance = cast(
-#                 "float", self.atoms.get_distance(0, 3, mic=True)
-#             )
-#         else:
-#             self.reference_OO_distance = reference_OO_distance
-
-#         self._OO_distance: float | None = None
-
-#     def get_meta_data(self) -> dict[str, Any]:
-#         data = super().get_meta_data()
-#         data["last_OO_distance"] = self._OO_distance
-#         return data
-
-#     def __call__(self, parameters: dict[str, Any]) -> float:
-#         self.relax_structure(parameters)
-#         self._OO_distance = cast(
-#             "float", self.atoms.get_distance(0, 3, mic=True)
-#         )  # Missing type hint in ASE
-#         diff = self._OO_distance - self.reference_OO_distance
-#         return self.weight * diff**2
-
-
-# class KabschObjectiveFunction(StructureObjectiveFunction):
-#     """Computes the objective function based on the RMS from Kabsch rotation matrix."""
-
-#     def __init__(self, *args, **kwargs):
-#         """
-#         Initialize the Kabsch objective function.
-
-#         See `StructureObjectiveFunction.__init__` for shared parameters.
-#         """
-
-#         self._kabsch_r: np.ndarray | None = None
-#         self._kabsch_t: np.ndarray | None = None
-#         self._kabsch_rmsd: float | None = None
-#         super().__init__(*args, **kwargs)
-
-#     def get_meta_data(self) -> dict[str, Any]:
-#         data = super().get_meta_data()
-#         data["last_kabsch_r"] = (
-#             self._kabsch_r.tolist() if self._kabsch_r is not None else None
-#         )
-#         data["last_kabsch_t"] = (
-#             self._kabsch_t.tolist() if self._kabsch_t is not None else None
-#         )
-#         data["last_kabsch_rmsd"] = self._kabsch_rmsd
-#         return data
-
-#     def __call__(self, parameters: dict[str, Any]) -> float:
-#         self.relax_structure(parameters)
-
-#         self._kabsch_r, self._kabsch_t = kabsch.kabsch(
-#             self.atoms.positions, self.positions_reference
-#         )
-
-#         positions_aligned = kabsch.apply_transform(
-#             self.atoms.positions, self._kabsch_r, self._kabsch_t
-#         )
-#         self._kabsch_rmsd = kabsch.rmsd(positions_aligned, self.positions_reference)
-
-#         return self.weight * self._kabsch_rmsd
