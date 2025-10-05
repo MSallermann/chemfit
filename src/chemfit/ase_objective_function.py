@@ -70,7 +70,7 @@ class PathAtomsFactory(AtomsFactory):
         atoms = read(self.path, self.index, parallel=False)
 
         if isinstance(atoms, list):
-            msg = f"Index {self.index} selects multiple images from path {self.path}."
+            msg = f"Index {self.index} selects multiple images from path {self.path}. This is not compatible with AtomsFactory."
             raise AtomsFactoryException(msg)
 
         return atoms
@@ -100,9 +100,8 @@ class SinglePointASEComputer(QuantityComputer):
         self,
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
-        path_to_reference_configuration: Path | None = None,
+        atoms_factory: AtomsFactory,
         tag: str | None = None,
-        atoms_factory: AtomsFactory | None = None,
         atoms_post_processor: AtomsPostProcessor | None = None,
         quantities_processor: QuantitiesProcessor | None = None,
     ) -> None:
@@ -112,10 +111,8 @@ class SinglePointASEComputer(QuantityComputer):
         Args:
             calc_factory: Factory to create an ASE calculator given an `Atoms` object.
             param_applier: Function that applies a dict of parameters to `atoms.calc`.
-            path_to_reference_configuration: Optional path to an ASE-readable file (e.g., .xyz) containing
-                the molecular configuration. Only the first snapshot is used.
-            tag: Optional label for this objective. Defaults to "tag_None" if None.
             atoms_factory: Optional[AtomsFactory] Optional function to create the Atoms object.
+            tag: Optional label for this objective. Defaults to "tag_None" if None.
             atoms_post_processor: Optional function to modify or validate the Atoms object
                 immediately after loading and before attaching the calculator.
             quantities_processor: this is called after the calculate function to return the
@@ -127,6 +124,8 @@ class SinglePointASEComputer(QuantityComputer):
 
         self.calc_factory = calc_factory
         self.param_applier = param_applier
+        self.atoms_factory = atoms_factory
+
         self.atoms_post_processor = atoms_post_processor
 
         if quantities_processor is None:
@@ -136,20 +135,9 @@ class SinglePointASEComputer(QuantityComputer):
 
         self.tag = tag or "tag_None"
 
-        # If no custom `atoms_factory` has been supplied, we try to create a `PathAtomsFactory` from the path to the reference configuration
-        if atoms_factory is None:
-            if path_to_reference_configuration is None:
-                msg = "Neither `path_to_reference_configuration` nor a custom `atoms_factory` has been supplied"
-                raise Exception(msg)
-            self.atoms_factory = PathAtomsFactory(
-                path_to_reference_configuration, index=0
-            )
-        else:
-            self.atoms_factory = atoms_factory
-
         # NOTE: You should probably use the `self.atoms` property
         # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
-        self._atoms = None  # <- signals that atoms haven't been loaded yet
+        self._atoms = None
 
     def get_meta_data(self) -> dict[str, Any]:
         """
@@ -186,8 +174,6 @@ class SinglePointASEComputer(QuantityComputer):
         except Exception as e:
             raise AtomsFactoryException from e
 
-        self.check_atoms(atoms)
-
         if self.atoms_post_processor is not None:
             try:
                 self.atoms_post_processor(atoms)
@@ -217,19 +203,6 @@ class SinglePointASEComputer(QuantityComputer):
         """The number of atoms in the atoms object. May trigger creation of the atoms object."""
         return len(self.atoms)
 
-    def check_atoms(self, atoms: Atoms) -> bool:  # noqa: ARG002
-        """
-        Optional hook to validate or correct the Atoms object.
-
-        Args:
-            atoms: ASE Atoms object to check.
-
-        Returns:
-            bool: True if the atoms pass validation, False otherwise.
-
-        """
-        return True
-
     def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
         """
         Compute the quantities. This default implementation simply calls the `calculate` function and then returns the results dict from the calculator.
@@ -238,12 +211,12 @@ class SinglePointASEComputer(QuantityComputer):
             parameters: Dictionary of parameter names to float values.
 
         """
+        assert self.atoms.calc is not None
+
         try:
             self.param_applier(self.atoms, parameters)
         except Exception as e:
             raise ParameterApplierException from e
-
-        assert self.atoms.calc is not None
 
         self.atoms.calc.calculate(self.atoms)
 
