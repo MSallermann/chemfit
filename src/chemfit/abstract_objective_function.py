@@ -38,7 +38,7 @@ class QuantityComputer(abc.ABC):
 
     def get_meta_data(self) -> dict[str, Any]:
         """Get meta data."""
-        return {"last_quantities": self._last_quantities}
+        return {"last": self._last_quantities}
 
     def __call__(self, parameters: dict[str, Any]) -> dict[str, Any]:
         self._last_quantities = self._compute(parameters)
@@ -65,7 +65,7 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
 
     def get_meta_data(self) -> dict[str, Any]:
         meta_data = {
-            "quantity_computer": self.quantity_computer.get_meta_data(),
+            "computer": self.quantity_computer.get_meta_data(),
             "last_loss": self._last_loss,
         }
 
