@@ -146,7 +146,7 @@ def test_dimer_distance_objective_function():
             ),
             param_applier=scme_factories.SCMEParameterApplier(),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
-            quantities_processor=compute_dimer_distance,
+            quantity_processors=[compute_dimer_distance],
             tag="dimer_distance",
         ),
     )
@@ -166,22 +166,20 @@ def test_kabsch_objective_function():
             self.atoms_factory = atoms_factory
             self._positions_ref = None
 
-        def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:
+        def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:  # noqa: ARG002
             if self._positions_ref is None:
                 self._positions_ref = self.atoms_factory().positions
-
-            res = calc.results
 
             kabsch_r, kabsch_t = kb.kabsch(atoms.positions, self._positions_ref)
             positions_aligned = kb.apply_transform(atoms.positions, kabsch_r, kabsch_t)
 
             kabsch_rmsd = kb.rmsd(positions_aligned, self._positions_ref)
 
-            res.update(
-                {"kabsch_t": kabsch_t, "kabsch_r": kabsch_r, "kabsch_rmsd": kabsch_rmsd}
-            )
-
-            return res
+            return {
+                "kabsch_t": kabsch_t,
+                "kabsch_r": kabsch_r,
+                "kabsch_rmsd": kabsch_rmsd,
+            }
 
     ob = QuantityComputerObjectiveFunction(
         loss_function=lambda quants: quants["kabsch_rmsd"],
@@ -191,9 +189,9 @@ def test_kabsch_objective_function():
             ),
             param_applier=scme_factories.SCMEParameterApplier(),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
-            quantities_processor=KabschDistance(
-                atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10])
-            ),
+            quantity_processors=[
+                KabschDistance(atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]))
+            ],
             tag="kabsch",
         ),
     )
