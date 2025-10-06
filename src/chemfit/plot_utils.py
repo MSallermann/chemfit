@@ -1,10 +1,8 @@
 from collections.abc import Sequence
 from pathlib import Path
-from typing import cast
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 from matplotlib.axes import Axes
 
 
@@ -28,23 +26,23 @@ def tags_as_ticks(ax: Axes, tags: Sequence[str], **kwargs):
 
 
 def plot_energies(
-    df: pd.DataFrame,
+    energy_ref: Sequence[float],
+    energy_fit: Sequence[float],
+    n_atoms: Sequence[int],
+    tags: Sequence[str],
     output_folder: Path,
 ) -> None:
-    tags = list(df["tag"])
-    cast("list[str]", tags)
-
-    energy_ref = df["reference_energy"]
-    energy_fit = df["last_energy"]
-    n_atoms = df["n_atoms"]
-
     # Plot energies
     plt.close()
     ax = plt.gca()
     fig = plt.gcf()
 
+    arr_energy_ref = np.array(energy_ref)
+    arr_energy_fit = np.array(energy_fit)
+    arr_n_atoms = np.array(n_atoms)
+
     # Plot residuals
-    residuals = np.array(np.abs(energy_ref - energy_fit) / n_atoms)
+    residuals = np.abs(arr_energy_ref - arr_energy_fit) / arr_n_atoms
 
     mask = ~np.isnan(residuals)
 
@@ -56,9 +54,12 @@ def plot_energies(
         f"Residuals: max {max_resid:.2e}, mean {mean_resid:.2e}, median {median_resid:.2e}"
     )
     ax.plot(
-        energy_ref[mask] / n_atoms[mask], marker="o", color="black", label="reference"
+        arr_energy_ref[mask] / arr_n_atoms[mask],
+        marker="o",
+        color="black",
+        label="reference",
     )
-    ax.plot(energy_fit[mask] / n_atoms[mask], marker="x", label="fitted")
+    ax.plot(arr_energy_fit[mask] / arr_n_atoms[mask], marker="x", label="fitted")
 
     ax.legend()
     ax.set_ylabel("energy [eV] / n_atoms")
