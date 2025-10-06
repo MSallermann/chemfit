@@ -54,12 +54,10 @@ class AtomsFactory(Protocol):
 
 
 @runtime_checkable
-class QuantitiesProcessor(Protocol):
+class QuantityProcessor(Protocol):
     """Protocol for a function that returns the quantities after the `calculate` function."""
 
-    def __call__(
-        self, calc: Calculator, atoms: Atoms | None = None
-    ) -> dict[str, Any]: ...
+    def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]: ...
 
 
 class PathAtomsFactory(AtomsFactory):
@@ -86,6 +84,10 @@ def check_protocol(obj: Any | None, prot: Any):
         raise Exception(msg)
 
 
+def default_quantity_processor(calc: Calculator, atoms: Atoms) -> dict[str, Any]:
+    return {**calc.results, "n_atoms": len(atoms)}
+
+
 class SinglePointASEComputer(QuantityComputer):
     """
     Base class for a single point ASE-based computer.
@@ -99,45 +101,42 @@ class SinglePointASEComputer(QuantityComputer):
         calc_factory: CalculatorFactory,
         param_applier: ParameterApplier,
         atoms_factory: AtomsFactory,
-        tag: str | None = None,
         atoms_post_processor: AtomsPostProcessor | None = None,
-        quantities_processor: QuantitiesProcessor | None = None,
+        quantity_processors: list[QuantityProcessor] | None = None,
+        tag: str | None = None,
     ) -> None:
         """
-        Initialize an ASEObjectiveFunction.
+        Initialize a SinglePointASEComputer.
 
         Args:
             calc_factory: Factory to create an ASE calculator given an `Atoms` object.
             param_applier: Function that applies a dict of parameters to `atoms.calc`.
-            atoms_factory: Optional function to create the Atoms object.
-            tag: Optional label for this objective. Defaults to "tag_None" if None.
+            atoms_factory: Function to create the Atoms object.
             atoms_post_processor: Optional function to modify or validate the Atoms object
                 immediately after loading and before attaching the calculator.
-            quantities_processor: this is called after the calculate function to return the
+            quantities_processors: list of functions called after the calculate function to update the quantities dictionary
+            tag: Optional label for this computer. Defaults to "tag_None" if None.
 
         """
 
         # Make sure all the protocols are properly implemented
-
         check_protocol(calc_factory, CalculatorFactory)
         check_protocol(param_applier, ParameterApplier)
         check_protocol(atoms_factory, AtomsFactory)
         check_protocol(atoms_post_processor, AtomsPostProcessor)
-        check_protocol(quantities_processor, QuantitiesProcessor)
 
         self.calc_factory = calc_factory
         self.param_applier = param_applier
         self.atoms_factory = atoms_factory
-
         self.atoms_post_processor = atoms_post_processor
 
-        if quantities_processor is None:
-            self.quantities_processor = lambda calc, atoms: {
-                **calc.results,
-                "n_atoms": len(atoms),
-            }
-        else:
-            self.quantities_processor = quantities_processor
+        self.quantity_processors: list[QuantityProcessor] = [default_quantity_processor]
+
+        if quantity_processors is not None:
+            self.quantity_processors += quantity_processors
+
+        for qp in self.quantity_processors:
+            check_protocol(qp, QuantityProcessor)
 
         self.tag = tag or "tag_None"
 
@@ -212,7 +211,9 @@ class SinglePointASEComputer(QuantityComputer):
 
         self.atoms.calc.calculate(self.atoms)
 
-        quants = self.quantities_processor(self.atoms.calc, self.atoms)
+        quants = {}
+        for qp in self.quantity_processors:
+            quants.update(qp(self.atoms.calc, self.atoms))
 
         self._last_quantities = quants
 
