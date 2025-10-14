@@ -12,10 +12,9 @@ Submodules
    chemfit.combined_objective_function
    chemfit.data_utils
    chemfit.debug_utils
-   chemfit.exceptions
    chemfit.fitter
+   chemfit.kabsch
    chemfit.mpi_wrapper_cob
-   chemfit.multi_energy_objective_function
    chemfit.plot_utils
    chemfit.scme_factories
    chemfit.scme_setup

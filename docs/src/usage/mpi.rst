@@ -1,123 +1,119 @@
 .. _mpi:
 
-##################
+==================
 Running with MPI
-##################
+==================
 
-.. warning::
+The MPI integration in ChemFit parallelizes the evaluation of a
+:py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
+across MPI ranks. Each rank evaluates a slice of the combined objective's
+terms, and rank 0 reduces their partial sums to a single scalar loss.
 
-    This section is a work in progress!
+Core idea
+---------
 
-.. note::
+- Build a multi-term objective with
+  :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+- Wrap it in :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB`.
+- Rank 0 calls the optimizer on the wrapper; worker ranks run a loop and
+  wait for broadcast work items.
 
-    To run ``ChemFit`` with MPI, you need a working MPI installation -- duh! If you're on a cluster, consult its documentation. You can of course also install MPI on your local machine.
 
-    Further, you need to have ``mpi4py``, which is an optional dependency installed with ``pip install chemfit[mpi]``.
+Environment and dependencies
+----------------------------
 
-The gist of it is that you can use MPI to parallelize the evaluation of the individual terms in a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+- A working MPI installation (mpich, Open MPI, etc.)
+- ``mpi4py`` installed (optional extra: ``pip install chemfit[mpi]``)
 
-In principle the fitting code looks not terribly different from the single threaded case.
+Launch your script with:
 
-Within the python script, the required steps are:
+::
 
-1. **All ranks** construct the :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-2. **All ranks** enter the context provided by :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB`
-3. **The main rank** calls the fitting routines, **all other ranks** enter the :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB.worker_loop`
+   mpirun -n 4 python script.py
 
-.. note::
 
-    Thanks to the **lazy-loading** mechanism, constructing the objective function on all ranks is not actually wasteful.
-    Since only the ranks which actually compute a certain term of the objective function actually construct the ``Atoms`` and the ``Calculator``.
+High-level workflow
+-------------------
 
-**Then:**
-Call the script with ``mpirun -n $NRANKS python script.py`` (or something equivalent)
+- **All ranks** construct the same :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` and enter the :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB` context.
+- **Rank 0** runs fitting on the MPI wrapper object and may call ``gather_meta_data()`` when desired.
+- **Worker ranks (rank > 0)** enter ``worker_loop()`` and wait for signals and parameter broadcasts.
 
-A more schematic example:
+Thanks to lazy loading patterns in quantity computers, building the combined
+objective on every rank is typically cheap; heavy resources are only needed
+on ranks that actually evaluate those terms.
 
-.. code-block:: python
+Minimal example
+---------------------------------------
 
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-    from chemfit import CombinedObjectiveFunction
-
-    # ...
-    # construct the combined objective function on **all ranks**
-    # ...
-
-    # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    with MPIWrapperCOB(ob) as ob_mpi:
-        # The optimization needs to run on the first rank only
-        if ob_mpi.rank == 0:
-            fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
-            opt_params = fitter.fit_nevergrad(budget=100)
-
-            #...
-            meta_data_list = ob_mpi.gather_meta_data()
-            # write output etc.
-            #...
-        else:
-            ob_mpi.worker_loop()
-
-.. tip::
-
-    :py:meth:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB.gather_meta_data` gathers the meta_data from all worker ranks on the main rank
-
-Concrete Example:
-********************
-
-This is the same Lennard Jones example as in the :ref:`quickstart`, but this time with MPI. Yay!
+This example shows the structure.
 
 .. code-block:: python
 
-    from chemfit.multi_energy_objective_function import create_multi_energy_objective_function
-    from chemfit.fitter import Fitter
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-    from ase.calculators.lj import LennardJones
+   import numpy as np
+   from chemfit.fitter import Fitter
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
+   from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 
-    def e_lj(r, eps, sigma):
-        return 4.0 * eps * ((sigma / r) ** 6 - 1.0) * (sigma / r) ** 6
+   # all ranks construct the list of terms
+   terms = magic_from_elsewhere()
 
-    class LJAtomsFactory:
-        def __init__(self, r: float):
-            p0 = np.zeros(3)
-            p1 = np.array([r, 0.0, 0.0])
-            self.atoms = Atoms(positions=[p0, p1])
+   cob = CombinedObjectiveFunction(objective_functions=terms)  # weights default to 1.0
 
-        def __call__(self):
-            return self.atoms
+   # wrap with MPI and run
+   with MPIWrapperCOB(cob) as mpi_cob:
+       if mpi_cob.rank == 0:
+           initial_params = {"epsilon": 2.0, "sigma": 1.5}
+           fitter = Fitter(mpi_cob, initial_params=initial_params)
+           opt_params = fitter.fit_scipy()
 
-    def construct_lj(atoms: Atoms):
-        atoms.calc = LennardJones(rc=2000)
+           # Optionally collect per-term metadata from all ranks
+           meta = mpi_cob.gather_meta_data()
+           print(opt_params)
+           print(meta)
+       else:
+           mpi_cob.worker_loop()
 
-    def apply_params_lj(atoms: Atoms, params: dict[str, float]):
-        atoms.calc.parameters.sigma = params["sigma"]
-        atoms.calc.parameters.epsilon = params["epsilon"]
+How it partitions work
+----------------------
 
-    ### Construct the objective function on *all* ranks
-    eps = 1.0
-    sigma = 1.0
+Within each evaluation:
 
-    r_min = 2 ** (1/6) * sigma
-    r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
+- Rank 0 broadcasts the parameter dictionary to all ranks.
+- Each rank evaluates its local slice of work.
+- All ranks participate in a reduction (sum) to rank 0.
+- Rank 0 receives the global loss and returns it to the optimizer.
 
-    ob = create_multi_energy_objective_function(
-        calc_factory=construct_lj,
-        param_applier=apply_params_lj,
-        tag_list=[f"lj_{r:.2f}" for r in r_list],
-        reference_energy_list=[e_lj(r, eps, sigma) for r in r_list],
-        path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
-    )
+Common pitfalls
+---------------
 
-    # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    with MPIWrapperCOB(ob) as ob_mpi:
-        # The optimization needs to run on the first rank only
-        if ob_mpi.rank == 0:
-            initial_params = {"epsilon": 2.0, "sigma": 1.5}
-            bounds = {"epsilon": (0.1, 10), "sigma": (0.5, 3.0)}
-            fitter = Fitter(ob_mpi, initial_params=initial_params, bounds=bounds)
+- Forgetting to call ``worker_loop()`` on ranks > 0 results in rank 0 blocking
+  forever at the first broadcast.
+- Creating different numbers of terms on different ranks will mis-partition work.
+  Always construct the same ``CombinedObjectiveFunction`` on all ranks.
+- Modifying the set of terms after constructing the MPI wrapper is not supported.
+  Build the final combined objective first, then wrap.
 
-            opt_params = fitter.fit_scipy()
+Troubleshooting
+---------------
 
-            assert np.isclose(opt_params["epsilon"], eps)
-            assert np.isclose(opt_params["sigma"], sigma)
-        else:
-            ob_mpi.worker_loop()
+- Hang or deadlock at first evaluation:
+- Ensure every non-zero rank entered ``worker_loop()``.
+- Ensure all ranks are using the same communicator and number of terms.
+- Immediate exception on worker ranks:
+- Check per-term code paths for assumptions about unavailable files, GPUs,
+    or environment on worker nodes.
+- Unexpectedly high wall-clock time:
+- Imbalanced slices if terms differ vastly in cost. Consider grouping similar-cost
+  terms, or split the combined objective into multiple parts and use
+  ``add_flat`` to rebalance.
+
+Summary
+-------
+
+- Parallelization is at the **objective-term** level via
+  :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+- :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB` broadcasts params, slices work,
+  reduces losses, and provides metadata gathering.
+- Rank 0 runs the optimizer; all other ranks run a worker loop.
+- Keep objectives sliceable, deterministic, and consistently constructed across ranks.

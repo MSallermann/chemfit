@@ -61,10 +61,10 @@ def check_params_near_bounds(
     Returns:
         A list of tuples with information about parameters, which violate the constraint.
         Each tuple contains
-            - A string identifying the parameter in a flattened dict
-            - The value of the parameter
-            - The lower bound
-            - The upper bound
+        - A string identifying the parameter in a flattened dict
+        - The value of the parameter
+        - The lower bound
+        - The upper bound
 
     """
     flat_params = flatten_dict(params)
