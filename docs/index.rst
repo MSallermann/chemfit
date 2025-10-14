@@ -123,10 +123,12 @@ Contents
 
    src/installation
    src/usage/overview.rst
+   src/usage/abstract_interface.rst
    src/usage/fitter.rst
    src/usage/objective_functions.rst
    src/usage/ase_objective_function_api.rst
    src/usage/example_scme.rst
+   src/usage/combined_objective_function.rst
    src/usage/mpi.rst
    src/development/development.rst
    src/api/modules
