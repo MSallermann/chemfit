@@ -6,9 +6,9 @@ Example: Fitting a dimer binding curve with the SCME Code
 
     In this example we will learn how to find the optimal SCME parameters to reproduce the binding energies of an H2O dimer.
 
-
+******************
 Obtaining data
-####################
+******************
 
 The first step is, of course, to obtain all the reference configurations as well as the reference energies.
 
@@ -29,8 +29,10 @@ We are very lucky since the :py:func:`~chemfit.data_utils.process_csv` function 
 Of course, you are free to obtain the list of paths, tags and energies in any other way as well.
 
 
+******************
 Parameters
-#################################
+******************
+
 
 This section describes how to specify the parameterization of the SCME.
 
@@ -103,7 +105,7 @@ This is done by specifying a dictionary of initial parameters
 
 .. note::
 
-    Every ``(key,value)`` pair in the `initial_params` dictionary is subject to optimization by the ``Fitter`` with an initial value of value.
+    Every ``(key,value)`` pair in the `initial_params` dictionary is subject to optimization by the ``Fitter`` starting from the initial value given in the dict.
 
 .. note::
 
@@ -120,7 +122,7 @@ If any of these are ``None``, the generalized SCME will **not** be used.
 
 
 Instantiating the factory functors
-####################################
+************************************
 
 While it is completely possible to supply your own factory functions, we will use the predefined ones from the :py:mod:`~chemfit.scme_factories` module:
 
@@ -138,59 +140,101 @@ While it is completely possible to supply your own factory functions, we will us
 
 
 Instantiating the objective function
-####################################
+******************************************************
 
-We now simply instantiate the objective function by passing the factory functors and the lists of paths, energies and tags:
+
+For each configuration, we now instantiate a :py:func:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction` from a :py:func:`~chemfit.ase_objective_function.SinglePointASEComputer` and combine them in a
+:py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+
+As the loss function we use
+
+.. math::
+
+    \text{L} = \sum_i \left( \frac{E_i - E^\text{ref}_i}{n_\text{atoms}} \right)^2.
 
 .. code-block:: python
 
-    from chemfit.multi_energy_objective_function import create_multi_energy_objective_function
+    from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
+    from chemfit.ase_objective_function import SinglePointASEComputer, PathAtomsFactory
+    from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-    scme_factories = create_multi_energy_objective_function(
-        calc_factory=calc_factory,
-        param_applier=param_applier,
-        path_to_reference_configuration_list=paths,
-        reference_energy_list=energies,
-        tag_list=tags,
-    )
+    def make_energy_term(path, tag, e_ref):
+
+        comp = SinglePointASEComputer(
+            calc_factory=calc_factory,
+            param_applier=param_applier,
+            atoms_factory=PathAtomsFactory(path),
+            tag=tag,
+        )
+
+        # Example normalization by n_atoms**2 (as in tests)
+        return QuantityComputerObjectiveFunction(
+            loss_function=lambda q, e=e_ref: (q["energy"] - e) ** 2 / (q["n_atoms"] ** 2),
+            quantity_computer=comp,
+        )
+
+    terms = [make_energy_term(p, t, e) for p, t, e in zip(paths, tags, energies)]
+    ob = CombinedObjectiveFunction(terms)
 
 
 Performing the fit
-######################################
+************************************
 
 Pass the objective function to an instance of the ``Fitter`` class and write some outputs
 
 .. code-block:: python
 
+    from chemfit.utils import dump_dict_to_file
+    from chemfit.fitter import Fitter
+
     fitter = Fitter(
-        objective_function = scme_factories,
+        objective_function = ob,
         initial_params = initial_params
     )
 
     # All keyword arguments get forwarded to scipy.minimize
     optimal_params = fitter.fit_scipy(
-        tol=1e-4, options=dict(maxiter=50, disp=True)
+        tol=1e-4, options=dict(maxiter=50)
     )
 
-    # After the fit, this will write some useful outputs
-    scme_factories.write_output(
-        "output_dimer_binding",
-        initial_params=initial_params,
-        optimal_params=optimal_params,
-    )
+    # We can print the optimal parameters and some information about the fit
+    print(f"{optimal_params = }")
+    print(f"{fitter.info = }")
+
+    # Optional: save the parameters to a JSON file
+    dump_dict_to_file("output_dimer_binding/optimal_params.json", optimal_params)
+
+
+Getting per-term data
+************************************
+
+After the fit we can gather the meta data and thus evaluate per-term contributions.
+
+.. note::
+
+   Since the meta data capture data for the *last* evaluation of `params` it is good practice to execute an evaluation of the objective function for the optimal parameters.
+   The reason for this is that it is not guaranteed that the last evaluated parameter set is the optimal one.
+
+.. code-block:: python
+
+    ob(optimal_params)
+
+    # Gather the meta data (a list of dict)
+    meta_data = ob.gather_meta_data()
+
+    # Use a list comprehension to retrieve the fitted energies
+    energy_fitted = [md["computer"]["last"]["energy"] for md in meta_data]
 
 
 Expected results
-######################################
+************************************
 
-After the call to the ``write_output`` function, there should be a ``output_dimer_binding/plot_energy.png`` file.
-It should look something like this
+If the fitted energies are plotted against the reference it should look something like this
 
 .. image:: /src/_static/plot_dimer_binding_scme.png
    :alt: dimer_binding_scme
    :align: center
    :width: 80%
-
 
 The optimal parameters should be saved as a json file called ``output_dimer_binding/optimal_params.json``:
 
