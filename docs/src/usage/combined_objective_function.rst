@@ -18,9 +18,9 @@ Each objective function is paired with a non-negative weight.
 When the combined objective is called, all sub-objectives are evaluated using
 the same parameter dictionary, multiplied by their weights, and summed.
 
-::
+.. math::
 
-    combined_loss(params) = sum_i ( weight_i * objective_i(params) )
+    \text{combined_loss}(\text{params}) = \sum_i w_i \cdot ob_i(\text{params})
 
 
 Example
@@ -44,139 +44,6 @@ Example
 
     loss = combined({"x": 2.0})
     print(loss)  # 0.5*(1.0)^2 + 1.0*(1.0)^2 = 1.5
-
-
-Constructor
-----------------------------------
-
-.. code-block:: python
-
-    CombinedObjectiveFunction(objective_functions, weights=None)
-
-Parameters
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-- ``objective_functions``
-  Sequence of callables ``f(params: dict[str, float]) -> float``.
-  Each function represents one objective term.
-
-- ``weights`` (optional)
-  Sequence of non-negative floats. If omitted, all weights default to ``1.0``.
-
-Raises
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-- AssertionError if ``len(weights)`` does not match the number of objectives.
-- AssertionError if any weight is negative.
-
-Attributes
-----------------------------------
-
-- ``objective_functions``
-  List of all stored objective callables.
-
-- ``weights``
-  List of non-negative weights, aligned with the objective list.
-
-
-Calling the combined objective
-----------------------------------
-
-The combined objective is itself callable:
-
-.. code-block:: python
-
-    result = combined(params)
-
-By default, all internal terms are included.
-A subset can be selected via the optional ``idx_slice`` argument:
-
-.. code-block:: python
-
-    # Evaluate only the first term
-    loss = combined(params, idx_slice=slice(0, 1))
-
-
-Methods
-----------------------------------
-
-**n_terms()**
-
-Returns the number of objective terms.
-
-.. code-block:: python
-
-    n = combined.n_terms()  # integer
-
-----------------------------------
-
-**add(obj_funcs, weights=1.0)**
-
-Add one or more new objective functions (and corresponding weights) to the instance.
-
-.. code-block:: python
-
-    def ob3(params): return (params["x"] - 4.0)**2
-    combined.add(ob3, weights=0.2)
-
-    # Or add multiple at once
-    combined.add([ob1, ob2], weights=[0.5, 0.5])
-
-Notes:
-
-- If ``weights`` is a single float, it is reused for each new objective.
-- All new weights must be non-negative.
-- The function returns ``self`` for method chaining.
-
-----------------------------------
-
-**add_flat(combined_objective_functions_list, weights=None)**
-
-Class method that merges several ``CombinedObjectiveFunction`` instances into
-a new, flat one.
-Each sub-instance’s internal weights are scaled by its associated outer weight.
-
-.. code-block:: python
-
-    combined1 = CombinedObjectiveFunction([ob1, ob2], [1.0, 2.0])
-    combined2 = CombinedObjectiveFunction([ob3], [0.5])
-
-    combined_flat = CombinedObjectiveFunction.add_flat(
-        [combined1, combined2],
-        weights=[1.0, 0.2],
-    )
-
-    print(combined_flat.n_terms())  # 3
-
-This is especially useful when building composite objectives programmatically
-(such as combining multiple molecule or configuration terms).
-
-----------------------------------
-
-**get_meta_data()**
-
-Returns basic metadata about the combined objective:
-
-.. code-block:: python
-
-    meta = combined.get_meta_data()
-    # Example: {"n_terms": 3, "type": "CombinedObjectiveFunction"}
-
-----------------------------------
-
-**gather_meta_data(idx_slice=slice(None))**
-
-Collects metadata from all sub-objectives that support
-``get_meta_data()`` (for example, instances of
-:py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`).
-
-Returns a list of dictionaries or ``None`` for objectives without metadata.
-
-.. code-block:: python
-
-    meta_list = combined.gather_meta_data()
-    for entry in meta_list:
-        print(entry)
 
 
 Practical use with Fitter

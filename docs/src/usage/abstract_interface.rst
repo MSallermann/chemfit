@@ -22,66 +22,6 @@ High-level Concepts
    easy to test, log, and serialize.
 
 
-Interfaces
-==========
-
-``SupportsGetMetaData`` (Protocol)
-----------------------------------
-
-A lightweight protocol indicating that an object can return introspection data.
-
-- **Signature**: ``get_meta_data() -> dict[str, Any]``
-
-Any loss function or helper that implements this can be introspected by higher-level
-components.
-
-``ObjectiveFunctor`` (abstract)
--------------------------------
-
-An abstract base class for anything that behaves like a scalar objective.
-
-- **Call**: ``__call__(parameters: dict[str, Any]) -> float``
-- **Meta**: ``get_meta_data() -> dict[str, Any]``
-
-Implement this if your objective computes the loss *directly* from parameters,
-without the quantities split — or if you want to wrap another system to look
-like an objective.
-
-``QuantityComputer`` (abstract)
--------------------------------
-
-Computes and caches a dictionary of intermediate quantities from parameters.
-
-- **Call**: ``__call__(parameters: dict[str, Any]) -> dict[str, Any]``
-- **Core hook**: implement ``_compute(parameters) -> dict[str, Any]``
-- **Meta**: ``get_meta_data()`` returns ``{"last": <most recent quantities or None>}``
-
-Use this to encapsulate reusable work (simulation, feature construction, residuals,
-etc.) that multiple losses might consume.
-
-``QuantityComputerObjectiveFunction`` (concrete)
-------------------------------------------------
-
-Bridges a ``QuantityComputer`` with a **loss function** to produce a scalar objective.
-
-- **Init**:
-  - ``quantity_computer: QuantityComputer``
-  - ``loss_function: Callable[[dict[str, Any]], float] | ObjectiveFunctor``
-
-- **Call**: runs the computer to get quantities, feeds them to the loss,
-  and returns the loss as ``float``.
-
-- **Meta**:
-
-  .. code-block:: text
-
-     {
-       "computer": <quantity_computer.get_meta_data()>,
-       "last_loss": <float | None>,
-       "loss_function": <loss meta if it supports get_meta_data()>
-     }
-
-
 Data Flow
 =========
 
@@ -159,7 +99,7 @@ Wiring it together as an objective
 Loss as an ``ObjectiveFunctor`` (optional)
 ------------------------------------------
 
-If your loss needs its own state/metadata, implement it as an ``ObjectiveFunctor``
+If your loss needs its own state/metadata, implement it as an :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`
 over quantities:
 
 .. code-block:: python

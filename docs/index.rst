@@ -19,10 +19,11 @@ ChemFit
 
 **Highlights**:
 
-- **Flexibility:** The objective functions can be combined arbitarily with custom calculators and ways to create atoms.
+- **Flexibility:** The objective functions can be combined arbitrarily with custom calculators and ways to create atoms.
 - **Parallelization:** Objective functions can be parallelized over different contributing terms using ``mpi4py`` **without the headache of pickling custom calculators.** The lazy-loading mechanism ensures no superfluous file IO is performed.
 
 -------------------------
+
 
 .. _quickstart:
 
@@ -30,80 +31,91 @@ ChemFit
 Quickstart
 *************
 
-In order to use the provided objective functions you have to provide three pieces of information
+To fit the parameters of a potential in **ChemFit**, you need to provide three basic components:
 
-- How to construct the :py:class:`ase.Atoms` object. If you saved them to a file you can simply pass the path, which under the hood uses the :py:func:`~chemfit.ase_objective_function.PathAtomsFactory`.
-- How to construct the calculator. This one you will have to define yourself. It's not hard though.
-- How to apply a parametrization (essentially a dictionary) to the calculator. This one you will have to define yourself as well. It provides the "link" between the dictionary of parameters to optimize and the calculator and depends on the specific calculator you are using.
+1. A *factory* that knows how to construct the :py:class:`ase.Atoms` object.
+   If your configurations are stored on disk, use :py:func:`~chemfit.ase_objective_function.PathAtomsFactory`.
+2. A *factory* that knows how to construct the calculator.
+3. A *function* that knows how to apply a given parameter dictionary to the calculator.
 
-All of this is specified in so-called factory functions.
-For further information see :ref:`ase_objective_function_api`.
+All of these are passed as callable “factory functions” into the objective function.
+For details, see :ref:`ase_objective_function_api`.
 
 .. note::
 
-   You might ask yourself, why we don't just create the atoms and the calculator outside of the objective function and pass them into the initializer.
+   We do not create the atoms and calculator outside the objective function.
+   This is crucial for the **lazy-loading** mechanism, which ensures that—when running with MPI—
+   each rank only reads the files it needs, avoiding redundant file I/O.
 
-   We avoid this to support the lazy-loading mechanism, which can greatly help working with the MPI parallelization, as it ensures that every rank only reads the files it absolutely has to.
-
-The following toy example shows how to fit the parameters of a Lennard Jones potential.
+The following toy example demonstrates how to fit the parameters of a simple **Lennard–Jones potential**.
 
 .. code-block:: python
 
-   from ase.calculators.lj import LennardJones
-   from ase import Atoms
    import numpy as np
-   from chemfit.multi_energy_objective_function import create_multi_energy_objective_function
+   from ase import Atoms
+   from ase.calculators.lj import LennardJones
+   from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
+   from chemfit.ase_objective_function import SinglePointASEComputer
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
    from chemfit.fitter import Fitter
 
    ########################
    # Define the factories
    ########################
 
-   # This tells the objective function how to create a specific atoms object.
-   # Here it places on atom at the origin and another one at a
-   # distance `r` along the x-axis.s
+   # Factory that creates an Atoms object for a dimer at distance r
    class LJAtomsFactory:
-      def __init__(self, r: float):
-         p0 = np.zeros(3)
-         p1 = np.array([r, 0.0, 0.0])
-         self.atoms = Atoms(positions=[p0, p1])
+       def __init__(self, r: float):
+           p0 = np.zeros(3)
+           p1 = np.array([r, 0.0, 0.0])
+           self.atoms = Atoms(positions=[p0, p1])
 
-      def __call__(self):
-         return self.atoms
+       def __call__(self):
+           return self.atoms
 
-   # This tells the objective function how to construct the LennardJones calculator
+   # Factory that attaches a Lennard–Jones calculator
    def construct_lj(atoms: Atoms):
-      atoms.calc = LennardJones(rc=1000)
+       atoms.calc = LennardJones(rc=2000)
 
-   # Lastly, this tells the objective function how to apply the parametrization
+   # Function to apply parameters to the calculator
    def apply_params_lj(atoms: Atoms, params: dict[str, float]):
-      atoms.calc.parameters.sigma = params["sigma"]
-      atoms.calc.parameters.epsilon = params["epsilon"]
+       atoms.calc.parameters.sigma = params["sigma"]
+       atoms.calc.parameters.epsilon = params["epsilon"]
 
    ################################
-   # Create the objective function
+   # Build the objective function
    ################################
 
-   # This is the "target" function we use
+   # Analytical reference energies
    def e_lj(r, eps, sigma):
-      return 4.0 * eps * ((sigma / r) ** 6 - 1.0) * (sigma / r) ** 6
+       return 4.0 * eps * ((sigma / r) ** 6 - 1.0) * (sigma / r) ** 6
 
    eps = 1.0
    sigma = 1.0
-
    r_min = 2 ** (1.0 / 6.0) * sigma
    r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 
-   ob = create_multi_energy_objective_function(
-      calc_factory=construct_lj,
-      param_applier=apply_params_lj,
-      tag_list=[f"lj_{r:.2f}" for r in r_list],
-      reference_energy_list=[e_lj(r, eps, sigma) for r in r_list],
-      path_or_factory_list=[LJAtomsFactory(r) for r in r_list],
-   )
+   # Create one objective term per configuration
+   terms = []
+   for r in r_list:
+       ref_e = e_lj(r, eps, sigma)
+       computer = SinglePointASEComputer(
+           calc_factory=construct_lj,
+           param_applier=apply_params_lj,
+           atoms_factory=LJAtomsFactory(r),
+           tag=f"lj_{r:.2f}",
+       )
+       term = QuantityComputerObjectiveFunction(
+           loss_function=lambda q, e=ref_e: (q["energy"] - e) ** 2,
+           quantity_computer=computer,
+       )
+       terms.append(term)
+
+   # Combine all terms into a single objective
+   ob = CombinedObjectiveFunction(terms)
 
    ################################
-   # Find the optimal parameters
+   # Fit the parameters
    ################################
 
    initial_params = {"epsilon": 2.0, "sigma": 1.5}
@@ -111,8 +123,12 @@ The following toy example shows how to fit the parameters of a Lennard Jones pot
    fitter = Fitter(ob, initial_params=initial_params)
    opt_params = fitter.fit_scipy(options=dict(disp=True))
 
-   print(f"Optimal parameters {opt_params}")
+   print(f"Optimal parameters: {opt_params}")
 
+-------------------------
+
+This example uses the same conceptual building blocks that you will also use
+for more complex calculators, including the SCME potential described in :ref:`example_scme`.
 
 *************
 Contents
@@ -125,7 +141,6 @@ Contents
    src/usage/overview.rst
    src/usage/abstract_interface.rst
    src/usage/fitter.rst
-   src/usage/objective_functions.rst
    src/usage/ase_objective_function_api.rst
    src/usage/combined_objective_function.rst
    src/usage/mpi.rst
