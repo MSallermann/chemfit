@@ -61,7 +61,7 @@ Minimization via the Fitter
 
 The :py:class:`~chemfit.fitter.Fitter` class provides a unified interface to drive
 optimization with different backends. Any callable objective can be passed to a
-``Fitter`` along with an initial parameter set.
+:py:class:`~chemfit.fitter.Fitter` along with an initial parameter set.
 
 .. code-block:: python
 
@@ -107,7 +107,7 @@ By decoupling quantity computation from scalar loss evaluation, ChemFit allows y
 - Log and inspect intermediate quantities such as energies, forces, or distances.
 - Compose multiple objectives that share the same underlying model.
 
-To obtain a scalar objective, wrap a QuantityComputer with a loss function using
+To obtain a scalar objective, wrap a :py:class:`~chemfit.abstract_objective_function.QuantityComputer` with a loss function using
 :py:class:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction`:
 
 .. code-block:: python
@@ -126,7 +126,7 @@ To obtain a scalar objective, wrap a QuantityComputer with a loss function using
 ASE-Based Quantity Computers
 ***********************************
 
-ChemFit includes two concrete implementations of the QuantityComputer interface
+ChemFit includes two concrete implementations of the :py:class:`~chemfit.abstract_objective_function.QuantityComputer` interface
 that use the Atomic Simulation Environment (ASE) as a backend:
 
 1. :class:`~chemfit.ase_objective_function.SinglePointASEComputer`
@@ -137,10 +137,10 @@ that use the Atomic Simulation Environment (ASE) as a backend:
 
 Both classes are configured through small protocol-based components:
 
-- CalculatorFactory: attaches an ASE calculator to an Atoms object.
-- ParameterApplier: updates calculator parameters from a dictionary.
-- AtomsFactory: creates or loads an ASE Atoms object.
-- QuantityProcessor: extracts or post-processes results after calculation.
+- :py:class:`~chemfit.ase_objective_function.CalculatorFactory`: attaches an ASE calculator to an Atoms object.
+- :py:class:`~chemfit.ase_objective_function.ParameterApplier`: updates calculator parameters from a dictionary.
+- :py:class:`~chemfit.ase_objective_function.AtomsFactory`: creates or loads an ASE Atoms object.
+- :py:class:`~chemfit.ase_objective_function.QuantityProcessor`: extracts or post-processes results after calculation.
 
 This modular setup makes ChemFit compatible with any ASE calculator:
 Lennard-Jones, DFTB, machine-learned potentials, or ab initio wrappers.
