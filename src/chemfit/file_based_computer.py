@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import abc
 import subprocess
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from chemfit.abstract_objective_function import QuantityComputer
 
@@ -12,11 +11,21 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+@runtime_checkable
+class OutputParser(Protocol):
+    """Protocol for a function that applies parameters to an ASE calculator."""
+
+    def __call__(self, output_files: list[Path]) -> dict[str, Any]:
+        """Parse the output files and retrieve the quantities."""
+        ...
+
+
 class FileBasedQuantityComputer(QuantityComputer):
     def __init__(
         self,
-        output_file: Path,
-        executable_cmd: str | Callable[[dict[str, Any], str]],
+        output_files: list[Path],
+        executable_cmd: str | Callable[[dict[str, Any]], str],
+        output_parser: OutputParser,
         wait_timeout: float = 500.0,
         poll_interval: float = 60,
     ):
@@ -31,13 +40,14 @@ class FileBasedQuantityComputer(QuantityComputer):
 
         """
         super().__init__()
-        self.output_file = output_file
+        self.output_files = output_files
 
         if isinstance(executable_cmd, str):
             self.executable_cmd = lambda _: executable_cmd
         else:
             self.executable_cmd = executable_cmd
 
+        self.output_parser = output_parser
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
 
@@ -63,28 +73,19 @@ class FileBasedQuantityComputer(QuantityComputer):
         watcher.join(timeout=1)
 
         if not ok:
-            err_message = f"Timed out waiting for {self.output_file}"
+            err_message = f"Timed out waiting for {self.output_files}"
             raise TimeoutError(err_message)
 
-        return self.parse_outputs()
+        return self.output_parser(self.output_files)
 
     def pre_submit_hook(self, parameters: dict[str, Any]):
         """Modifies the executable command using the parameters."""
 
     def _file_watch_loop(self, ready: threading.Event, stop: threading.Event) -> None:
-        # The output file has been created
-        if self.output_file.exists():
-            ready.set()
-            return
-
-        # timeout
+        # check if files are there
         while not stop.is_set():
-            if self.output_file.exists():
+            files_created = all(o.exists() for o in self.output_files)
+            if files_created:
                 ready.set()
                 return
             time.sleep(self.poll_interval)
-
-    @abc.abstractmethod
-    def parse_outputs(self) -> dict[str, Any]:
-        """Compute dictionary of quantities after parsing an output file."""
-        ...
