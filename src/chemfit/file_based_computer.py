@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from chemfit.abstract_objective_function import QuantityComputer
+from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,7 +22,7 @@ class OutputParser(Protocol):
 
 
 @runtime_checkable
-class PreCommitHook(Protocol):
+class PreSubmitHook(Protocol):
     """Protocol for running things before the command is submitted."""
 
     def __call__(self, parameters: dict[str, Any]) -> None:
@@ -35,7 +36,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         output_files: list[Path],
         executable_cmd: str | Callable[[dict[str, Any]], str],
         output_parser: OutputParser,
-        presubmit_hook: PreCommitHook | None = None,
+        presubmit_hook: PreSubmitHook | None = None,
         wait_timeout: float = 500.0,
         poll_interval: float = 60,
     ):
@@ -58,7 +59,9 @@ class FileBasedQuantityComputer(QuantityComputer):
             self.executable_cmd = executable_cmd
 
         self.output_parser = output_parser
+        check_protocol(self.output_parser, OutputParser)
         self.presubmit_hook = presubmit_hook
+        check_protocol(self.presubmit_hook, PreSubmitHook)
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
 

@@ -10,6 +10,7 @@ from ase.io import read
 from ase.optimize import BFGS
 
 from chemfit.abstract_objective_function import QuantityComputer
+from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -76,12 +77,6 @@ class PathAtomsFactory(AtomsFactory):
             raise Exception(msg)
 
         return atoms
-
-
-def check_protocol(obj: Any | None, prot: Any):
-    if obj is not None and not isinstance(obj, prot):
-        msg = f"{obj} does not implement the {prot} protocol"
-        raise Exception(msg)
 
 
 def default_quantity_processor(calc: Calculator, atoms: Atoms) -> dict[str, Any]:
