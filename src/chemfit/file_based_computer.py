@@ -1,12 +1,19 @@
+from __future__ import annotations
+
 import abc
-from pathlib import Path
-from typing import Any
+import subprocess
+from typing import TYPE_CHECKING, Any, Callable
 
 from chemfit.abstract_objective_function import QuantityComputer
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 class FileBasedQuantityComputer(QuantityComputer):
-    def __init__(self, output_file: Path, executable_cmd: str):
+    def __init__(
+        self, output_file: Path, executable_cmd: str | Callable[[dict[str, Any], str]]
+    ):
         """
         Initialize a Computer that can create files and quantities from files.
 
@@ -17,12 +24,19 @@ class FileBasedQuantityComputer(QuantityComputer):
         """
         super().__init__()
         self.output_file = output_file
-        self.executable_cmd = executable_cmd
+
+        if isinstance(executable_cmd, str):
+            self.executable_cmd = lambda _: executable_cmd
+        else:
+            self.executable_cmd = executable_cmd
 
     def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
         self.pre_submit_hook(parameters)
 
-        # submit cmd
+        cmd = self.executable_cmd(parameters)
+
+        # Submit the command
+        subprocess.run(cmd, check=True, shell=True)  # noqa: S602
         # ... wait for output file
 
         # return quantities
