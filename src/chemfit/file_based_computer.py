@@ -13,10 +13,19 @@ if TYPE_CHECKING:
 
 @runtime_checkable
 class OutputParser(Protocol):
-    """Protocol for a function that applies parameters to an ASE calculator."""
+    """Protocol for a function parses an output file and obtains quantities."""
 
     def __call__(self, output_files: list[Path]) -> dict[str, Any]:
         """Parse the output files and retrieve the quantities."""
+        ...
+
+
+@runtime_checkable
+class PreCommitHook(Protocol):
+    """Protocol for running things before the command is submitted."""
+
+    def __call__(self, parameters: dict[str, Any]) -> None:
+        """Pre-commit hook."""
         ...
 
 
@@ -26,6 +35,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         output_files: list[Path],
         executable_cmd: str | Callable[[dict[str, Any]], str],
         output_parser: OutputParser,
+        presubmit_hook: PreCommitHook | None = None,
         wait_timeout: float = 500.0,
         poll_interval: float = 60,
     ):
@@ -48,11 +58,13 @@ class FileBasedQuantityComputer(QuantityComputer):
             self.executable_cmd = executable_cmd
 
         self.output_parser = output_parser
+        self.presubmit_hook = presubmit_hook
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
 
     def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
-        self.pre_submit_hook(parameters)
+        if self.presubmit_hook is not None:
+            self.presubmit_hook(parameters)
 
         cmd = self.executable_cmd(parameters)
 
@@ -77,9 +89,6 @@ class FileBasedQuantityComputer(QuantityComputer):
             raise TimeoutError(err_message)
 
         return self.output_parser(self.output_files)
-
-    def pre_submit_hook(self, parameters: dict[str, Any]):
-        """Modifies the executable command using the parameters."""
 
     def _file_watch_loop(self, ready: threading.Event, stop: threading.Event) -> None:
         # check if files are there
