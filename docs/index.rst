@@ -145,5 +145,6 @@ Contents
    src/usage/combined_objective_function.rst
    src/usage/mpi.rst
    src/usage/example_scme.rst
+   src/usage/text_file_based_computer.rst
    src/development/development.rst
    src/api/modules
