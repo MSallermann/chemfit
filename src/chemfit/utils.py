@@ -1,9 +1,17 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 from pydictnest import flatten_dict
+
+
+def check_protocol(obj: Any | None, prot: Any):
+    if obj is not None and not isinstance(obj, prot):
+        msg = f"{obj} does not implement the {prot} protocol"
+        raise Exception(msg)
 
 
 def next_free_folder(base: Path) -> Path:

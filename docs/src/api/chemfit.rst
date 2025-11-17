@@ -12,6 +12,7 @@ Submodules
    chemfit.combined_objective_function
    chemfit.data_utils
    chemfit.debug_utils
+   chemfit.file_based_computer
    chemfit.fitter
    chemfit.kabsch
    chemfit.mpi_wrapper_cob
