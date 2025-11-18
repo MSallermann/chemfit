@@ -91,7 +91,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         watcher.start()
 
         # Run the external program (raises on non-zero exit)
-        proc = subprocess.run(cmd, check=True, shell=True, cwd=self.working_directory)  # noqa: S602
+        subprocess.run(cmd, check=True, shell=True, cwd=self.working_directory)  # noqa: S602
 
         # Block here until file appears (or timeout)
         # The main reason to implement this extra check is to eventually support remote execution, e.g. on clusters
