@@ -44,8 +44,8 @@ def test_squares_file_based():
     # Define the command that will be called to create the output file with given parameters
     def callable_cmd(
         parameters: dict[str, float], script_file: Path, output_file: Path
-    ) -> str:
-        return f"python {script_file} {parameters['prefactor']} {output_file}"
+    ) -> list[str]:
+        return f"python {script_file} {parameters['prefactor']} {output_file}".split()
 
     output_parser = MyOutputParser()
     file_based_computer = FileBasedQuantityComputer(

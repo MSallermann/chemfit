@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import threading
 import time
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from chemfit.abstract_objective_function import QuantityComputer
@@ -10,6 +11,10 @@ from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -43,12 +48,15 @@ class FileBasedQuantityComputer(QuantityComputer):
     def __init__(
         self,
         output_files: list[Path],
-        executable_cmd: str | Callable[[dict[str, Any]], str],
-        output_parser: OutputParser,
+        executable_cmd: Callable[[dict[str, Any]], Iterable[str]] | Iterable[str] | str,
+        output_parsers: list[OutputParser] | OutputParser,
         presubmit_hook: PreSubmitHook | None = None,
         working_directory: Path | None = None,
         wait_timeout: float = 500.0,
-        poll_interval: float = 60,
+        poll_interval: float = 1,
+        subprocess_run_args: dict | None = None,
+        check_if_output_exits: bool = True,
+        clear_output_before_compute: bool = False,
     ):
         """
         Initialize a Computer that can create files and quantities from files.
@@ -63,13 +71,32 @@ class FileBasedQuantityComputer(QuantityComputer):
         super().__init__()
         self.output_files = output_files
 
+        self.check_if_output_exists = check_if_output_exits
+        self.clear_output_before_compute = clear_output_before_compute
+
+        if subprocess_run_args is None:
+            self.subprocess_run_args = {}
+        else:
+            self.subprocess_run_args = subprocess_run_args
+
         if isinstance(executable_cmd, str):
+            if len(executable_cmd.split()) != 1:
+                msg = "You passed a string with whitespace for the executable command, presumably a program with command line arguments. Arguments need to be passed as separate list items. e.g exectuable_cmd = ['myprogram','-f', 'arg2'], **not** exectuable_cmd = 'myprogram -f arg2'"
+                raise Exception(msg)
+            executable_cmd = [executable_cmd]
+        elif isinstance(executable_cmd, Iterable):
             self.executable_cmd = lambda _: executable_cmd
         else:
             self.executable_cmd = executable_cmd
 
-        self.output_parser = output_parser
-        check_protocol(self.output_parser, OutputParser)
+        if isinstance(output_parsers, OutputParser):
+            self.output_parsers = [output_parsers]
+        else:
+            self.output_parsers = output_parsers
+
+        for o in self.output_parsers:
+            check_protocol(o, OutputParser)
+
         self.presubmit_hook = presubmit_hook
         check_protocol(self.presubmit_hook, PreSubmitHook)
         self.wait_timeout = wait_timeout
@@ -79,6 +106,18 @@ class FileBasedQuantityComputer(QuantityComputer):
     def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
         if self.presubmit_hook is not None:
             self.presubmit_hook(parameters)
+
+        if self.clear_output_before_compute:
+            for o in self.output_files:
+                if o.exists():
+                    o.unlink()
+
+        if self.check_if_output_exists:
+            for o in self.output_files:
+                if o.exists():
+                    logger.warning(
+                        f"The outputfiles {o} exist already. This may lead to unforeseen behaviour. To disable these warnings either set `check_if_output_exists` to False or `clear_output_before_compute` to True"
+                    )
 
         cmd = self.executable_cmd(parameters)
 
@@ -91,7 +130,13 @@ class FileBasedQuantityComputer(QuantityComputer):
         watcher.start()
 
         # Run the external program (raises on non-zero exit)
-        subprocess.run(cmd, check=True, shell=True, cwd=self.working_directory)  # noqa: S602
+        subprocess.run(  # noqa: S603
+            cmd,
+            check=True,
+            shell=False,
+            cwd=self.working_directory,
+            **self.subprocess_run_args,
+        )
 
         # Block here until file appears (or timeout)
         # The main reason to implement this extra check is to eventually support remote execution, e.g. on clusters
@@ -100,15 +145,23 @@ class FileBasedQuantityComputer(QuantityComputer):
         # Therefore, waiting until the output files are actually present is a valid strategy.
         # Of course, we might still run into problems in the case of output files wich get continousely appended to.
         # These could be present already, but not complete and thus fool us into thinking that the script has completed it's run.
-        ok = ready.wait(timeout=self.wait_timeout)
-        stop.set()
-        watcher.join(timeout=1)
+        if all(o.exists() for o in self.output_files):
+            # We do one immediate check on the main thread
+            stop.set()
+        else:
+            ok = ready.wait(timeout=self.wait_timeout)
+            stop.set()
+            watcher.join(timeout=1)
 
-        if not ok:
-            err_message = f"Timed out waiting for {self.output_files}"
-            raise TimeoutError(err_message)
+            if not ok:
+                err_message = f"Timed out waiting for {self.output_files}"
+                raise TimeoutError(err_message)
 
-        return self.output_parser(self.output_files)
+        res = {}
+        for o in self.output_parsers:
+            res.update(o(self.output_files))
+
+        return res
 
     def _file_watch_loop(self, ready: threading.Event, stop: threading.Event) -> None:
         # check if files are there
