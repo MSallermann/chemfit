@@ -26,7 +26,16 @@ class PreSubmitHook(Protocol):
     """Protocol for running things before the command is submitted."""
 
     def __call__(self, parameters: dict[str, Any]) -> None:
-        """Pre-commit hook."""
+        """Pre-submit hook."""
+        ...
+
+
+@runtime_checkable
+class PostSubmitHook(Protocol):
+    """Protocol for running things after the command has run."""
+
+    def __call__(self, parameters: dict[str, Any]) -> None:
+        """Post-submit hook."""
         ...
 
 
@@ -37,6 +46,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         executable_cmd: str | Callable[[dict[str, Any]], str],
         output_parser: OutputParser,
         presubmit_hook: PreSubmitHook | None = None,
+        working_directory: Path | None = None,
         wait_timeout: float = 500.0,
         poll_interval: float = 60,
     ):
@@ -64,6 +74,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         check_protocol(self.presubmit_hook, PreSubmitHook)
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
+        self.working_directory = working_directory
 
     def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
         if self.presubmit_hook is not None:
@@ -80,9 +91,15 @@ class FileBasedQuantityComputer(QuantityComputer):
         watcher.start()
 
         # Run the external program (raises on non-zero exit)
-        subprocess.run(cmd, check=True, shell=True)  # noqa: S602
+        proc = subprocess.run(cmd, check=True, shell=True, cwd=self.working_directory)  # noqa: S602
 
         # Block here until file appears (or timeout)
+        # The main reason to implement this extra check is to eventually support remote execution, e.g. on clusters
+        # A script submitted with sbatch for example would immediately return from `subprocess.run`, but the necessary output files
+        # would not be present until the submitted script has actually run on one of the compute nodes.
+        # Therefore, waiting until the output files are actually present is a valid strategy.
+        # Of course, we might still run into problems in the case of output files wich get continousely appended to.
+        # These could be present already, but not complete and thus fool us into thinking that the script has completed it's run.
         ok = ready.wait(timeout=self.wait_timeout)
         stop.set()
         watcher.join(timeout=1)
