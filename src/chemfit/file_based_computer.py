@@ -131,12 +131,11 @@ class FileBasedQuantityComputer(QuantityComputer):
 
         # Run the external program (raises on non-zero exit)
         subprocess.run(  # noqa: S603
-            cmd,
+            cmd,  # type: ignore
             check=True,
-            shell=False,
             cwd=self.working_directory,
             **self.subprocess_run_args,
-        )
+        )  # type: ignore
 
         # Block here until file appears (or timeout)
         # The main reason to implement this extra check is to eventually support remote execution, e.g. on clusters
