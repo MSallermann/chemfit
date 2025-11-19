@@ -35,12 +35,14 @@ class QuantityComputer(abc.ABC):
         """Initialize the QuantityComputer."""
 
         self._last_quantities: dict[str, Any] | None = None
+        self._last_params: dict[str, Any] | None = None
 
     def get_meta_data(self) -> dict[str, Any]:
         """Get meta data."""
-        return {"last": self._last_quantities}
+        return {"last": self._last_quantities, "last_params": self._last_params}
 
     def __call__(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        self._last_params = parameters
         self._last_quantities = self._compute(parameters)
         return self._last_quantities
 
@@ -53,7 +55,8 @@ class QuantityComputer(abc.ABC):
 class QuantityComputerObjectiveFunction(ObjectiveFunctor):
     def __init__(
         self,
-        loss_function: Callable[[dict[str, Any]], float] | ObjectiveFunctor,
+        loss_function: Callable[[dict[str, Any]], float]
+        | Callable[[dict[str, Any], dict[str, Any]], float],
         quantity_computer: QuantityComputer,
     ) -> None:
         """Initialize the objective function with a quantity computer."""
@@ -76,6 +79,10 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
 
     def __call__(self, parameters: dict[str, Any]) -> float:
         quantities = self.quantity_computer(parameters)
-        self._last_loss = self.loss_function(quantities)
+
+        try:
+            self._last_loss = self.loss_function(quantities)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+        except TypeError:
+            self._last_loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
 
         return self._last_loss
