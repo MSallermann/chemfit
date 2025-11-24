@@ -9,6 +9,7 @@ Submodules
 
    chemfit.abstract_objective_function
    chemfit.ase_objective_function
+   chemfit.async_wrapper_cob
    chemfit.combined_objective_function
    chemfit.data_utils
    chemfit.debug_utils
