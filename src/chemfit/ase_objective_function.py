@@ -114,6 +114,8 @@ class SinglePointASEComputer(QuantityComputer):
 
         """
 
+        super().__init__()
+
         # Make sure all the protocols are properly implemented
         check_protocol(calc_factory, CalculatorFactory)
         check_protocol(param_applier, ParameterApplier)
