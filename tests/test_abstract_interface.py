@@ -39,6 +39,7 @@ def test():
     assert np.isclose(my_func(params), excepted_res)
 
     computer = MyComputer()
+    computer.static_meta_data = {"computer_tag": "dolphin"}
     quants = computer(params)
     assert np.isclose(quants["res"], excepted_res)
 
@@ -59,15 +60,26 @@ def test():
         loss_function=loss3,
         quantity_computer=computer,
     )
+    my_ob3.static_meta_data = {"ob_tag": "also_dolphin"}
 
     assert np.isclose(my_ob3(params), excepted_res + params["b"])
 
     meta_data = my_ob3.get_meta_data()
 
     meta_data_expected = {
-        "computer": {"last": {"res": 1.0}, "last_params": {"a": 2.0, "b": 3.0}},
+        "computer": {
+            "last": {"res": 1.0},
+            "last_params": {"a": 2.0, "b": 3.0},
+            "meta": {"computer_tag": "dolphin"},
+        },
         "last_loss": 4.0,
+        "meta": {"ob_tag": "also_dolphin"},
     }
 
     for k, v in items_nested(meta_data):
-        assert np.isclose(get_nested(meta_data_expected, k), v)
+        expected = get_nested(meta_data_expected, k)
+
+        if isinstance(v, float):
+            assert np.isclose(expected, v)
+        else:
+            assert v == expected

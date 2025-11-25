@@ -36,10 +36,16 @@ class QuantityComputer(abc.ABC):
 
         self._last_quantities: dict[str, Any] | None = None
         self._last_params: dict[str, Any] | None = None
+        self.static_meta_data: dict[str, Any] | None = None  # For static meta data
 
     def get_meta_data(self) -> dict[str, Any]:
         """Get meta data."""
-        return {"last": self._last_quantities, "last_params": self._last_params}
+        meta_data = {"last": self._last_quantities, "last_params": self._last_params}
+
+        if self.static_meta_data is not None:
+            meta_data["meta"] = self.static_meta_data
+
+        return meta_data
 
     def __call__(self, parameters: dict[str, Any]) -> dict[str, Any]:
         self._last_params = parameters
@@ -64,6 +70,7 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
         super().__init__()
         self.quantity_computer = quantity_computer
         self.loss_function = loss_function
+        self.static_meta_data: dict[str, Any] | None = None
         self._last_loss: float | None = None
 
     def get_meta_data(self) -> dict[str, Any]:
@@ -74,6 +81,9 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
 
         if isinstance(self.loss_function, SupportsGetMetaData):
             meta_data["loss_function"] = self.loss_function.get_meta_data()
+
+        if self.static_meta_data is not None:
+            meta_data["meta"] = self.static_meta_data
 
         return meta_data
 
