@@ -157,7 +157,6 @@ def test_dimer_distance_objective_function():
 
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
-    print(f"{ob.get_meta_data() = }")
 
 
 def test_kabsch_objective_function():
@@ -202,7 +201,6 @@ def test_kabsch_objective_function():
 
     print(f"{optimal_params = }")
     print(f"{fitter.info = }")
-    print(f"{ob.get_meta_data() = }")
 
 
 def construct_objective_function(

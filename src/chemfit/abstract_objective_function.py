@@ -2,12 +2,7 @@ from __future__ import annotations
 
 import abc
 from types import SimpleNamespace
-from typing import Any, Callable, Protocol, runtime_checkable
-
-
-@runtime_checkable
-class SupportsGetMetaData(Protocol):
-    def get_meta_data(self) -> dict[str, Any]: ...
+from typing import Any, Callable
 
 
 class EvaluateContext:
@@ -32,15 +27,9 @@ class EvaluateContext:
 
 class ObjectiveFunctor(abc.ABC):
     @abc.abstractmethod
-    def get_meta_data(self) -> dict[str, Any]:
-        """Get meta data."""
-        ...
-
-    def evaluate(self, parameters: dict[str, Any], ctx: EvaluateContext) -> float:
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def __call__(self, parameters: dict[str, Any]) -> float:
+    def __call__(
+        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
+    ) -> float:
         """
         Compute the objective value given a set of parameters.
 
@@ -51,7 +40,6 @@ class ObjectiveFunctor(abc.ABC):
             float: Computed objective value (e.g., error metric).
 
         """
-        ...
 
 
 class QuantityComputer(abc.ABC):
@@ -59,10 +47,11 @@ class QuantityComputer(abc.ABC):
         """Initialize the QuantityComputer."""
         self.static_meta_data: dict[str, Any] = {}  # For static meta data
 
-    def evaluate(
-        self, parameters: dict[str, Any], ctx: EvaluateContext
-    ) -> dict[str, Any]:
+    def __call__(self, parameters: dict[str, Any], ctx: EvaluateContext | None = None):
         """Evaluate the quantities without changing internal state."""
+
+        if ctx is None:
+            ctx = EvaluateContext()
 
         ctx.parameters = parameters
         ctx.quantities = self._compute(parameters, ctx)
@@ -94,14 +83,15 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
         self.loss_function = loss_function
         self.last_ctx: EvaluateContext | None = None
 
-    def get_meta_data(self) -> dict[str, Any]:
-        if self.last_ctx is None:
-            return {}
+    def __call__(
+        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
+    ) -> float:
+        """Evaluate the quantities."""
 
-        return self.last_ctx.to_meta_data()
+        if ctx is None:
+            ctx = EvaluateContext()
 
-    def evaluate(self, parameters: dict[str, Any], ctx: EvaluateContext) -> float:
-        quantities = self.quantity_computer.evaluate(parameters, ctx)
+        quantities = self.quantity_computer(parameters, ctx)
 
         # Update or set static meta data if needed
         ctx.meta.update(self.static_meta_data)
@@ -112,9 +102,3 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
             ctx.loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
 
         return ctx.loss
-
-    def __call__(self, parameters: dict[str, Any]) -> float:
-        """Evaluate the quantities."""
-        ctx = EvaluateContext()
-        self.last_ctx = ctx
-        return self.evaluate(parameters, ctx)

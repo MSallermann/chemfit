@@ -1,13 +1,29 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any, Callable
 
 from typing_extensions import Self
 
-from chemfit.abstract_objective_function import ObjectiveFunctor, SupportsGetMetaData
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ObjectiveFunctor,
+)
+from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
 DEFAULT_SLICE = slice(None, None, None)
+
+
+def transform_generic_callables(
+    list_of_callables: Sequence[Callable[[dict[str, Any]], float]],
+) -> list[ObjectiveFunctor]:
+    res = []
+    for func in list_of_callables:
+        if isinstance(func, ObjectiveFunctor):
+            res.append(func)
+        else:
+            res.append(WrappedObjectiveFunctor(func))
+    return res
 
 
 class CombinedObjectiveFunction(ObjectiveFunctor):
@@ -40,8 +56,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
                 objective functions, or if any weight is negative.
 
         """
+        self.last_ctx: EvaluateContext | None = None
+
         # Convert to list internally for mutability
-        self.objective_functions: list[Callable[[dict[str, Any]], float]] = list(
+        self.objective_functions: list[ObjectiveFunctor] = transform_generic_callables(
             objective_functions
         )
 
@@ -107,6 +125,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             funcs_to_add = list(obj_funcs)  # type: ignore[assignment]
         else:
             funcs_to_add = [obj_funcs]  # type: ignore[assignment]
+
+        funcs_to_add = transform_generic_callables(funcs_to_add)
 
         # Append each new objective function
         for fn in funcs_to_add:
@@ -191,8 +211,40 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return cls(total_objective_functions, total_weights)
 
+    def prepare_evaluation(
+        self,
+        parameters: dict[str, Any],
+        ctx: EvaluateContext,
+        idx_slice: slice = DEFAULT_SLICE,
+    ) -> tuple[list[EvaluateContext], list[int]]:
+        contexts = [EvaluateContext() for _ in range(self.n_terms())[idx_slice]]
+
+        ctx.loss = 0.0
+        ctx.parameters = parameters
+        ctx.meta.update(
+            {
+                "n_terms": self.n_terms(),
+                "slice_start": idx_slice.start,
+                "slice_stop": idx_slice.stop,
+                "slice_step": idx_slice.step,
+            }
+        )
+
+        idx_list = list(range(self.n_terms()))
+
+        return contexts, idx_list
+
+    @staticmethod
+    def collect_per_term_data(
+        ctx: EvaluateContext, contexts: Iterable[EvaluateContext]
+    ) -> None:
+        ctx.meta["cob_terms"] = [c.to_meta_data() for c in contexts]
+
     def __call__(
-        self, params: dict[str, Any], idx_slice: slice = DEFAULT_SLICE
+        self,
+        parameters: dict[str, Any],
+        ctx: EvaluateContext | None = None,
+        idx_slice: slice = DEFAULT_SLICE,
     ) -> float:
         """
         Evaluate the combined objective at a given parameter dictionary.
@@ -208,36 +260,21 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             float: The weighted sum of all objective-function evaluations.
 
         """
-        total: float = 0.0
 
-        idx_list = range(self.n_terms())
+        if ctx is None:
+            ctx = EvaluateContext()
 
-        for idx, weight in zip(idx_list[idx_slice], self.weights[idx_slice]):
-            p_copy = params.copy()
-            total += self.objective_functions[idx](p_copy) * weight
+        contexts, idx_list = self.prepare_evaluation(
+            parameters=parameters, ctx=ctx, idx_slice=idx_slice
+        )
 
-        return total
+        assert ctx.loss is not None  # for pyright
 
-    def get_meta_data(self) -> dict[str, Any]:
-        return {"n_terms": self.n_terms(), "type": type(self).__name__}
+        for idx, weight, ctx_term in zip(
+            idx_list[idx_slice], self.weights[idx_slice], contexts, strict=True
+        ):
+            ctx.loss += self.objective_functions[idx](parameters, ctx_term) * weight
 
-    def gather_meta_data(
-        self, idx_slice: slice = DEFAULT_SLICE
-    ) -> list[dict[str, Any] | None]:
-        """
-        Gather the meta data of each term and append it to a list.
+        CombinedObjectiveFunction.collect_per_term_data(ctx, contexts)
 
-        If a slice is specified via the index argument the list only contains the results of the slice.
-        """
-        idx_list = range(self.n_terms())
-
-        results = []
-        for idx in idx_list[idx_slice]:
-            meta_data = None
-            ob = self.objective_functions[idx]
-            if isinstance(ob, SupportsGetMetaData):
-                meta_data = ob.get_meta_data()
-
-            results.append(meta_data)
-
-        return results
+        return ctx.loss

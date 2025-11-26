@@ -15,7 +15,7 @@ async def async_eval_one(
     or real async if your internals are I/O-bound.
     """
 
-    return await asyncio.to_thread(obj.evaluate, params, ctx)
+    return await asyncio.to_thread(obj, params, ctx)
 
 
 async def async_eval_many(

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import functools
 import random
@@ -7,14 +9,16 @@ import numpy as np
 from pydictnest import get_nested, items_nested
 
 from chemfit import abstract_objective_function, async_helpers
+from chemfit.abstract_objective_function import EvaluateContext
 
 
 class MyFunctor(abstract_objective_function.ObjectiveFunctor):
-    def __call__(self, parameters: dict[str, float]) -> float:
+    def __call__(
+        self,
+        parameters: dict[str, float],
+        ctx: EvaluateContext | None = None,  # noqa: ARG002
+    ) -> float:
         return parameters["a"] ** 2 - parameters["b"]
-
-    def get_meta_data(self) -> dict[str, float]:
-        return {}
 
 
 class MyComputer(abstract_objective_function.QuantityComputer):
@@ -27,7 +31,7 @@ class MyComputer(abstract_objective_function.QuantityComputer):
         ctx.meta["meta_b2"] = parameters["b"] ** 2
 
         # Sleep for a random time to simulate a variable amount of work
-        time.sleep(random.random())  # noqa: S311
+        time.sleep(random.random() * 0.1)  # noqa: S311
 
         return {"res": ctx.temp.a2 - parameters["b"]}
 
@@ -53,9 +57,7 @@ def test():
 
     computer = MyComputer()
     computer.static_meta_data = {"computer_tag": "dolphin"}
-    quants = computer.evaluate(
-        params, ctx=abstract_objective_function.EvaluateContext()
-    )
+    quants = computer(params, ctx=abstract_objective_function.EvaluateContext())
     assert np.isclose(quants["res"], excepted_res)
 
     my_ob1 = abstract_objective_function.QuantityComputerObjectiveFunction(
@@ -77,9 +79,10 @@ def test():
     )
     my_ob3.static_meta_data = {"ob_tag": "also_dolphin"}
 
-    assert np.isclose(my_ob3(params), excepted_res + params["b"])
+    ctx = EvaluateContext()
+    assert np.isclose(my_ob3(params, ctx), excepted_res + params["b"])
 
-    meta_data = my_ob3.get_meta_data()
+    meta_data = ctx.to_meta_data()
 
     meta_data_expected = {
         "quantities": {"res": 1.0},
