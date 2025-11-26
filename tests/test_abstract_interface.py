@@ -76,7 +76,7 @@ def test():
         "quantities": {"res": 1.0},
         "parameters": {"a": 2.0, "b": 3.0},
         "loss": 4.0,
-        "static": {"computer_tag": "dolphin", "ob_tag": "also_dolphin"},
+        "meta": {"computer_tag": "dolphin", "ob_tag": "also_dolphin"},
     }
 
     for k, v in items_nested(meta_data):
