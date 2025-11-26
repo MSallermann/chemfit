@@ -1,9 +1,12 @@
+import asyncio
 import functools
+import random
+import time
 
 import numpy as np
 from pydictnest import get_nested, items_nested
 
-from chemfit import abstract_objective_function
+from chemfit import abstract_objective_function, async_helpers
 
 
 class MyFunctor(abstract_objective_function.ObjectiveFunctor):
@@ -18,9 +21,15 @@ class MyComputer(abstract_objective_function.QuantityComputer):
     def _compute(
         self,
         parameters: dict[str, float],
-        ctx: abstract_objective_function.EvaluateContext,  # noqa: ARG002
+        ctx: abstract_objective_function.EvaluateContext,
     ) -> dict[str, float]:
-        return {"res": parameters["a"] ** 2 - parameters["b"]}
+        ctx.temp.a2 = parameters["a"] ** 2
+        ctx.meta["meta_b2"] = parameters["b"] ** 2
+
+        # Sleep for a random time to simulate a variable amount of work
+        time.sleep(random.random())  # noqa: S311
+
+        return {"res": ctx.temp.a2 - parameters["b"]}
 
 
 def loss1(q: dict[str, float]):
@@ -76,7 +85,11 @@ def test():
         "quantities": {"res": 1.0},
         "parameters": {"a": 2.0, "b": 3.0},
         "loss": 4.0,
-        "meta": {"computer_tag": "dolphin", "ob_tag": "also_dolphin"},
+        "meta": {
+            "computer_tag": "dolphin",
+            "ob_tag": "also_dolphin",
+            "meta_b2": params["b"] ** 2,
+        },
     }
 
     for k, v in items_nested(meta_data):
@@ -86,3 +99,36 @@ def test():
             assert np.isclose(expected, v)
         else:
             assert v == expected
+
+
+def test_async_evaluation():
+    computer = MyComputer()
+    computer.static_meta_data = {"computer_tag": "dolphin"}
+
+    my_ob = abstract_objective_function.QuantityComputerObjectiveFunction(
+        loss_function=loss3,
+        quantity_computer=computer,
+    )
+    my_ob.static_meta_data = {"ob_tag": "also_dolphin"}
+
+    n_terms = 10
+    a_list = np.linspace(1, 5, n_terms)
+    b_list = np.linspace(2, 7, n_terms)
+    params = [{"a": a, "b": b} for a, b in zip(a_list, b_list)]
+
+    sync_results = [0.0] * n_terms
+
+    for i, p in enumerate(params):
+        sync_results[i] = my_ob(p)
+
+    async_results = [0.0] * n_terms
+
+    contexts = [abstract_objective_function.EvaluateContext() for _ in range(n_terms)]
+
+    async_results = asyncio.run(
+        async_helpers.async_eval_many(my_ob, params, ctxs=contexts)
+    )
+
+    print(f"{sync_results = }")
+    print(f"{async_results = }")
+    assert np.all(np.isclose(sync_results, async_results))
