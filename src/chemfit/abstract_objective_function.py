@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+from dataclasses import asdict, dataclass
 from typing import Any, Callable, Protocol, runtime_checkable
 
 
@@ -9,11 +10,25 @@ class SupportsGetMetaData(Protocol):
     def get_meta_data(self) -> dict[str, Any]: ...
 
 
+@dataclass
+class EvaluateContext:
+    quantities: dict[str, Any] | None = None
+    parameters: dict[str, Any] | None = None
+    loss: float | None = None
+    static: dict[str, Any] | None = None
+
+    def to_meta_data(self) -> dict[str, Any]:
+        return asdict(self)
+
+
 class ObjectiveFunctor(abc.ABC):
     @abc.abstractmethod
     def get_meta_data(self) -> dict[str, Any]:
         """Get meta data."""
         ...
+
+    def evaluate(self, parameters: dict[str, Any], ctx: EvaluateContext) -> float:
+        raise NotImplementedError
 
     @abc.abstractmethod
     def __call__(self, parameters: dict[str, Any]) -> float:
@@ -33,27 +48,27 @@ class ObjectiveFunctor(abc.ABC):
 class QuantityComputer(abc.ABC):
     def __init__(self):
         """Initialize the QuantityComputer."""
-
-        self._last_quantities: dict[str, Any] | None = None
-        self._last_params: dict[str, Any] | None = None
         self.static_meta_data: dict[str, Any] | None = None  # For static meta data
 
-    def get_meta_data(self) -> dict[str, Any]:
-        """Get meta data."""
-        meta_data = {"last": self._last_quantities, "last_params": self._last_params}
+    def evaluate(
+        self, parameters: dict[str, Any], ctx: EvaluateContext
+    ) -> dict[str, Any]:
+        """Evaluate the quantities without changing internal state."""
 
-        if self.static_meta_data is not None:
-            meta_data["meta"] = self.static_meta_data
+        ctx.parameters = parameters
+        ctx.quantities = self._compute(parameters, ctx)
 
-        return meta_data
+        if ctx.static is None:
+            ctx.static = self.static_meta_data
+        elif self.static_meta_data is not None:
+            ctx.static.update(self.static_meta_data)
 
-    def __call__(self, parameters: dict[str, Any]) -> dict[str, Any]:
-        self._last_params = parameters
-        self._last_quantities = self._compute(parameters)
-        return self._last_quantities
+        return ctx.quantities
 
     @abc.abstractmethod
-    def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
+    def _compute(
+        self, parameters: dict[str, Any], ctx: EvaluateContext
+    ) -> dict[str, Any]:
         """Compute dictionary of quantities for a given set of new parameters."""
         ...
 
@@ -69,30 +84,34 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
 
         super().__init__()
         self.quantity_computer = quantity_computer
-        self.loss_function = loss_function
         self.static_meta_data: dict[str, Any] | None = None
-        self._last_loss: float | None = None
+        self.loss_function = loss_function
+        self.last_ctx: EvaluateContext | None = None
 
     def get_meta_data(self) -> dict[str, Any]:
-        meta_data = {
-            "computer": self.quantity_computer.get_meta_data(),
-            "last_loss": self._last_loss,
-        }
+        if self.last_ctx is None:
+            return {}
 
-        if isinstance(self.loss_function, SupportsGetMetaData):
-            meta_data["loss_function"] = self.loss_function.get_meta_data()
+        return self.last_ctx.to_meta_data()
 
-        if self.static_meta_data is not None:
-            meta_data["meta"] = self.static_meta_data
+    def evaluate(self, parameters: dict[str, Any], ctx: EvaluateContext) -> float:
+        quantities = self.quantity_computer.evaluate(parameters, ctx)
 
-        return meta_data
-
-    def __call__(self, parameters: dict[str, Any]) -> float:
-        quantities = self.quantity_computer(parameters)
+        # Update or set static meta data if needed
+        if ctx.static is None:
+            ctx.static = self.static_meta_data
+        elif self.static_meta_data is not None:
+            ctx.static.update(self.static_meta_data)
 
         try:
-            self._last_loss = self.loss_function(quantities)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+            ctx.loss = self.loss_function(quantities)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
         except TypeError:
-            self._last_loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+            ctx.loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
 
-        return self._last_loss
+        return ctx.loss
+
+    def __call__(self, parameters: dict[str, Any]) -> float:
+        """Evaluate the quantities."""
+        ctx = EvaluateContext()
+        self.last_ctx = ctx
+        return self.evaluate(parameters, ctx)

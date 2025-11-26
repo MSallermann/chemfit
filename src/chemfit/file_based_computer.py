@@ -6,7 +6,7 @@ import time
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
-from chemfit.abstract_objective_function import QuantityComputer
+from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
 from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
@@ -103,7 +103,11 @@ class FileBasedQuantityComputer(QuantityComputer):
         self.poll_interval = poll_interval
         self.working_directory = working_directory
 
-    def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
+    def _compute(
+        self,
+        parameters: dict[str, Any],
+        ctx: EvaluateContext,  # noqa: ARG002
+    ) -> dict[str, Any]:
         if self.presubmit_hook is not None:
             self.presubmit_hook(parameters)
 
