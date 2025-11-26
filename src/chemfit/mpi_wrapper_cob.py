@@ -8,7 +8,7 @@ from typing import Any
 
 from mpi4py import MPI
 
-from chemfit.abstract_objective_function import ObjectiveFunctor
+from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.debug_utils import log_all_methods
 
@@ -26,7 +26,6 @@ def slice_up_range(n: int, n_ranks: int):
 
 class Signal(Enum):
     ABORT = -1
-    GATHER_META_DATA = 0
 
 
 class MPIWrapperCOB(ObjectiveFunctor):
@@ -58,13 +57,15 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def __enter__(self):
         return self
 
-    def worker_process_params(self, params: dict[str, Any]):
+    def worker_process_params(self, params: dict[str, Any], ctx: EvaluateContext):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
         # Therefore, the error handling is slightly different than on rank 0 and we log the exception here before re-raising
         local_total = float("Nan")
         try:
             # First we try to obtain a value the normal way
-            local_total = self.cob(params, idx_slice=slice(self.start, self.end))
+            local_total = self.cob(
+                params, ctx=ctx, idx_slice=slice(self.start, self.end)
+            )
 
             # if we don't get a real number, we convert it to a NaN
             if not isinstance(local_total, Real):
@@ -82,10 +83,10 @@ class MPIWrapperCOB(ObjectiveFunctor):
             # Sum up all local_totals into a global_total on the master rank
             _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
 
-    def worker_gather_meta_data(self):
-        local_meta_data = self.cob.gather_meta_data(
-            idx_slice=slice(self.start, self.end)
-        )
+    def worker_gather_meta_data(self, ctx: EvaluateContext):
+        # The local meta data should already be in the context
+        assert "cob_terms" in ctx.meta
+        local_meta_data = ctx.meta["cob_terms"]
         self.comm.gather(local_meta_data, root=0)
 
     def worker_loop(self):
@@ -101,23 +102,24 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
             if signal == Signal.ABORT:
                 break
-            if signal == Signal.GATHER_META_DATA:
-                self.worker_gather_meta_data()
-            elif isinstance(signal, dict):
-                params: dict[str, Any] = signal
-                self.worker_process_params(params)
 
-    def gather_meta_data(self) -> list[dict[str, Any] | None]:
+            if isinstance(signal, dict):
+                params: dict[str, Any] = signal
+                ctx = EvaluateContext()
+                self.worker_process_params(params, ctx)
+                self.worker_gather_meta_data(ctx)
+
+    def gather_meta_data(self, ctx: EvaluateContext):
         # Ensure only rank 0 can call this
         if self.rank != 0:
             msg = "`gather_meta_data` can only be used on rank 0"
             raise RuntimeError(msg)
 
-        self.comm.bcast(Signal.GATHER_META_DATA, root=0)
+        # The local meta data should already be in the context
+        assert "cob_terms" in ctx.meta
+        local_meta_data = ctx.meta["cob_terms"]
 
-        local_meta_data = self.cob.gather_meta_data(
-            idx_slice=slice(self.start, self.end)
-        )
+        # Broadcast the signal
         gathered = self.comm.gather(local_meta_data)
 
         # Since gathered will now be a list of list, we unpack it
@@ -126,32 +128,38 @@ class MPIWrapperCOB(ObjectiveFunctor):
         if gathered is not None:
             [total_meta_data.extend(m) for m in gathered]
 
-        return total_meta_data
+        ctx.meta["cob_terms"] = total_meta_data
 
-    def get_meta_data(self) -> dict[str, Any]:
-        d = self.cob.get_meta_data()
-        d["type"] = type(self).__name__
-        return d
-
-    def __call__(self, params: dict[str, Any]) -> float:
+    def __call__(
+        self, params: dict[str, Any], ctx: EvaluateContext | None = None
+    ) -> float:
         # Function to evaluate the objective function, to be called from rank 0
+
+        if ctx is None:
+            ctx = EvaluateContext()
 
         # Ensure only rank 0 can call this
         if self.rank != 0:
             msg = "`__call__` can only be used on rank 0"
             raise RuntimeError(msg)
 
+        # Broadcast the params to the worker ranks
         self.comm.bcast(params, root=0)
 
-        local_total = float("NaN")
+        local_total = float("NaN")  # So we get NaN in case the local compute fails
         try:
-            local_total = self.cob(params, idx_slice=slice(self.start, self.end))
+            # Compute one slice of the objective function on the main rank
+            local_total = self.cob(
+                params, ctx=ctx, idx_slice=slice(self.start, self.end)
+            )
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank
             global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
             if global_total is None:
                 global_total = float("NaN")
+
+            self.gather_meta_data(ctx)
 
         return global_total
 

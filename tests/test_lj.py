@@ -4,7 +4,10 @@ import numpy as np
 import pytest
 from conftest import LJAtomsFactory, apply_params_lj, construct_lj, e_lj
 
-from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    QuantityComputerObjectiveFunction,
+)
 from chemfit.ase_objective_function import SinglePointASEComputer
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.fitter import Fitter
@@ -46,11 +49,14 @@ def test_lj():
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
     fitter = Fitter(ob, initial_params=initial_params)
+
     opt_params = fitter.fit_scipy()
 
-    meta_data = ob.gather_meta_data()
+    ctx = EvaluateContext()
+    ob(opt_params, ctx)
+    terms_meta_data = ctx.to_meta_data()["meta"]["cob_terms"]
 
-    assert ob.n_terms() == len(meta_data)
+    assert ob.n_terms() == len(terms_meta_data)
     assert np.isclose(opt_params["epsilon"], eps)
     assert np.isclose(opt_params["sigma"], sigma)
 
@@ -73,9 +79,12 @@ def test_lj_mpi():
         if mpi.rank == 0:
             fitter = Fitter(mpi, initial_params=initial_params)
             opt_params = fitter.fit_scipy()
-            meta_data = mpi.gather_meta_data()
 
-            assert ob.n_terms() == len(meta_data)
+            ctx = EvaluateContext()
+            ob(opt_params, ctx)
+            terms_meta_data = ctx.to_meta_data()["meta"]["cob_terms"]
+
+            assert ob.n_terms() == len(terms_meta_data)
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)
         else:

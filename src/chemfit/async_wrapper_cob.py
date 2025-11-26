@@ -3,8 +3,8 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from chemfit.abstract_objective_function import ObjectiveFunctor
-from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.combined_objective_function import DEFAULT_SLICE, CombinedObjectiveFunction
 
 if TYPE_CHECKING:
     from concurrent.futures import ThreadPoolExecutor
@@ -44,7 +44,7 @@ class AsyncWrapperCOB(ObjectiveFunctor):
         tb: object,
     ): ...
 
-    async def get_contrib(self, params: dict[str, Any], idx: int):
+    async def async_term(self, params: dict[str, Any], ctx: EvaluateContext, idx: int):
         """
         Evaluate a single term of the objective asynchronously.
 
@@ -57,34 +57,21 @@ class AsyncWrapperCOB(ObjectiveFunctor):
 
         """
         loop = asyncio.get_running_loop()
+
         return await loop.run_in_executor(
             self._executor,
-            self.cob,
+            lambda params, ctx: self.cob.weights[idx]
+            * self.cob.objective_functions[idx](params, ctx),
             params,
-            slice(idx, idx + 1),
+            ctx,
         )
 
-    def get_meta_data(self) -> dict[str, Any]:
-        """
-        Get metadata from the underlying objective.
-
-        Returns:
-            Metadata dictionary.
-
-        """
-        return self.cob.get_meta_data()
-
-    def gather_meta_data(self) -> list[dict[str, Any] | None]:
-        """
-        Get metadata for all sub-objectives.
-
-        Returns:
-            List of metadata dictionaries or None.
-
-        """
-        return self.cob.gather_meta_data()
-
-    async def async_call(self, params: dict[str, Any]) -> float:
+    async def async_call(
+        self,
+        parameters: dict[str, Any],
+        ctx: EvaluateContext,
+        idx_slice: slice = DEFAULT_SLICE,
+    ) -> float:
         """
         Evaluate all objective terms concurrently.
 
@@ -95,11 +82,31 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             Sum of all term contributions.
 
         """
-        futures = [self.get_contrib(params, idx) for idx in range(self.cob.n_terms())]
-        results = await asyncio.gather(*futures)
-        return float(sum(results))
 
-    def __call__(self, params: dict[str, Any]) -> float:
+        contexts, idx_list = self.cob.prepare_evaluation(
+            parameters=parameters, ctx=ctx, idx_slice=idx_slice
+        )
+
+        assert ctx.loss is not None  # for pyright
+
+        futures = [
+            self.async_term(parameters, ctx, idx)
+            for ctx, idx in zip(contexts, idx_list, strict=True)
+        ]
+
+        results = await asyncio.gather(*futures)
+
+        CombinedObjectiveFunction.collect_per_term_data(ctx, contexts)
+
+        ctx.loss = float(sum(results))
+        return ctx.loss
+
+    def __call__(
+        self,
+        params: dict[str, Any],
+        ctx: EvaluateContext | None = None,
+        idx_slice: slice = DEFAULT_SLICE,
+    ) -> float:
         """
         Synchronously evaluate the objective via asyncio.
 
@@ -110,4 +117,8 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             Total objective value.
 
         """
-        return float(asyncio.run(self.async_call(params)))
+
+        if ctx is None:
+            ctx = EvaluateContext()
+
+        return float(asyncio.run(self.async_call(params, ctx, idx_slice)))
