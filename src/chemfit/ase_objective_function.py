@@ -9,7 +9,7 @@ from ase.calculators.calculator import Calculator
 from ase.io import read
 from ase.optimize import BFGS
 
-from chemfit.abstract_objective_function import QuantityComputer
+from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
 from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
@@ -141,27 +141,11 @@ class SinglePointASEComputer(QuantityComputer):
         # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
         self._atoms = None
 
-    def get_meta_data(self) -> dict[str, Any]:
-        """
-        Retrieve metadata for this objective function.
-
-        Returns:
-            dict[str, Union[str, int, float]]: Dictionary containing:
-                tag: User-defined label.
-                n_atoms: Number of atoms in the configuration.
-                weight: Final weight after any scaling.
-                last_energy: The last computed energy
-
-        """
-        meta_data = super().get_meta_data()
-        meta_data.update(
-            {
-                "tag": self.tag,
-                "n_atoms": self.n_atoms,
-                "type": type(self).__name__,
-            }
-        )
-        return meta_data
+        self.static_meta_data = {
+            "tag": self.tag,
+            "n_atoms": self.n_atoms,
+            "type": type(self).__name__,
+        }
 
     def create_atoms_object(self) -> Atoms:
         """
@@ -194,7 +178,11 @@ class SinglePointASEComputer(QuantityComputer):
         """The number of atoms in the atoms object. May trigger creation of the atoms object."""
         return len(self.atoms)
 
-    def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
+    def _compute(
+        self,
+        parameters: dict[str, Any],
+        ctx: EvaluateContext,  # noqa: ARG002
+    ) -> dict[str, Any]:
         """
         Compute the quantities. This default implementation simply calls the `calculate` function and then returns the results dict from the calculator.
 
@@ -256,9 +244,11 @@ class MinimizationASEComputer(SinglePointASEComputer):
         optimizer = BFGS(self.atoms, logfile=None)
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
 
-    def _compute(self, parameters: dict[str, Any]) -> dict[str, Any]:
+    def _compute(
+        self, parameters: dict[str, Any], ctx: EvaluateContext
+    ) -> dict[str, Any]:
         # First relax the structure
         self.relax_structure(parameters=parameters)
 
         # Then call the single point compute function
-        return super()._compute(parameters=parameters)
+        return super()._compute(parameters=parameters, ctx=ctx)

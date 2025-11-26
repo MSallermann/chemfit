@@ -15,7 +15,11 @@ class MyFunctor(abstract_objective_function.ObjectiveFunctor):
 
 
 class MyComputer(abstract_objective_function.QuantityComputer):
-    def _compute(self, parameters: dict[str, float]) -> dict[str, float]:
+    def _compute(
+        self,
+        parameters: dict[str, float],
+        ctx: abstract_objective_function.EvaluateContext,  # noqa: ARG002
+    ) -> dict[str, float]:
         return {"res": parameters["a"] ** 2 - parameters["b"]}
 
 
@@ -40,7 +44,9 @@ def test():
 
     computer = MyComputer()
     computer.static_meta_data = {"computer_tag": "dolphin"}
-    quants = computer(params)
+    quants = computer.evaluate(
+        params, ctx=abstract_objective_function.EvaluateContext()
+    )
     assert np.isclose(quants["res"], excepted_res)
 
     my_ob1 = abstract_objective_function.QuantityComputerObjectiveFunction(
@@ -67,13 +73,10 @@ def test():
     meta_data = my_ob3.get_meta_data()
 
     meta_data_expected = {
-        "computer": {
-            "last": {"res": 1.0},
-            "last_params": {"a": 2.0, "b": 3.0},
-            "meta": {"computer_tag": "dolphin"},
-        },
-        "last_loss": 4.0,
-        "meta": {"ob_tag": "also_dolphin"},
+        "quantities": {"res": 1.0},
+        "parameters": {"a": 2.0, "b": 3.0},
+        "loss": 4.0,
+        "static": {"computer_tag": "dolphin", "ob_tag": "also_dolphin"},
     }
 
     for k, v in items_nested(meta_data):
