@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import numpy as np
 from ase import Atoms
 from ase.calculators.calculator import Calculator
 from ase.io import read
@@ -137,13 +136,10 @@ class SinglePointASEComputer(QuantityComputer):
 
         self.tag = tag or "tag_None"
 
-        # NOTE: You should probably use the `self.atoms` property
-        # When the atoms object is requested for the first time, it will be lazily loaded via the atoms_factory
-        self._atoms = None
+        self._atoms: Atoms | None = None
 
         self.static_meta_data = {
             "tag": self.tag,
-            "n_atoms": self.n_atoms,
             "type": type(self).__name__,
         }
 
@@ -165,23 +161,20 @@ class SinglePointASEComputer(QuantityComputer):
 
         return atoms
 
-    @property
-    def atoms(self):
-        """The atoms object. Accessing this property for the first time will create the atoms object."""
-        # Check if the atoms have been created already and if not create them
+    def prepare_ctx(self, parameters: dict[str, Any], ctx: EvaluateContext):
         if self._atoms is None:
-            self._atoms = self.create_atoms_object()
-        return self._atoms
+            self._atoms = self.atoms_factory()
 
-    @property
-    def n_atoms(self):
-        """The number of atoms in the atoms object. May trigger creation of the atoms object."""
-        return len(self.atoms)
+        # Since the calculation may change the internal state of the calculator
+        # we create a new calculator and a new atoms object in the context
+        ctx.temp.atoms = self._atoms.copy()
+        self.calc_factory(ctx.temp.atoms)
+        self.param_applier(ctx.temp.atoms, parameters)
 
     def _compute(
         self,
         parameters: dict[str, Any],
-        ctx: EvaluateContext,  # noqa: ARG002
+        ctx: EvaluateContext,
     ) -> dict[str, Any]:
         """
         Compute the quantities. This default implementation simply calls the `calculate` function and then returns the results dict from the calculator.
@@ -190,17 +183,15 @@ class SinglePointASEComputer(QuantityComputer):
             parameters: Dictionary of parameter names to float values.
 
         """
-        assert self.atoms.calc is not None
 
-        self.param_applier(self.atoms, parameters)
+        self.prepare_ctx(parameters, ctx)
 
-        self.atoms.calc.calculate(self.atoms)
+        assert ctx.temp.atoms.calc is not None
+        ctx.temp.atoms.calc.calculate(ctx.temp.atoms)
 
         quants = {}
         for qp in self.quantity_processors:
-            quants.update(qp(self.atoms.calc, self.atoms))
-
-        self._last_quantities = quants
+            quants.update(qp(ctx.temp.atoms.calc, ctx.temp.atoms))
 
         return quants
 
@@ -228,27 +219,16 @@ class MinimizationASEComputer(SinglePointASEComputer):
         self.max_steps = max_steps
         super().__init__(**kwargs)
 
-        # We load the atoms object and make a copy of its positions
-        self.positions_reference = np.array(self.atoms.positions, copy=True)
-
-    def relax_structure(self, parameters: dict[str, Any]) -> None:
-        self.param_applier(self.atoms, parameters)
-
-        self.atoms.set_velocities(np.zeros((self.n_atoms, 3)))
-        self.atoms.set_positions(self.positions_reference)
-
-        assert self.atoms.calc is not None
-
-        self.atoms.calc.calculate(self.atoms)
-
-        optimizer = BFGS(self.atoms, logfile=None)
-        optimizer.run(fmax=self.fmax, steps=self.max_steps)
-
     def _compute(
         self, parameters: dict[str, Any], ctx: EvaluateContext
     ) -> dict[str, Any]:
-        # First relax the structure
-        self.relax_structure(parameters=parameters)
+        self.prepare_ctx(parameters, ctx)
 
-        # Then call the single point compute function
-        return super()._compute(parameters=parameters, ctx=ctx)
+        optimizer = BFGS(ctx.temp.atoms, logfile=None)
+        optimizer.run(fmax=self.fmax, steps=self.max_steps)
+
+        quants = {}
+        for qp in self.quantity_processors:
+            quants.update(qp(ctx.temp.atoms.calc, ctx.temp.atoms))
+
+        return quants
