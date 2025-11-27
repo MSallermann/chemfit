@@ -4,7 +4,10 @@ from typing import Any
 
 import numpy as np
 
-from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    QuantityComputerObjectiveFunction,
+)
 from chemfit.file_based_computer import FileBasedQuantityComputer
 from chemfit.fitter import Fitter
 
@@ -29,12 +32,15 @@ def loss_function(quantities: dict[str, Any], ref_y: Iterable[float]) -> float:
 
 def test_squares_file_based():
     test_dir = Path(__file__).parent
+
     ref_file = test_dir / Path("input/ref_data.txt")
     # Get the reference data for 2.0*(x-2)**2
     data = np.loadtxt(ref_file)
     ref_quantities = {"y": data[:, 0], "x": data[:, 1]}
+
     # Output file created by the FileBasedQuantityComputer
-    output_file = test_dir / Path("output/output_square_function.txt")
+    output_file = Path("output/output_square_function.txt")
+
     # Script that creates the output file
     script_file = test_dir / Path("input/square_function.py")
 
@@ -43,22 +49,30 @@ def test_squares_file_based():
 
     # Define the command that will be called to create the output file with given parameters
     def callable_cmd(
-        parameters: dict[str, float], script_file: Path, output_file: Path
+        parameters: dict[str, float],
+        workdir: Path,
     ) -> list[str]:
-        return f"python {script_file} {parameters['prefactor']} {output_file}".split()
+        return f"python {script_file} {parameters['prefactor']} {workdir / output_file}".split()
 
     output_parser = MyOutputParser()
+
     file_based_computer = FileBasedQuantityComputer(
         [output_file],
-        lambda p: callable_cmd(p, script_file, output_file),
+        callable_cmd,
         output_parser,
         poll_interval=0.5,
+        base_working_directory=test_dir / ".filebased_workdir",
+        subprocess_run_args={"capture_output": True},
+        delete_temp_workdirs=True,
     )
 
     ob_func = QuantityComputerObjectiveFunction(
         loss_function=lambda q: loss_function(q, ref_y=ref_quantities["y"]),
         quantity_computer=file_based_computer,
     )
+
+    ctx = EvaluateContext()
+    ob_func(initial_guess, ctx)
 
     fitter = Fitter(ob_func, initial_params=initial_guess)
 
