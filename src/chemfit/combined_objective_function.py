@@ -56,7 +56,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
                 objective functions, or if any weight is negative.
 
         """
-        self.last_ctx: EvaluateContext | None = None
 
         # Convert to list internally for mutability
         self.objective_functions: list[ObjectiveFunctor] = transform_generic_callables(

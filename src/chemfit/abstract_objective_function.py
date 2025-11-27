@@ -81,7 +81,6 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
         self.quantity_computer = quantity_computer
         self.static_meta_data: dict[str, Any] = {}
         self.loss_function = loss_function
-        self.last_ctx: EvaluateContext | None = None
 
     def __call__(
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
