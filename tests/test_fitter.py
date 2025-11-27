@@ -2,7 +2,7 @@ import numpy as np
 from pydictnest import get_nested, has_nested, items_nested
 
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.fitter import CallbackInfo, Fitter
+from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.utils import check_params_near_bounds
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
@@ -12,9 +12,15 @@ NG_BUDGET = 2000
 
 
 def collect_progress(
-    info: CallbackInfo,
+    step: int,
+    ctxs: list[FitterEvaluateContext],
     progress: list,
 ):
+    info = {
+        "step": step,
+        "opt_loss": ctxs[0].opt_loss,
+        "opt_params": ctxs[0].opt_params,
+    }
     progress.append(info)
 
 
@@ -32,7 +38,8 @@ def test_with_square_func():
 
     progress = []
     fitter.register_callback(
-        lambda args: collect_progress(args, progress=progress), n_steps=NSTEPS_CB
+        lambda step, ctxs: collect_progress(step, ctxs, progress=progress),
+        n_steps=NSTEPS_CB,
     )
     optimal_params = fitter.fit_scipy()
 
@@ -40,40 +47,27 @@ def test_with_square_func():
     assert np.isclose(optimal_params["x"], 2.0)
     assert np.isclose(optimal_params["y"], -1.0)
 
-    init_val = obj_func(initial_params)
-    opt_val = obj_func(optimal_params)
-    assert fitter.info.initial_value is not None
-    assert fitter.info.final_value is not None
-    assert np.isclose(init_val, fitter.info.initial_value)
-    assert np.isclose(opt_val, fitter.info.final_value)
-
     for opt in NG_SOLVERS:
         progress = []
         optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET, optimizer_str=opt)
 
         print(f"{opt = }")
         print(f"{optimal_params = }")
-        print(f"{fitter.info = }")
         print(f"{len(progress) = }")
         print(f"{NG_BUDGET // NSTEPS_CB = }")
 
-        print(f"{progress[-1].opt_loss = }")
-        print(f"{progress[-1].opt_params = }")
+        print(f"{progress[-1]['opt_loss'] = }")
+        print(f"{progress[-1]['opt_params'] = }")
         print(f"{obj_func(optimal_params) = }")
-        print(f"{fitter.info.final_value = }")
 
         # This assert is interesting because intuitively we would expect,
         # these to be exactly equal, but this is solver dependent!!
         # The "CMA" solver, for instance, may recommend parameters it has not actually visited yet
         # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
         # obj_func(optimal_params) value may be very slightly different
-        assert np.isclose(progress[-1].opt_loss, obj_func(optimal_params))
+        assert np.isclose(progress[-1]["opt_loss"], obj_func(optimal_params))
         assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
         assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
-        assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-        assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
-
-    print(f"{fitter.info = }")
 
 
 def test_with_square_func_bounds():
@@ -98,28 +92,18 @@ def test_with_square_func_bounds():
     optimal_params = fitter.fit_scipy()
 
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
 
     assert len(check_params_near_bounds(optimal_params, bounds, 1e-2)) == 1
     assert np.isclose(optimal_params["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
-    assert fitter.info.initial_value is not None
-    assert fitter.info.final_value is not None
-    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     for opt in NG_SOLVERS:
         optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET, optimizer_str=opt)
         print(f"{opt = }")
         print(f"{optimal_params = }")
-        print(f"{fitter.info = }")
 
         assert np.isclose(optimal_params["x"], 1.5, atol=NG_ATOL)
         assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
-        assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-        assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
-
-    print(f"{fitter.info = }")
 
 
 def test_with_nested_dict():
@@ -140,22 +124,14 @@ def test_with_nested_dict():
 
     optimal_params = fitter.fit_scipy()
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
     assert np.isclose(optimal_params["params"]["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
-    assert fitter.info.initial_value is not None
-    assert fitter.info.final_value is not None
-    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
     optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET)
 
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
     assert np.isclose(optimal_params["params"]["x"], 1.5, atol=NG_ATOL)
     assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
-    assert np.isclose(obj_func(initial_params), fitter.info.initial_value)
-    assert np.isclose(obj_func(optimal_params), fitter.info.final_value)
 
 
 def test_with_complicated_dict():
@@ -189,24 +165,12 @@ def test_with_complicated_dict():
 
     optimal_params = fitter.fit_scipy()
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
     check_solution(optimal_params)
-    assert fitter.info.initial_value is not None
-    assert fitter.info.final_value is not None
-    assert np.isclose(ob(initial_params), fitter.info.initial_value)
-    assert np.isclose(ob(optimal_params), fitter.info.final_value)
 
     optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET)
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
+
     check_solution(optimal_params)
-    assert fitter.info.initial_value is not None
-    assert fitter.info.final_value is not None
-
-    assert np.isclose(ob(initial_params), fitter.info.initial_value)
-    assert np.isclose(ob(optimal_params), fitter.info.final_value)
-
-    print(f"{fitter.info = }")
 
 
 if __name__ == "__main__":

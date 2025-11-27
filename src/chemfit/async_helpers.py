@@ -1,12 +1,14 @@
 import asyncio
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Callable
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.abstract_objective_function import EvaluateContext
 
 
 async def async_eval_one(
-    obj: ObjectiveFunctor, params: dict[str, Any], ctx: EvaluateContext
+    obj: Callable[[dict[str, Any], EvaluateContext], float],
+    params: dict[str, Any],
+    ctx: EvaluateContext,
 ):
     """
     Run a single evaluation "asynchronously" using a fresh EvaluateContext.
@@ -19,7 +21,7 @@ async def async_eval_one(
 
 
 async def async_eval_many(
-    obj: ObjectiveFunctor,
+    obj: Callable[[dict[str, Any], EvaluateContext], float],
     params_list: Iterable[dict[str, Any]],
     ctxs: Iterable[EvaluateContext],
 ):

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import math
 import time
-from dataclasses import dataclass
-from functools import wraps
 from numbers import Real
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import nevergrad as ng
 import numpy as np
@@ -17,33 +16,85 @@ from pydictnest import (
 )
 from scipy.optimize import OptimizeResult, minimize
 
+from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.async_helpers import async_eval_many
 from chemfit.utils import check_params_near_bounds
+from chemfit.wrap_funcs import to_objective_functor
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class FitInfo:
-    initial_value: float | None = None
-    final_value: float | None = None
-    time_taken: float | None = None
-    n_evals: int = 0
+class FitterEvaluateContext(EvaluateContext):
+    def __init__(self):
+        """Initialize the FitterEvaluateContext."""
+        super().__init__()
+        self.n_evals: int = 0
+        self.opt_loss: float | None = None
+        self.opt_params: dict[str, Any] | None = None
 
 
-@dataclass
-class CallbackInfo:
-    opt_params: dict[str, Any]
-    opt_loss: float
-    cur_params: dict[str, Any]
-    cur_loss: float
-    step: int
-    info: FitInfo
+class FitterObjectiveFunctor(ObjectiveFunctor):
+    def __init__(
+        self,
+        wrap_me: ObjectiveFunctor,
+        swallow_exceptions: bool = False,
+        log_exceptions: bool = True,
+    ):
+        """Initialize the FitterObjectiveFunctor."""
+        self.wrap_me = wrap_me
+        self.value_bad_params = 1e5
+        self.swallow_exceptions: bool = swallow_exceptions
+        self.log_exceptions: bool = log_exceptions
+
+    def __call__(  # type: ignore
+        self, parameters: dict[str, Any], ctx: FitterEvaluateContext | None = None
+    ) -> float:
+        if ctx is None:
+            ctx = FitterEvaluateContext()
+
+        # first we try if we can get a value at all
+        try:
+            value = self.wrap_me(parameters, ctx)
+        except Exception as e:
+            if self.log_exceptions:
+                logger.exception(
+                    "Caught exception while evaluating objective function."
+                )
+
+            if not self.swallow_exceptions:
+                raise e
+
+            value = float("nan")
+
+        ctx.n_evals += 1
+
+        # then we make sure that the value is a float
+        if not isinstance(value, Real):
+            logger.debug(
+                f"Objective function did not return a single float, but returned `{value}` with type {type(value)}. Clipping loss to {self.value_bad_params}"
+            )
+
+            value = float(self.value_bad_params)
+
+        if math.isnan(value):
+            logger.debug(
+                f"Objective function returned NaN. Clipping loss to {self.value_bad_params}"
+            )
+            value = self.value_bad_params
+
+        loss = float(value)
+
+        if ctx.opt_loss is None or loss < ctx.opt_loss:
+            ctx.opt_loss = loss
+            ctx.opt_params = parameters
+
+        return loss
 
 
 class Fitter:
     def __init__(
         self,
-        objective_function: Callable[[dict[str, Any]], float],
+        objective_function: Callable[[dict[str, Any]], float] | ObjectiveFunctor,
         initial_params: dict[str, Any],
         bounds: dict[str, Any] | None = None,
         near_bound_tol: float | None = None,
@@ -65,7 +116,12 @@ class Fitter:
                 Threshold value beyond which the objective function is considered to be in a poor or invalid region.
 
         """
-        self.objective_function = self.ob_func_wrapper(objective_function)
+
+        # Make sure that we have an ObjectiveFunctor instance
+        if not isinstance(objective_function, ObjectiveFunctor):
+            objective_function = to_objective_functor(objective_function)
+
+        self.objective_function = FitterObjectiveFunctor(objective_function)
 
         self.initial_parameters = initial_params
 
@@ -78,11 +134,15 @@ class Fitter:
 
         self.near_bound_tol = near_bound_tol
 
-        self.info = FitInfo()
+        self.contexts: list[FitterEvaluateContext] = []
 
-        self.callbacks: list[tuple[Callable[[CallbackInfo], None], int]] = []
+        self.callbacks: list[
+            tuple[Callable[[int, list[FitterEvaluateContext]], None], int]
+        ] = []
 
-    def register_callback(self, func: Callable[[CallbackInfo], None], n_steps: int):
+    def register_callback(
+        self, func: Callable[[int, list[FitterEvaluateContext]], None], n_steps: int
+    ):
         """
         Register a callback which is executed after every `n_steps` of the optimization.
 
@@ -102,95 +162,35 @@ class Fitter:
         """
         self.callbacks.append((func, n_steps))
 
-    def ob_func_wrapper(self, ob_func: Any) -> Callable[[dict[str, Any]], float]:
-        """Wraps the objective function and applies some checks plus logging."""
-
-        @wraps(ob_func)
-        def wrapped_ob_func(params: dict[str, Any]) -> float:
-            # first we try if we can get a value at all
-            try:
-                value = ob_func(params)
-                self.info.n_evals += 1
-            except Exception as e:
-                # If we catch an exception we should just crash the code -> log and re-raise
-                logger.exception(
-                    "Caught exception while evaluating objective function.",
-                    stack_info=True,
-                    stacklevel=2,
-                )
-                raise e
-
-            # then we make sure that the value is a float
-            if not isinstance(value, Real):
-                logger.debug(
-                    f"Objective function did not return a single float, but returned `{value}` with type {type(value)}. Clipping loss to {self.value_bad_params}"
-                )
-                value = float(self.value_bad_params)
-
-            if math.isnan(value):
-                logger.debug(
-                    f"Objective function returned NaN. Clipping loss to {self.value_bad_params}"
-                )
-                value = self.value_bad_params
-
-            return float(value)
-
-        return wrapped_ob_func
-
-    def _produce_callback(
+    def unify_callbacks(
         self,
-    ) -> tuple[Callable[[CallbackInfo], None], int] | tuple[None, int]:
+    ) -> (
+        tuple[Callable[[int, list[FitterEvaluateContext]], None], int]
+        | tuple[None, int]
+    ):
         """Generate a single callback from the list of callbacks."""
+
         if len(self.callbacks) == 0:
             return None, 0
 
         min_n_steps = min([n_steps for (_, n_steps) in self.callbacks])
 
-        def callback(callback_args: CallbackInfo):
+        def callback(step: int, ctxs: list[FitterEvaluateContext]):
             for cb, n_steps in self.callbacks:
-                if callback_args.step % n_steps == 0:
-                    cb(callback_args)
+                if step % n_steps == 0:
+                    cb(step, ctxs)
 
         return callback, min_n_steps
 
     def hook_pre_fit(self):
         """A hook, which is invoked before optimizing."""
-        # Overwrite with a fresh FitInfo object
-        self.info = FitInfo()
-
         logger.info("Start fitting")
-
-        self.info.initial_value = self.objective_function(self.initial_parameters)
-        logger.info(f"    Initial obj func: {self.info.initial_value}")
-
-        if self.info.initial_value == self.value_bad_params:
-            logger.warning(
-                f"Starting optimization in a `bad` region. Objective function could not be evaluated properly. Loss has been set to {self.value_bad_params = }"
-            )
-        elif self.info.initial_value > self.value_bad_params:
-            new_value_bad_params = 1.1 * self.info.initial_value
-            logger.warning(
-                f"Starting optimization in a high loss region. Loss is {self.info.initial_value}, which is greater than {self.value_bad_params = }. Adjusting to {new_value_bad_params = }."
-            )
-            self.value_bad_params = new_value_bad_params
-
-        self.info.n_evals = 0
         self.time_fit_start = time.time()
 
     def hook_post_fit(self, opt_params: dict[str, Any]):
         """A hook, which is invoked after optimizing."""
         self.time_fit_end = time.time()
-        self.info.time_taken = self.time_fit_end - self.time_fit_start
-
-        assert self.info.final_value is not None
-
-        if self.info.final_value >= self.value_bad_params:
-            logger.warning(
-                f"Ending optimization in a `bad` region. Loss is greater or equal to {self.value_bad_params = }"
-            )
-
         logger.info("End fitting")
-        logger.info(f"    Info {self.info}")
 
         if self.near_bound_tol is not None:
             self.problematic_params = check_params_near_bounds(
@@ -207,7 +207,11 @@ class Fitter:
                     )
 
     def fit_nevergrad(
-        self, budget: int, optimizer_str: str = "NgIohTuned", **kwargs
+        self,
+        budget: int,
+        optimizer_str: str = "NgIohTuned",
+        num_workers: int = 1,
+        **kwargs,
     ) -> dict[str, Any]:
         self.hook_pre_fit()
 
@@ -215,13 +219,11 @@ class Fitter:
         flat_initial_params = flatten_dict(self.initial_parameters)
 
         ng_params = ng.p.Dict()
-
         for k, v in flat_initial_params.items():
             # If `k` is in bounds, fetch the lower and upper bound
             # It `k` is not in bounds just put lower=None and upper=None
             lower, upper = flat_bounds.get(k, (None, None))
             ng_params[k] = ng.p.Scalar(init=v, lower=lower, upper=upper)
-
         instru = ng.p.Instrumentation(ng_params)
 
         try:
@@ -232,69 +234,42 @@ class Fitter:
 
         optimizer = OptimizerCls(parametrization=instru, budget=budget)
 
-        def f_ng(p: dict[str, Any]) -> float:
-            params = unflatten_dict(p, dict_factory=dict[str, Any])
-            return self.objective_function(params)
+        def f_ng(parameters: dict[str, Any], ctx: FitterEvaluateContext) -> float:
+            params = unflatten_dict(parameters, dict_factory=dict)
+            return self.objective_function(params, ctx)
 
-        callback, n_steps = self._produce_callback()
+        callback, n_steps = self.unify_callbacks()
 
-        assert self.info.initial_value is not None
+        # We need one context per worker
+        self.contexts = [FitterEvaluateContext() for _ in range(num_workers)]
 
-        opt_loss = self.info.initial_value
+        for step in range(budget // num_workers):
+            # On the first evaluation we ensure that the optimizer suggests the initial params
+            if step == 0:
+                optimizer.suggest(flat_initial_params)
 
-        for i in range(budget):
-            if i == 0:
-                flat_params = flat_initial_params
-                cur_loss = self.info.initial_value
-                p = optimizer.parametrization.spawn_child()
-                p.value = (  # type: ignore
-                    (flat_params,),
-                    {},
-                )
-                optimizer.tell(p, self.info.initial_value)
+            # Ask for num_workers parameters to evaluate in parallel
+            asked_params = [optimizer.ask() for _ in range(num_workers)]
+            flat_params = [p.value[0][0] for p in asked_params]
+
+            if num_workers == 1:
+                losses = [f_ng(flat_params[0], self.contexts[0])]
             else:
-                p = optimizer.ask()
-                args, kwargs = p.value
+                losses = asyncio.run(async_eval_many(f_ng, flat_params, self.contexts))  # pyright: ignore[reportArgumentType]
 
-                flat_params = args[0]
-                cur_loss = f_ng(flat_params)
+            [
+                optimizer.tell(params, loss)
+                for params, loss in zip(asked_params, losses, strict=True)
+            ]
 
-                optimizer.tell(p, cur_loss)
-
-            opt_loss = min(opt_loss, cur_loss)
-
-            if callback is not None and i % n_steps == 0:
-                recommendation = optimizer.provide_recommendation()
-                args, kwargs = recommendation.value
-                flat_opt_params = args[0]
-
-                opt_params = unflatten_dict(
-                    flat_opt_params, dict_factory=dict[str, Any]
-                )
-                cur_params = unflatten_dict(flat_params, dict_factory=dict[str, Any])
-
-                callback(
-                    CallbackInfo(
-                        opt_params=opt_params,
-                        opt_loss=opt_loss,
-                        cur_params=cur_params,
-                        cur_loss=cur_loss,
-                        step=i,
-                        info=self.info,
-                    )
-                )
+            if callback is not None and step % n_steps == 0:
+                callback(budget, self.contexts)
 
         recommendation = optimizer.provide_recommendation()
         args, kwargs = recommendation.value
 
         # Our optimal params are the first positional argument
         flat_opt_params = args[0]
-
-        # loss is an optional field in the recommendation so we have to test if it has been written
-        if recommendation.loss is not None:
-            self.info.final_value = recommendation.loss
-        else:  # otherwise we compute the optimal loss
-            self.info.final_value = self.objective_function(flat_opt_params)
 
         opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
 
@@ -339,7 +314,6 @@ class Fitter:
         # Scipy expects a function with n real-valued parameters f(x)
         # but our objective function takes a dictionary of parameters.
         # Moreover, the dictionary might not be flat but nested.
-
         # Therefore, as a first step, we flatten the bounds and
         # initial parameter dicts
         flat_params = flatten_dict(self.initial_parameters)
@@ -356,80 +330,30 @@ class Fitter:
         else:
             bounds = np.array([flat_bounds.get(k, (None, None)) for k in self._keys])
 
+        # Since we know that scipy.optimize works synchronously, we create a single context, which we'll keep alive.
+        self.contexts = [FitterEvaluateContext()]
+
         # The local objective function first creates a flat dictionary from the `x` array
         # by zipping it with the captured flattened keys and then unflattens the dictionary
         # to pass it to the objective functions
         def f_scipy(x: npt.NDArray) -> float:
             p = unflatten_dict(dict(zip(self._keys, x)), dict_factory=dict[str, Any])
-            return self.objective_function(p)
-
-        # Then we need to handle some awkwardness:
-        #   1. Scipy does not mandate all of the optimizers
-        #      to write all the values we need for our callback system.
-        #      Therefore, we need to roll our own bookkeeping logic for the
-        #      number of steps taken.
-        #   2. Scipy mandates a different function signature, so we have to "translate"
-        # We do this in the following functor:
-        class CallbackScipy:
-            def __init__(
-                self,
-                keys: list[str],
-                info: FitInfo,
-                callback: Callable[[CallbackInfo], None],
-                n_steps: int,
-            ) -> None:
-                self._step: int = 0
-                self._keys = keys
-                self._info = info
-                self._callback = callback
-                self._n_steps: int = n_steps
-
-            def __call__(self, intermediate_result: OptimizeResult):
-                # This callback is executed after *every* iteration
-
-                # We may have to track the step ourselves
-                self._step += 1
-
-                # If we are given "nit", we use it instead
-                if "nit" in intermediate_result:
-                    self._step = intermediate_result.nit
-
-                if self._step % self._n_steps == 0:
-                    x = intermediate_result.x
-
-                    cur_params = unflatten_dict(dict(zip(self._keys, x)))
-                    cur_loss = intermediate_result.fun
-
-                    # We assume (can be wrong though)
-                    opt_params = cur_params
-                    opt_loss = cur_loss
-
-                    self._callback(
-                        CallbackInfo(
-                            opt_params=opt_params,
-                            opt_loss=opt_loss,
-                            cur_params=cur_params,
-                            cur_loss=cur_loss,
-                            step=self._step,
-                            info=self._info,
-                        )
-                    )
+            cast("dict[str, Any]", p)
+            assert self.contexts is not None
+            return self.objective_function(p, ctx=self.contexts[0])
 
         # First concatenate the list of callbacks into a single function
-        callback, n_steps = self._produce_callback()
+        callback, n_steps = self.unify_callbacks()
 
-        # Then, we wrap it in a way that scipy understands
-        if callback is not None:
-            callback_scipy = CallbackScipy(
-                keys=list(self._keys),
-                info=self.info,
-                callback=callback,
-                n_steps=n_steps,
-            )
-        else:
-            callback_scipy = None
+        def callback_scipy(intermediate_result: OptimizeResult):
+            if "nit" in intermediate_result:
+                step = intermediate_result.nit
+            else:
+                step = self.contexts[0].n_evals
 
-        # ob = partial(self.ob_func_wrapper, ob_func=f_scipy)
+            if callback is not None and step % n_steps == 0:
+                callback(step, self.contexts)
+
         res = minimize(
             f_scipy, x0, method=method, bounds=bounds, **kwargs, callback=callback_scipy
         )
@@ -437,7 +361,6 @@ class Fitter:
         if not res.success:
             logger.warning(f"Fit did not converge: {res.message}")
 
-        self.info.final_value = res.fun
         opt_params = dict(zip(self._keys, res.x))
 
         opt_params = unflatten_dict(opt_params)
