@@ -164,7 +164,7 @@ class FileBasedQuantityComputer(QuantityComputer):
             # Therefore, waiting until the output files are actually present is a valid strategy.
             # Of course, we might still run into problems in the case of output files which get continuously appended to.
             # These could be present already, but not complete and thus fool us into thinking that the script has completed it's run.
-            if all(o.exists() for o in self.output_files):
+            if all(o.exists() for o in ctx.temp.output_files):
                 # We do one immediate check on the main thread
                 stop.set()
             else:
