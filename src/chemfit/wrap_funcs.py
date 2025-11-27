@@ -14,7 +14,6 @@ class WrappedObjectiveFunctor(ObjectiveFunctor):
         """Wrap a generic callable in an objective functor."""
         super().__init__()
         self.func = func
-        self.last_ctx: EvaluateContext | None = None
 
     def __call__(
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
