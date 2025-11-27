@@ -14,6 +14,8 @@ def output_y_values(outfile: Path, prefactor: float, xmin: 0.0, xmax: 100):
     y_values = [square_func(prefactor, x) for x in x_values]
 
     data = np.column_stack([y_values, x_values])
+
+    outfile.parent.mkdir(exist_ok=True, parents=True)
     np.savetxt(outfile, data, header="y x", fmt="%.6f")
 
 
