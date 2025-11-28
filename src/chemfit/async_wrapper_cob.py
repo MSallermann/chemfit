@@ -17,6 +17,11 @@ class AsyncWrapperCOB(ObjectiveFunctor):
         """
         Wrap a CombinedObjectiveFunction for concurrent async evaluation.
 
+        This wrapper allows the terms of a `CombinedObjectiveFunction`
+        to be evaluated concurrently using `asyncio` and a thread pool.
+        Each term receives its own `EvaluateContext`, and the results
+        are aggregated back into the main context.
+
         Args:
             cob: The combined objective function to evaluate.
             executor: Optional thread pool for running blocking subprocesses.

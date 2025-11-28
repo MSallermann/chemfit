@@ -21,10 +21,21 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class OutputParser(Protocol):
-    """Protocol for a function parses an output file and obtains quantities."""
+    """Protocol for parsing output files and obtaining quantities."""
 
     def __call__(self, output_files: list[Path]) -> dict[str, Any]:
-        """Parse the output files and retrieve the quantities."""
+        """
+        Parse the output files and retrieve the quantities.
+
+        Args:
+            output_files (list[Path]): List of paths to output files. These
+                are typically located in the working directory of a single
+                evaluation.
+
+        Returns:
+            dict[str, Any]: Dictionary of parsed quantities.
+
+        """
         ...
 
 
@@ -33,8 +44,14 @@ class PreSubmitHook(Protocol):
     """Protocol for running things before the command is submitted."""
 
     def __call__(self, parameters: dict[str, Any], workdir: Path) -> None:
-        """Pre-submit hook."""
-        ...
+        """
+        Run pre-submit actions.
+
+        Args:
+            parameters (dict[str, Any]): Parameter dictionary for the evaluation.
+            workdir (Path): Temporary working directory for this evaluation.
+
+        """
 
 
 @runtime_checkable
@@ -42,7 +59,14 @@ class PostSubmitHook(Protocol):
     """Protocol for running things after the command has run."""
 
     def __call__(self, parameters: dict[str, Any], workdir: Path) -> None:
-        """Post-submit hook."""
+        """
+        Protocol for running things after the command has run.
+
+        Args:
+            parameters (dict[str, Any]): Parameter dictionary for the evaluation.
+            workdir (Path): Temporary working directory for this evaluation.
+
+        """
         ...
 
 
@@ -54,21 +78,55 @@ class FileBasedQuantityComputer(QuantityComputer):
         output_parsers: list[OutputParser] | OutputParser,
         base_working_directory: Path,
         presubmit_hook: PreSubmitHook | None = None,
-        wait_timeout: float = 500.0,
+        wait_timeout: float | None = 500.0,
         poll_interval: float = 1,
         subprocess_run_args: dict | None = None,
         delete_temp_workdirs: bool = True,
     ):
         """
-        Initialize a Computer that can create files and parse quantities from files.
+        Initialize a file-based quantity computer.
 
         Args:
-            output_file (Path): Path to output file. These need to be file paths **relative** to the working directory.
-            executable_cmd (str): Command that will be executed to create the file
-            wait_timeout: in seconds
-            poll_interval: check for file (in seconds)
+            output_files (list[Path]):
+                Paths to output files that are expected to be created by
+                the external command. These paths must be **relative** to
+                the working directory; absolute paths are not allowed.
+            executable_cmd (Callable[[dict[str, Any], Path], list[str]]):
+                Callable that constructs the command to execute. It receives
+                the parameter dictionary and the temporary working directory,
+                and must return a list of strings suitable for
+                ``subprocess.run``.
+            output_parsers (list[OutputParser] | OutputParser):
+                One or more output parsers called after the external command
+                completes and the output files exist. Each parser receives
+                the list of output file paths and returns a dictionary of
+                quantities. The results of all parsers are merged.
+            base_working_directory (Path):
+                Base directory under which temporary working directories
+                will be created, one per evaluation.
+            presubmit_hook (PreSubmitHook | None, optional):
+                Optional hook executed before the external command is run.
+                It can be used to prepare input files, templates, etc.
+            wait_timeout (float, optional):
+                Maximum time in seconds to wait for all output files to
+                appear. Defaults to 500.0 seconds.
+            poll_interval (float, optional):
+                Interval in seconds between checks for output file creation.
+                Defaults to 1 second.
+            subprocess_run_args (dict | None, optional):
+                Additional keyword arguments forwarded to
+                ``subprocess.run`` (e.g. ``capture_output=True``).
+                Defaults to None.
+            delete_temp_workdirs (bool, optional):
+                Whether to delete temporary working directories after each
+                evaluation. Defaults to True.
+
+        Raises:
+            Exception: If any path in `output_files` is absolute rather
+                than relative.
 
         """
+
         super().__init__()
         self.output_files = output_files
         self.base_working_directory = base_working_directory
@@ -117,6 +175,78 @@ class FileBasedQuantityComputer(QuantityComputer):
         parameters: dict[str, Any],
         ctx: EvaluateContext,
     ) -> dict[str, Any]:
+        """
+        Execute external command and parse quantities.
+
+        This method implements the core logic:
+
+        1. Create a temporary working directory.
+        2. Optionally run a pre-submit hook.
+        3. Build and execute the external command via ``subprocess.run``.
+        4. Wait until all configured output files exist (or timeout).
+        5. Run the configured output parsers and merge the resulting
+           quantity dictionaries.
+        6. Optionally delete the temporary working directory.
+
+        ----------------------
+        IMPORTANT WARNINGS
+        ----------------------
+
+        **1. Use with sbatch / job schedulers**
+
+        Commands like ``sbatch`` (SLURM), ``qsub`` (Torque/PBS), ``bsub`` (LSF),
+        or any *queueing* submission command typically return **immediately** from
+        ``subprocess.run``. The actual compute job may start minutes or hours later.
+
+        - The `wait_timeout` starts counting **as soon as `subprocess.run` returns**,
+        *not* when the job begins executing.
+        - This almost always causes a timeout if users submit through a scheduler.
+
+        **Recommended workaround:**
+        - Modify your job script to create a **completion flag file**, e.g.:
+
+            .. code-block:: bash
+
+                # at end of your SLURM job script
+                touch task.done
+
+        - Then configure `output_files=[Path("task.done")]` **in addition to** your
+        real output files.
+
+        This ensures `FileBasedQuantityComputer` waits for job completion rather than
+        the output file prematurely appearing or remaining absent.
+
+        **2. Timeout awareness**
+
+        The `wait_timeout` applies to the *combined* waiting time after the external
+        command returns.
+
+        - Use very large timeouts (or None) or a reliable completion flag for scheduler-based workloads.
+        - If timeout is too small, you will get a `TimeoutError`.
+
+        **3. Programs that stream output**
+
+        Many scientific programs create output files early and append to them as
+        they run. Because this class only checks **existence**, not completeness:
+
+        - An output file may exist while the job is still running.
+        - Parsers may read incomplete or partially written files.
+
+        **Solutions:**
+        - Use a completion marker file (as above).
+        - Or implement a parser that verifies file completeness (checksum, fixed-size,
+        closing footer, etc.).
+
+        Args:
+            parameters (dict[str, Any]): Parameter dictionary for this evaluation.
+            ctx (EvaluateContext): Context for this evaluation. The temporary
+                working directory and command are stored in ``ctx.temp``.
+
+        Returns:
+            dict[str, Any]: Dictionary of parsed quantities.
+
+        """
+
         # Create a temporary working directory
         ctx.temp.workdir = self.create_temp_workdir()
 

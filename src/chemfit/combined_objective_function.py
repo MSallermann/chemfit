@@ -27,21 +27,21 @@ def transform_generic_callables(
 
 
 class CombinedObjectiveFunction(ObjectiveFunctor):
-    """
-    Represents a weighted sum of multiple objective functions.
-
-    Each objective function accepts a dictionary of parameters (str -> float) and returns a float.
-    Internally, each function is paired with a non-negative weight. Calling the instance returns
-    the weighted sum of all objective-function evaluations.
-    """
-
     def __init__(
         self,
         objective_functions: Sequence[Callable[[dict[str, Any]], float]],
         weights: Sequence[float] | None = None,
     ) -> None:
         """
-        Initialize a CombinedObjectiveFunction.
+        Weighted sum of multiple objective functions.
+
+        A `CombinedObjectiveFunction` aggregates several `ObjectiveFunctor`
+        instances (or generic callables) and evaluates them as a weighted sum.
+        Each term receives its own `EvaluateContext`, while the main context
+        accumulates metadata and the final combined loss.
+
+        The evaluation is sliceable: callers may evaluate only a subset of
+        terms using the ``idx_slice`` argument in ``__call__``.
 
         Args:
             objective_functions (Sequence[Callable[[dict], float]]):
@@ -216,6 +216,25 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ctx: EvaluateContext,
         idx_slice: slice = DEFAULT_SLICE,
     ) -> tuple[list[EvaluateContext], list[int]]:
+        """
+        Prepare per-term contexts for evaluation.
+
+        This method allocates one `EvaluateContext` per selected term and
+        writes basic metadata into the main context.
+
+        Args:
+            parameters (dict[str, Any]): Parameter dictionary for the evaluation.
+            ctx (EvaluateContext): Main context that will accumulate metadata
+                and final loss.
+            idx_slice (slice): Slice selecting which terms to evaluate.
+
+        Returns:
+            tuple[list[EvaluateContext], list[int]]:
+                - List of new per-term contexts.
+                - List of indices corresponding to the selected terms.
+
+        """
+
         contexts = [EvaluateContext() for _ in range(self.n_terms())[idx_slice]]
 
         ctx.loss = 0.0
@@ -237,6 +256,19 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
     def collect_per_term_data(
         ctx: EvaluateContext, contexts: Iterable[EvaluateContext]
     ) -> None:
+        """
+        Aggregate metadata from all term contexts into the main context.
+
+        Args:
+            ctx (EvaluateContext): The main context for the combined objective.
+            contexts (Iterable[EvaluateContext]): The per-term contexts.
+
+        Notes:
+            The aggregated data is stored under ``ctx.meta["cob_terms"]`` as a
+            list of dictionaries, each coming from `EvaluateContext.to_meta_data()`.
+
+        """
+
         ctx.meta["cob_terms"] = [c.to_meta_data() for c in contexts]
 
     def __call__(
@@ -246,17 +278,28 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         idx_slice: slice = DEFAULT_SLICE,
     ) -> float:
         """
-        Evaluate the combined objective at a given parameter dictionary.
+        Evaluate the weighted sum of all selected objective terms.
 
-        Each individual objective function is called (with a shallow copy of `params`), multiplied
-        by its weight, and summed into a single scalar result.
+        Each selected term receives its own `EvaluateContext` (created by
+        `prepare_evaluation`), and its contribution is accumulated into
+        the main context's `loss` value.
 
         Args:
-            params (dict): A dictionary mapping parameter names (str) to values (float).
-                A copy is made for each objective function call to guard against in-place modifications.
+            parameters (dict[str, Any]):
+                Parameter dictionary for this evaluation.
+            ctx (EvaluateContext | None):
+                Evaluation context. If None, a new one is created.
+            idx_slice (slice):
+                Slice selecting which terms to evaluate. Defaults to all terms.
 
         Returns:
-            float: The weighted sum of all objective-function evaluations.
+            float: Weighted sum of the selected objective-function values.
+
+        Notes:
+            - Each term uses the **same** parameter dictionary.
+            - Each term uses a **distinct** `EvaluateContext`.
+            - Per-term data is merged into the main context after all terms
+              have been evaluated.
 
         """
 

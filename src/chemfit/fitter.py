@@ -26,7 +26,13 @@ logger = logging.getLogger(__name__)
 
 class FitterEvaluateContext(EvaluateContext):
     def __init__(self):
-        """Initialize the FitterEvaluateContext."""
+        """
+        Extended evaluation context used by the fitter.
+
+        This context tracks additional information useful during
+        optimization.
+        """
+
         super().__init__()
         self.n_evals: int = 0
         self.opt_loss: float | None = None
@@ -40,7 +46,28 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
         swallow_exceptions: bool = False,
         log_exceptions: bool = True,
     ):
-        """Initialize the FitterObjectiveFunctor."""
+        """
+        ObjectiveFunctor wrapper with robust error handling and tracking.
+
+        This wrapper sits between the raw objective and the optimizer. It:
+
+        * Catches exceptions from the wrapped objective.
+        * Optionally logs and/or re-raises them.
+        * Clips non-float and NaN results to a large "bad" value.
+        * Updates the attached `FitterEvaluateContext` with evaluation
+          counts and the best loss/parameters seen so far.
+
+        Args:
+            wrap_me (ObjectiveFunctor): The underlying objective functor
+                to be evaluated.
+            swallow_exceptions (bool, optional): If True, exceptions
+                raised by the wrapped objective are converted to NaN and
+                then clipped to ``value_bad_params`` instead of being
+                re-raised. Defaults to False.
+            log_exceptions (bool, optional): If True, exceptions are
+                logged using the module logger. Defaults to True.
+
+        """
         self.wrap_me = wrap_me
         self.value_bad_params = 1e5
         self.swallow_exceptions: bool = swallow_exceptions
@@ -101,19 +128,30 @@ class Fitter:
         value_bad_params: float = 1e5,
     ) -> None:
         """
-        Initialize a Fitter.
+        Driver class for parameter optimization.
+
+        A `Fitter` wraps an objective (either a plain callable or an
+        `ObjectiveFunctor`) in a `FitterObjectiveFunctor` and exposes
+        convenience methods for running optimizations with nevergrad and
+        SciPy.
 
         Args:
-            objective_function (Callable[[dict], float]):
-                The objective function to be minimized.
-            initial_params (dict):
-                Initial values of the parameters.
-            bound (Optional[dict]):
-                Dictionary specifying bounds for each parameter.
-            near_bound_tol (Optional[float]):
-                If specified, checks whether any parameters are too close to their bounds and logs a warning if so.
-            value_bad_params (float):
-                Threshold value beyond which the objective function is considered to be in a poor or invalid region.
+            objective_function (Callable | ObjectiveFunctor): Objective to
+                be minimized. If a plain callable is provided, it is
+                converted to an `ObjectiveFunctor` using
+                `to_objective_functor`.
+            initial_params (dict[str, Any]): Initial parameter values.
+            bounds (dict[str, Any] | None, optional): Bounds for each
+                parameter. The structure must mirror ``initial_params``,
+                but may omit bounds for parameters.
+                Defaults to None.
+            near_bound_tol (float | None, optional): If provided, parameters
+                whose optimized values lie within this relative distance of
+                their bounds will trigger a warning in `hook_post_fit`.
+                Defaults to None.
+            value_bad_params (float, optional): Threshold used by some
+                objective wrappers to represent invalid or numerically
+                unstable parameter regions. Defaults to 1e5.
 
         """
 
@@ -144,25 +182,23 @@ class Fitter:
         self, func: Callable[[int, list[FitterEvaluateContext]], None], n_steps: int
     ):
         """
-        Register a callback which is executed after every `n_steps` of the optimization.
+        Register a callback to be executed during optimization.
 
-        Multiple callbacks may be registered. They are executed in the order of registration.
-        The callback must be a callable with the following signature:
+        The callback is invoked every ``n_steps`` iterations (or
+        nevergrad/SciPy "steps", depending on the backend), and receives
+        the current step index and the list of `FitterEvaluateContext`
+        instances used by the fitter.
 
-            func(arg: CallbackInfo)
+        Args:
+            func (Callable[[int, list[FitterEvaluateContext]], None]):
+                Callback function of the form ``func(step, contexts)``.
+            n_steps (int): Interval (in steps) at which the callback is
+                invoked.
 
-        The `CallbackInfo` is a dataclass with the following attributes:
-            - `opt_params`: The optimal parameters at the time the callback is invoked.
-            - `opt_loss`: The loss value corresponding to the optimal parameters.
-            - `cur_params`: The parameters tested most recently when the callback is invoked.
-            - `cur_loss`: The loss value associated with the most recently tested parameters.
-            - `step`: The number of optimization steps performed so far
-                    (generally not equal to the number of loss function evaluations).
-            - `info`: The current `FitInfo` instance of the fitter at the time the callback is invoked.
         """
         self.callbacks.append((func, n_steps))
 
-    def unify_callbacks(
+    def _unify_callbacks(
         self,
     ) -> (
         tuple[Callable[[int, list[FitterEvaluateContext]], None], int]
@@ -182,12 +218,12 @@ class Fitter:
 
         return callback, min_n_steps
 
-    def hook_pre_fit(self):
+    def _hook_pre_fit(self):
         """A hook, which is invoked before optimizing."""
         logger.info("Start fitting")
         self.time_fit_start = time.time()
 
-    def hook_post_fit(self, opt_params: dict[str, Any]):
+    def _hook_post_fit(self, opt_params: dict[str, Any]):
         """A hook, which is invoked after optimizing."""
         self.time_fit_end = time.time()
         logger.info("End fitting")
@@ -213,7 +249,38 @@ class Fitter:
         num_workers: int = 1,
         **kwargs,
     ) -> dict[str, Any]:
-        self.hook_pre_fit()
+        """
+        Optimize parameters using a nevergrad optimizer.
+
+        This method drives nevergrad's ask/tell interface and optionally
+        evaluates multiple points in parallel using `async_eval_many`.
+
+        Args:
+            budget (int): Total number of objective evaluations to allow.
+            optimizer_str (str, optional): Name of the nevergrad optimizer
+                to use (key in ``ng.optimizers.registry``). Defaults to
+                ``"NgIohTuned"``.
+            num_workers (int, optional): Number of points to evaluate in
+                parallel per step. If greater than 1, evaluations are
+                performed via `asyncio.run(async_eval_many(...))`. Defaults
+                to 1.
+            **kwargs: Additional keyword arguments forwarded to the
+                nevergrad optimizer constructor.
+
+        Returns:
+            dict[str, Any]: Dictionary of optimized parameter values.
+
+        Warning:
+            When ``num_workers > 1``, this method uses ``asyncio.run`` to
+            perform parallel evaluations. It therefore cannot be safely
+            called from within an already running event loop (e.g. inside
+            ``asyncio`` tasks or some notebook environments). In such
+            cases, you should either run the fit in a separate process or
+            implement your own async driver around `async_eval_many`.
+
+        """
+
+        self._hook_pre_fit()
 
         flat_bounds = flatten_dict(self.bounds)
         flat_initial_params = flatten_dict(self.initial_parameters)
@@ -238,7 +305,7 @@ class Fitter:
             params = unflatten_dict(parameters, dict_factory=dict)
             return self.objective_function(params, ctx)
 
-        callback, n_steps = self.unify_callbacks()
+        callback, n_steps = self._unify_callbacks()
 
         # We need one context per worker
         self.contexts = [FitterEvaluateContext() for _ in range(num_workers)]
@@ -273,43 +340,30 @@ class Fitter:
 
         opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
 
-        self.hook_post_fit(opt_params)
+        self._hook_post_fit(opt_params)
 
         return opt_params
 
     def fit_scipy(self, method: str = "L-BFGS-B", **kwargs) -> dict[str, Any]:
         """
-        Optimize parameters using SciPy's minimize function.
+        Optimize parameters using SciPy's ``minimize`` function.
 
-        Parameters
-        ----------
-        initial_parameters : dict
-            Initial guess for each parameter, as a mapping from name to value.
-        **kwargs
-            Additional keyword arguments passed directly to scipy.optimize.minimize.
+        Args:
+            method (str, optional): Optimization method passed to
+                ``scipy.optimize.minimize``. Defaults to ``"L-BFGS-B"``.
+            **kwargs: Additional keyword arguments forwarded to
+                ``scipy.optimize.minimize``.
 
-        Returns
-        -------
-        dict
-            Dictionary of optimized parameter values.
+        Returns:
+            dict[str, Any]: Dictionary of optimized parameter values
+            (unflattened).
 
-        Warnings
-        --------
-        If the optimizer does not converge, a warning is logged.
-
-        Example
-        -------
-        >>> def objective_function(idx: int, params: dict):
-        ...     return 2.0 * (params["x"] - 2) ** 2 + 3.0 * (params["y"] + 1) ** 2
-        >>> fitter = Fitter(objective_function=objective_function)
-        >>> initial_params = dict(x=0.0, y=0.0)
-        >>> optimal_params = fitter.fit_scipy(initial_parameters=initial_params)
-        >>> print(optimal_params)
-        {'x': 2.0, 'y': -1.0}
+        Warning:
+            If the optimizer does not converge, a warning is logged.
 
         """
 
-        self.hook_pre_fit()
+        self._hook_pre_fit()
 
         # Scipy expects a function with n real-valued parameters f(x)
         # but our objective function takes a dictionary of parameters.
@@ -343,7 +397,7 @@ class Fitter:
             return self.objective_function(p, ctx=self.contexts[0])
 
         # First concatenate the list of callbacks into a single function
-        callback, n_steps = self.unify_callbacks()
+        callback, n_steps = self._unify_callbacks()
 
         def callback_scipy(intermediate_result: OptimizeResult):
             if "nit" in intermediate_result:
@@ -365,6 +419,6 @@ class Fitter:
 
         opt_params = unflatten_dict(opt_params)
 
-        self.hook_post_fit(opt_params)
+        self._hook_post_fit(opt_params)
 
         return opt_params
