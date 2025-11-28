@@ -7,7 +7,31 @@ from typing import Any, Callable
 
 class EvaluateContext:
     def __init__(self):
-        """Initialize the context."""
+        """
+        Container for per-evaluation state.
+
+        A new instance of `EvaluateContext` should be created for each
+        evaluation of an objective function or quantity computation.
+        Implementations write all per-call information into the context
+        rather than storing it in the objective instance. This makes the
+        system safe for concurrent or asynchronous evaluation.
+
+        Attributes:
+            quantities (dict[str, Any] | None): Intermediate quantities
+                computed during evaluation. Implementations may leave this
+                as None if no quantities are produced.
+            parameters (dict[str, Any] | None): Parameter dictionary used
+                for this evaluation.
+            loss (float | None): Final scalar loss value. Set by
+                `ObjectiveFunctor` implementations.
+            meta (dict[str, Any]): Free-form metadata dictionary.
+                Implementations may add diagnostic or structural
+                information here as needed.
+            temp (SimpleNamespace): Scratch space for temporary values
+                during evaluation. Nothing stored here is part of the
+                public API. It is omitted from the `to_meta_data` function.
+
+        """
 
         self.quantities: dict[str, Any] | None = None
         self.parameters: dict[str, Any] | None = None
@@ -17,6 +41,14 @@ class EvaluateContext:
         self.temp = SimpleNamespace()
 
     def to_meta_data(self) -> dict[str, Any]:
+        """
+        Return a dictionary summarizing the evaluation state.
+
+        Returns:
+            dict[str, Any]: A dictionary containing the fields
+            `quantities`, `parameters`, `loss`, and `meta`.
+
+        """
         return {
             "quantities": self.quantities,
             "parameters": self.parameters,
@@ -31,24 +63,67 @@ class ObjectiveFunctor(abc.ABC):
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
     ) -> float:
         """
-        Compute the objective value given a set of parameters.
+        Evaluate the objective function.
+
+        Implementations should compute a scalar loss from the given
+        parameter dictionary. All per-evaluation state must be written
+        into the provided `EvaluateContext`. If no context is supplied,
+        a fresh one should be created internally.
 
         Args:
-            parameters: Dictionary of parameter names to float values.
+            parameters (dict[str, Any]): Mapping of parameter names to
+                float values.
+            ctx (EvaluateContext | None): Optional evaluation context. If
+                None, a new `EvaluateContext` should be created.
 
         Returns:
-            float: Computed objective value (e.g., error metric).
+            float: The computed scalar loss value.
+
+        Notes:
+            - Implementations should avoid mutating `self` during the
+              call. All per-evaluation information should be placed in
+              `ctx` instead.
+            - This method is synchronous. For concurrent or asynchronous
+              evaluation, use one `EvaluateContext` per call and invoke
+              this method in multiple threads/tasks.
 
         """
 
 
 class QuantityComputer(abc.ABC):
     def __init__(self):
-        """Initialize the QuantityComputer."""
+        """
+        Base class for computing intermediate quantities.
+
+        A `QuantityComputer` maps a parameter dictionary to a dictionary
+        of intermediate quantities, typically used by an objective
+        function. It should not store per-evaluation state internally.
+
+        Attributes:
+            static_meta_data (dict[str, Any]): Static metadata associated
+                with this quantity computer. This is merged into
+                `ctx.meta` on each call.
+
+        """
         self.static_meta_data: dict[str, Any] = {}  # For static meta data
 
     def __call__(self, parameters: dict[str, Any], ctx: EvaluateContext | None = None):
-        """Evaluate the quantities without changing internal state."""
+        """
+        Compute quantities for the given parameters.
+
+        Args:
+            parameters (dict[str, Any]): Parameter dictionary.
+            ctx (EvaluateContext | None): Optional context. If None, a
+                new one is created.
+
+        Returns:
+            dict[str, Any]: The computed quantity dictionary.
+
+        Notes:
+            Implementations of `_compute` must not mutate `self`. All
+            per-evaluation information should be written into `ctx`.
+
+        """
 
         if ctx is None:
             ctx = EvaluateContext()
@@ -75,7 +150,28 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
         | Callable[[dict[str, Any], dict[str, Any]], float],
         quantity_computer: QuantityComputer,
     ) -> None:
-        """Initialize the objective function with a quantity computer."""
+        """
+        Objective function composed of a `QuantityComputer` and a loss.
+
+        This class first evaluates the `quantity_computer` to produce
+        intermediate quantities and then applies the `loss_function` to
+        compute a scalar loss.
+
+        Args:
+            loss_function (Callable): A function with signature:
+
+                `loss_function(quantities) -> float`
+                or
+                `loss_function(quantities, parameters) -> float`
+
+            quantity_computer (QuantityComputer): Object responsible for
+                computing intermediate quantities.
+
+        Attributes:
+            static_meta_data (dict[str, Any]): Static metadata associated
+                with this objective. Merged into `ctx.meta` on each call.
+
+        """
 
         super().__init__()
         self.quantity_computer = quantity_computer
@@ -85,7 +181,23 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
     def __call__(
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
     ) -> float:
-        """Evaluate the quantities."""
+        """
+        Compute the objective loss.
+
+        This method:
+        1. Computes intermediate quantities using the quantity computer.
+        2. Applies the loss function.
+        3. Stores results in the evaluation context.
+
+        Args:
+            parameters (dict[str, Any]): Parameter dictionary.
+            ctx (EvaluateContext | None): Optional context. If None, a
+                new one is created.
+
+        Returns:
+            float: The computed scalar loss.
+
+        """
 
         if ctx is None:
             ctx = EvaluateContext()
