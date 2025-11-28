@@ -330,7 +330,7 @@ class Fitter:
             ]
 
             if callback is not None and step % n_steps == 0:
-                callback(budget, self.contexts)
+                callback(step, self.contexts)
 
         recommendation = optimizer.provide_recommendation()
         args, kwargs = recommendation.value
@@ -355,8 +355,7 @@ class Fitter:
                 ``scipy.optimize.minimize``.
 
         Returns:
-            dict[str, Any]: Dictionary of optimized parameter values
-            (unflattened).
+            dict[str, Any]: Dictionary of optimized parameter values.
 
         Warning:
             If the optimizer does not converge, a warning is logged.
