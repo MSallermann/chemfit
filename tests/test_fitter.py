@@ -15,13 +15,22 @@ def collect_progress(
     step: int,
     ctxs: list[FitterEvaluateContext],
     progress: list,
+    print_to_console: bool = False,
 ):
-    info = {
-        "step": step,
-        "opt_loss": ctxs[0].opt_loss,
-        "opt_params": ctxs[0].opt_params,
-    }
-    progress.append(info)
+    for ctx in ctxs:
+        info = {
+            "step": step,
+            "n_evals": ctx.n_evals,
+            "cur_params": ctx.parameters,
+            "cur_loss": ctx.loss,
+            "opt_loss": ctx.opt_loss,
+            "opt_params": ctx.opt_params,
+        }
+
+        if print_to_console:
+            print(info)
+
+        progress.append(info)
 
 
 def test_with_square_func():
@@ -171,6 +180,51 @@ def test_with_complicated_dict():
     print(f"{optimal_params = }")
 
     check_solution(optimal_params)
+
+
+def test_with_square_func_async():
+    def cont1(params: dict):
+        return 2.0 * (params["x"] - 2) ** 2
+
+    def cont2(params: dict):
+        return 3.0 * (params["y"] + 1) ** 2
+
+    obj_func = CombinedObjectiveFunction([cont1, cont2])
+
+    initial_params = {"x": 0.0, "y": 0.0}
+    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
+
+    for opt in NG_SOLVERS:
+        progress = []
+
+        fitter.register_callback(
+            lambda step, ctxs, progress=progress: collect_progress(
+                step, ctxs, progress=progress, print_to_console=True
+            ),
+            n_steps=1,
+        )
+
+        optimal_params = fitter.fit_nevergrad(
+            budget=NG_BUDGET, optimizer_str=opt, num_workers=7
+        )
+
+        print(f"{opt = }")
+        print(f"{optimal_params = }")
+        print(f"{len(progress) = }")
+        print(f"{NG_BUDGET // NSTEPS_CB = }")
+
+        print(f"{progress[-1]['opt_loss'] = }")
+        print(f"{progress[-1]['opt_params'] = }")
+        print(f"{obj_func(optimal_params) = }")
+
+        # This assert is interesting because intuitively we would expect,
+        # these to be exactly equal, but this is solver dependent!!
+        # The "CMA" solver, for instance, may recommend parameters it has not actually visited yet
+        # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
+        # obj_func(optimal_params) value may be very slightly different
+        assert np.isclose(progress[-1]["opt_loss"], obj_func(optimal_params))
+        assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
+        assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
 
 
 if __name__ == "__main__":
