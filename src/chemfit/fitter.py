@@ -299,7 +299,9 @@ class Fitter:
             e.add_note(f"Available solvers: {list(ng.optimizers.registry.keys())}")
             raise e
 
-        optimizer = OptimizerCls(parametrization=instru, budget=budget)
+        optimizer = OptimizerCls(
+            parametrization=instru, budget=budget, num_workers=num_workers
+        )
 
         def f_ng(parameters: dict[str, Any], ctx: FitterEvaluateContext) -> float:
             params = unflatten_dict(parameters, dict_factory=dict)

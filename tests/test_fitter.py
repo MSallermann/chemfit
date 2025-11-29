@@ -1,6 +1,7 @@
 import numpy as np
 from pydictnest import get_nested, has_nested, items_nested
 
+from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.utils import check_params_near_bounds
@@ -190,9 +191,12 @@ def test_with_square_func_async():
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
+    async_obj_func = AsyncWrapperCOB(obj_func)
 
     initial_params = {"x": 0.0, "y": 0.0}
-    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
+    fitter = Fitter(objective_function=async_obj_func, initial_params=initial_params)
+
+    NUM_WORKERS = 5
 
     for opt in NG_SOLVERS:
         progress = []
@@ -201,11 +205,11 @@ def test_with_square_func_async():
             lambda step, ctxs, progress=progress: collect_progress(
                 step, ctxs, progress=progress, print_to_console=True
             ),
-            n_steps=1,
+            n_steps=NSTEPS_CB,
         )
 
         optimal_params = fitter.fit_nevergrad(
-            budget=NG_BUDGET, optimizer_str=opt, num_workers=7
+            budget=NG_BUDGET, optimizer_str=opt, num_workers=NUM_WORKERS
         )
 
         print(f"{opt = }")
