@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import abc
-import copy
 from types import SimpleNamespace
 from typing import Any, Callable
 
 
 class EvaluateContext:
-    def __init__(self):
+    def __init__(self, temp: SimpleNamespace | None = None):
         """
         Container for per-evaluation state.
 
@@ -39,16 +38,14 @@ class EvaluateContext:
         self.quantities: dict[str, Any] | None = None
         self.parameters: dict[str, Any] | None = None
         self.loss: float | None = None
-        self.temp = SimpleNamespace()
+        self.temp = SimpleNamespace() if temp is None else temp
         self.meta: dict[str, Any] = {}
         self._children: list[EvaluateContext] = []
 
-    def spawn_child(self) -> EvaluateContext:
-        """Spawns a dependent child context, which shares the same `temp` data."""
-        child_ctx = EvaluateContext()
-        child_ctx.temp = copy.copy(self.temp)
-        self._children.append(child_ctx)
-        return child_ctx
+    def spawn_children(self, n_children: int) -> list[EvaluateContext]:
+        """Spawns dependent child contexts, which share the same `temp` data."""
+        self._children = [EvaluateContext(temp=self.temp) for _ in range(n_children)]
+        return self._children
 
     def collect_child_meta_data(self, recursive: bool = True):
         """Collect the meta data from child contexts."""
@@ -163,8 +160,10 @@ class QuantityComputer(abc.ABC):
 class QuantityComputerObjectiveFunction(ObjectiveFunctor):
     def __init__(
         self,
-        loss_function: Callable[[dict[str, Any]], float]
-        | Callable[[dict[str, Any], dict[str, Any]], float],
+        loss_function: (
+            Callable[[dict[str, Any]], float]
+            | Callable[[dict[str, Any], dict[str, Any]], float]
+        ),
         quantity_computer: QuantityComputer,
     ) -> None:
         """
