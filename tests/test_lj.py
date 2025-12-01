@@ -54,7 +54,7 @@ def test_lj():
 
     ctx = EvaluateContext()
     ob(opt_params, ctx)
-    terms_meta_data = ctx.to_meta_data()["meta"]["cob_terms"]
+    terms_meta_data = ctx.to_meta_data()["meta"]["children"]
 
     assert ob.n_terms() == len(terms_meta_data)
     assert np.isclose(opt_params["epsilon"], eps)
@@ -82,7 +82,7 @@ def test_lj_mpi():
 
             ctx = EvaluateContext()
             ob(opt_params, ctx)
-            terms_meta_data = ctx.to_meta_data()["meta"]["cob_terms"]
+            terms_meta_data = ctx.to_meta_data()["meta"]["children"]
 
             assert ob.n_terms() == len(terms_meta_data)
             assert np.isclose(opt_params["epsilon"], eps)

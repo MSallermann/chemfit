@@ -247,7 +247,7 @@ class Fitter:
         budget: int,
         optimizer_str: str = "NgIohTuned",
         num_workers: int = 1,
-        **kwargs,
+        contexts: list[FitterEvaluateContext] | None = None,
     ) -> dict[str, Any]:
         """
         Optimize parameters using a nevergrad optimizer.
@@ -264,8 +264,6 @@ class Fitter:
                 parallel per step. If greater than 1, evaluations are
                 performed via `asyncio.run(async_eval_many(...))`. Defaults
                 to 1.
-            **kwargs: Additional keyword arguments forwarded to the
-                nevergrad optimizer constructor.
 
         Returns:
             dict[str, Any]: Dictionary of optimized parameter values.
@@ -310,7 +308,11 @@ class Fitter:
         callback, n_steps = self._unify_callbacks()
 
         # We need one context per worker
-        self.contexts = [FitterEvaluateContext() for _ in range(num_workers)]
+        if contexts is None:
+            self.contexts = [FitterEvaluateContext() for _ in range(num_workers)]
+        else:
+            assert len(contexts) == num_workers
+            self.contexts = contexts
 
         for step in range(budget // num_workers):
             # On the first evaluation we ensure that the optimizer suggests the initial params
@@ -346,7 +348,12 @@ class Fitter:
 
         return opt_params
 
-    def fit_scipy(self, method: str = "L-BFGS-B", **kwargs) -> dict[str, Any]:
+    def fit_scipy(
+        self,
+        method: str = "L-BFGS-B",
+        ctx: FitterEvaluateContext | None = None,
+        **kwargs,
+    ) -> dict[str, Any]:
         """
         Optimize parameters using SciPy's ``minimize`` function.
 
@@ -386,7 +393,10 @@ class Fitter:
             bounds = np.array([flat_bounds.get(k, (None, None)) for k in self._keys])
 
         # Since we know that scipy.optimize works synchronously, we create a single context, which we'll keep alive.
-        self.contexts = [FitterEvaluateContext()]
+        if ctx is None:
+            self.contexts = [FitterEvaluateContext()]
+        else:
+            self.contexts = [ctx]
 
         # The local objective function first creates a flat dictionary from the `x` array
         # by zipping it with the captured flattened keys and then unflattens the dictionary

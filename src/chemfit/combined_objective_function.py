@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
-from typing import Any, Callable
+from collections.abc import Sequence
+from typing import Any, Callable, Protocol
 
 from typing_extensions import Self
 
@@ -26,11 +26,35 @@ def transform_generic_callables(
     return res
 
 
+class ContextModifer(Protocol):
+    """
+    Protocol to modify the list of child contexts after they have been spawned by the parent context.
+
+    `idx_child_ctx` and `num_ctx` refer to the absolute index of the child context within all terms, **even if a slice is used**.
+
+    If really needed, the *relative* index within the slice can be computed from the information in the `parent_ctx` as follows:
+
+    >>> indices = range(parent_ctx.meta["n_terms"])
+    >>> start, stop, step = parent_ctx.meta["slice_start"], parent_ctx.meta["slice_stop"], parent_ctx.meta["slice_step"]
+    >>> idx_relative = indices[start:stop:step]
+
+    """
+
+    def __call__(
+        self,
+        idx_child_ctx: int,
+        child_ctx: EvaluateContext,
+        num_ctx: int,
+        parent_ctx: EvaluateContext,
+    ): ...
+
+
 class CombinedObjectiveFunction(ObjectiveFunctor):
     def __init__(
         self,
         objective_functions: Sequence[Callable[[dict[str, Any]], float]],
         weights: Sequence[float] | None = None,
+        context_modifier: ContextModifer | None = None,
     ) -> None:
         """
         Weighted sum of multiple objective functions.
@@ -61,6 +85,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         self.objective_functions: list[ObjectiveFunctor] = transform_generic_callables(
             objective_functions
         )
+
+        self.context_modifier = context_modifier
 
         if weights is None:
             # Default each weight to 1.0
@@ -235,8 +261,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         """
 
-        contexts = [EvaluateContext() for _ in range(self.n_terms())[idx_slice]]
-
         ctx.loss = 0.0
         ctx.parameters = parameters
         ctx.meta.update(
@@ -249,13 +273,25 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         )
 
         idx_list = list(range(self.n_terms()))
+        sliced_idx_list = idx_list[idx_slice]
+
+        contexts = [ctx.spawn_child() for _ in sliced_idx_list]
+
+        if self.context_modifier is not None:
+            [
+                self.context_modifier(
+                    idx_child_ctx=idx_cur_ctx,
+                    child_ctx=child_ctx,
+                    num_ctx=self.n_terms(),
+                    parent_ctx=ctx,
+                )
+                for idx_cur_ctx, child_ctx in zip(sliced_idx_list, contexts)
+            ]
 
         return contexts, idx_list
 
     @staticmethod
-    def collect_per_term_data(
-        ctx: EvaluateContext, contexts: Iterable[EvaluateContext]
-    ) -> None:
+    def collect_per_term_data(ctx: EvaluateContext) -> None:
         """
         Aggregate metadata from all term contexts into the main context.
 
@@ -264,12 +300,11 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             contexts (Iterable[EvaluateContext]): The per-term contexts.
 
         Notes:
-            The aggregated data is stored under ``ctx.meta["cob_terms"]`` as a
+            The aggregated data is stored under ``ctx.meta["children"]`` as a
             list of dictionaries, each coming from `EvaluateContext.to_meta_data()`.
 
         """
-
-        ctx.meta["cob_terms"] = [c.to_meta_data() for c in contexts]
+        ctx.collect_child_meta_data()
 
     def __call__(
         self,
@@ -317,6 +352,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ):
             ctx.loss += self.objective_functions[idx](parameters, ctx_term) * weight
 
-        CombinedObjectiveFunction.collect_per_term_data(ctx, contexts)
+        CombinedObjectiveFunction.collect_per_term_data(ctx)
 
         return ctx.loss

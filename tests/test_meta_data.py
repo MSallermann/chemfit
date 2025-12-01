@@ -75,7 +75,7 @@ EXPECTED = [
 def test_gather_meta_data():
     # Evaluate the objective function
     COB(INITIAL_PARAMS, ctx := EvaluateContext())
-    meta_data = ctx.to_meta_data()["meta"]["cob_terms"]
+    meta_data = ctx.to_meta_data()["meta"]["children"]
 
     print(f"{meta_data = }")
     print(f"{EXPECTED = }")
@@ -90,7 +90,7 @@ def test_gather_meta_data_mpi():
     with mpi_wrapper_cob.MPIWrapperCOB(COB, mpi_debug_log=False) as ob_mpi:
         if ob_mpi.rank == 0:
             ob_mpi(INITIAL_PARAMS, ctx := EvaluateContext())
-            meta_data = ctx.to_meta_data()["meta"]["cob_terms"]
+            meta_data = ctx.to_meta_data()["meta"]["children"]
 
             print(f"{meta_data = }")
             print(f"{EXPECTED = }")
