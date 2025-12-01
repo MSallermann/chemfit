@@ -275,7 +275,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         idx_list = list(range(self.n_terms()))
         sliced_idx_list = idx_list[idx_slice]
 
-        contexts = [ctx.spawn_child() for _ in sliced_idx_list]
+        contexts = ctx.spawn_children(n_children=len(sliced_idx_list))
 
         if self.context_modifier is not None:
             [
