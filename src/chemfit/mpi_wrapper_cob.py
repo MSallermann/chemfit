@@ -85,8 +85,8 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
     def worker_gather_meta_data(self, ctx: EvaluateContext):
         # The local meta data should already be in the context
-        assert "cob_terms" in ctx.meta
-        local_meta_data = ctx.meta["cob_terms"]
+        assert "children" in ctx.meta
+        local_meta_data = ctx.meta["children"]
         self.comm.gather(local_meta_data, root=0)
 
     def worker_loop(self):
@@ -116,8 +116,8 @@ class MPIWrapperCOB(ObjectiveFunctor):
             raise RuntimeError(msg)
 
         # The local meta data should already be in the context
-        assert "cob_terms" in ctx.meta
-        local_meta_data = ctx.meta["cob_terms"]
+        assert "children" in ctx.meta
+        local_meta_data = ctx.meta["children"]
 
         # Broadcast the signal
         gathered = self.comm.gather(local_meta_data)
@@ -128,7 +128,8 @@ class MPIWrapperCOB(ObjectiveFunctor):
         if gathered is not None:
             [total_meta_data.extend(m) for m in gathered]
 
-        ctx.meta["cob_terms"] = total_meta_data
+        # TODO(MS): think about this some more. It is a bit hacky because now the `ctx._children` variable only has the child ctxs for rank 0, but the meta_data from all the other ranks too  # noqa: TD003
+        ctx.meta["children"] = total_meta_data
 
     def __call__(
         self, params: dict[str, Any], ctx: EvaluateContext | None = None

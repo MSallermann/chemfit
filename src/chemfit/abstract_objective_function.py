@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import copy
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -27,18 +28,34 @@ class EvaluateContext:
             meta (dict[str, Any]): Free-form metadata dictionary.
                 Implementations may add diagnostic or structural
                 information here as needed.
+                Meta data from child contexts may be collected into the parent
             temp (SimpleNamespace): Scratch space for temporary values
                 during evaluation. Nothing stored here is part of the
                 public API. It is omitted from the `to_meta_data` function.
+                The `temp` meta is *shallow* copied to child contexts.
 
         """
 
         self.quantities: dict[str, Any] | None = None
         self.parameters: dict[str, Any] | None = None
         self.loss: float | None = None
-        self.meta: dict[str, Any] = {}
-
         self.temp = SimpleNamespace()
+        self.meta: dict[str, Any] = {}
+        self._children: list[EvaluateContext] = []
+
+    def spawn_child(self) -> EvaluateContext:
+        """Spawns a dependent child context, which shares the same `temp` data."""
+        child_ctx = EvaluateContext()
+        child_ctx.temp = copy.copy(self.temp)
+        self._children.append(child_ctx)
+        return child_ctx
+
+    def collect_child_meta_data(self, recursive: bool = True):
+        """Collect the meta data from child contexts."""
+        if len(self._children) > 0:
+            if recursive:
+                [c.collect_child_meta_data(recursive) for c in self._children]
+            self.meta["children"] = [c.to_meta_data() for c in self._children]
 
     def to_meta_data(self) -> dict[str, Any]:
         """
