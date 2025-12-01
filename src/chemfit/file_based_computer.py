@@ -170,6 +170,10 @@ class FileBasedQuantityComputer(QuantityComputer):
         temp_workdir.mkdir(exist_ok=False, parents=True)
         return temp_workdir
 
+    def build_cmd(self, parameters: dict[str, Any], ctx: EvaluateContext) -> list[str]:
+        """Build the command to be executed."""
+        return self.executable_cmd(parameters, ctx.temp.workdir)
+
     def _compute(
         self,
         parameters: dict[str, Any],
@@ -256,7 +260,7 @@ class FileBasedQuantityComputer(QuantityComputer):
             if self.presubmit_hook is not None:
                 self.presubmit_hook(parameters, ctx.temp.workdir)
 
-            cmd = self.executable_cmd(parameters, ctx.temp.workdir)
+            cmd = self.build_cmd(parameters, ctx)
 
             ctx.temp.cmd = cmd
 
