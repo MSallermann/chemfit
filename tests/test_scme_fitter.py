@@ -156,7 +156,6 @@ def test_dimer_distance_objective_function():
     optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
 
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
 
 
 def test_kabsch_objective_function():
@@ -200,7 +199,6 @@ def test_kabsch_objective_function():
     optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
 
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
 
 
 def construct_objective_function(
@@ -241,9 +239,7 @@ def test_multi_energy_ob_function_fitting():
 
     optimal_params = fitter.fit_scipy(tol=1e-4)
 
-    print(f"{fitter.info = }")
     print(f"{optimal_params = }")
-    print(f"time taken = {fitter.info.time_taken} seconds")
 
 
 def test_multi_energy_ob_function_fitting_mpi():
@@ -258,6 +254,5 @@ def test_multi_energy_ob_function_fitting_mpi():
             fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
             optimal_params = fitter.fit_scipy(tol=0, options={"maxiter": 50})
             print(f"{optimal_params = }")
-            print(f"time taken = {fitter.info.time_taken} seconds")
         else:
             ob_mpi.worker_loop()
