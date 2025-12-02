@@ -164,6 +164,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
         self.delete_temp_workdirs = delete_temp_workdirs
+        self.retries_output_parsing = 1
 
     def create_temp_workdir(self) -> Path:
         name = str(uuid.uuid4())
@@ -314,7 +315,20 @@ class FileBasedQuantityComputer(QuantityComputer):
 
             res = {}
             for o in self.output_parsers:
-                res.update(o(ctx.temp.output_files))
+                success = False
+                # First we perform the retries while silencing all exceptions
+                for _ in range(self.retries_output_parsing):
+                    try:
+                        res.update(o(ctx.temp.output_files))
+                        success = True
+                        break
+                    except Exception as e:  # noqa: F841, S112
+                        continue
+
+                # If we have not succeeded so far, the (retries + 1)th (aka the last)
+                # attempt is made without a try block, so that we get to handle the actual exception
+                if not success:
+                    res.update(o(ctx.temp.output_files))
 
             return res
         except Exception as e:
