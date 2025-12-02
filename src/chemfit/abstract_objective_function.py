@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import abc
+import copy
 from types import SimpleNamespace
 from typing import Any, Callable
 
@@ -43,8 +44,10 @@ class EvaluateContext:
         self._children: list[EvaluateContext] = []
 
     def spawn_children(self, n_children: int) -> list[EvaluateContext]:
-        """Spawns dependent child contexts, which share the same `temp` data."""
-        self._children = [EvaluateContext(temp=self.temp) for _ in range(n_children)]
+        """Spawns dependent child contexts, with a deepcopy of the `temp` data."""
+        self._children = [
+            EvaluateContext(temp=copy.deepcopy(self.temp)) for _ in range(n_children)
+        ]
         return self._children
 
     def collect_child_meta_data(self, recursive: bool = True):
