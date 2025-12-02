@@ -285,7 +285,7 @@ class FileBasedQuantityComputer(QuantityComputer):
                 )  # type: ignore
             except subprocess.CalledProcessError as e:
                 msg = (
-                    f"Exception in `subprocess.run` of FileBasedComputer.\n"
+                    f"Exception in `subprocess.run` of FileBasedQuantityComputer.\n"
                     f"  stderr (if captured) = {e.stderr}\n"
                     f"  stdout (if captured) = {e.stdout}\n"
                     f"  ctx.temp = {ctx.temp}"
@@ -317,6 +317,14 @@ class FileBasedQuantityComputer(QuantityComputer):
                 res.update(o(ctx.temp.output_files))
 
             return res
+        except Exception as e:
+            msg = (
+                "Exception in `_compute` of FileBasedQuantityComputer.\n"
+                f"  ctx.temp = {ctx.temp}"
+            )
+
+            logger.exception(msg)
+            raise e
         finally:
             if self.delete_temp_workdirs:
                 shutil.rmtree(ctx.temp.workdir)
