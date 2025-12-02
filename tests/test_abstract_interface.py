@@ -104,6 +104,19 @@ def test():
             assert v == expected
 
 
+def test_context_stuff():
+    ctx = EvaluateContext()
+    ctx.temp.some_dict = {"bla": 3}
+
+    children = ctx.spawn_children(3)
+
+    assert children[0].temp.some_dict == children[1].temp.some_dict
+
+    children[0].temp.some_dict["bla"] = 4
+
+    assert children[0].temp.some_dict != children[1].temp.some_dict
+
+
 def test_async_evaluation():
     computer = MyComputer()
     computer.static_meta_data = {"computer_tag": "dolphin"}
