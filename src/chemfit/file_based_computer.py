@@ -128,6 +128,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         """
 
         super().__init__()
+
         self.output_files = output_files
         self.base_working_directory = base_working_directory
 
@@ -284,9 +285,10 @@ class FileBasedQuantityComputer(QuantityComputer):
                 )  # type: ignore
             except subprocess.CalledProcessError as e:
                 msg = (
-                    f"Exception in `subprocess.run` of FileBasedComputer."
-                    f"  stderr (if captured) = {e.stderr}"
-                    f"  stdout (if captured) = {e.stdout}"
+                    f"Exception in `subprocess.run` of FileBasedComputer.\n"
+                    f"  stderr (if captured) = {e.stderr}\n"
+                    f"  stdout (if captured) = {e.stdout}\n"
+                    f"  ctx.temp = {ctx.temp}"
                 )
                 logger.exception(msg)
                 raise e
