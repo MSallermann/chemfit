@@ -71,12 +71,12 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             ctx,
         )
 
-    async def async_call(
+    async def async_evaluate_terms(
         self,
         parameters: dict[str, Any],
         ctx: EvaluateContext,
         idx_slice: slice = DEFAULT_SLICE,
-    ) -> float:
+    ) -> list[float]:
         """
         Evaluate all objective terms in this slice concurrently.
 
@@ -92,25 +92,15 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             parameters=parameters, ctx=ctx, idx_slice=idx_slice
         )
 
-        assert ctx.loss is not None  # for pyright
-
         futures = [
             self.async_term(parameters, child_ctx, idx)
             for child_ctx, idx in zip(contexts, idx_list, strict=True)
         ]
 
-        results = await asyncio.gather(*futures)
-
-        CombinedObjectiveFunction.collect_per_term_data(ctx)
-
-        ctx.loss = float(sum(results))
-        return ctx.loss
+        return await asyncio.gather(*futures)
 
     def __call__(
-        self,
-        params: dict[str, Any],
-        ctx: EvaluateContext | None = None,
-        idx_slice: slice = DEFAULT_SLICE,
+        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
     ) -> float:
         """
         Synchronously evaluate the objective via asyncio.
@@ -126,4 +116,11 @@ class AsyncWrapperCOB(ObjectiveFunctor):
         if ctx is None:
             ctx = EvaluateContext()
 
-        return float(asyncio.run(self.async_call(params, ctx, idx_slice)))
+        terms = asyncio.run(
+            self.async_evaluate_terms(
+                parameters=parameters, ctx=ctx, idx_slice=DEFAULT_SLICE
+            )
+        )
+
+        ctx.loss = self.cob.reduction(terms)
+        return ctx.loss

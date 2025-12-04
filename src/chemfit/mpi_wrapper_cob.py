@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import math
 from enum import Enum
-from numbers import Real
 from typing import Any
 
 from mpi4py import MPI
@@ -60,19 +59,16 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def worker_process_params(self, params: dict[str, Any], ctx: EvaluateContext):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
         # Therefore, the error handling is slightly different than on rank 0 and we log the exception here before re-raising
-        local_total = float("Nan")
+
+        local_terms = [
+            math.nan for _ in range(self.start - self.end)
+        ]  # this way local_terms is always bound
         try:
             # First we try to obtain a value the normal way
-            local_total = self.cob(
+            local_terms = self.cob.evaluate_terms(
                 params, ctx=ctx, idx_slice=slice(self.start, self.end)
             )
 
-            # if we don't get a real number, we convert it to a NaN
-            if not isinstance(local_total, Real):
-                logger.debug(
-                    f"Index ({self.start},{self.end}) did not return a number. It returned `{local_total}` of type {type(local_total)}."
-                )
-                local_total = float("NaN")
         except Exception as e:
             # If we catch an exception we should just crash the code
             logger.exception(e, stack_info=True, stacklevel=2)
@@ -81,7 +77,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
             # Finally, we have to run the reduce.
             # This must always happen, otherwise, we might cause deadlocks because other ranks might wait on a reduce.
             # Sum up all local_totals into a global_total on the master rank
-            _ = self.comm.reduce(local_total, op=MPI.SUM, root=0)
+            _ = self.comm.gather(local_terms, root=0)
 
     def worker_gather_meta_data(self, ctx: EvaluateContext):
         # The local meta data should already be in the context
@@ -147,22 +143,27 @@ class MPIWrapperCOB(ObjectiveFunctor):
         # Broadcast the params to the worker ranks
         self.comm.bcast(params, root=0)
 
-        local_total = float("NaN")  # So we get NaN in case the local compute fails
+        local_terms: list[float] = []  # So we get NaN in case the local compute fails
         try:
             # Compute one slice of the objective function on the main rank
-            local_total = self.cob(
+            local_terms = self.cob.evaluate_terms(
                 params, ctx=ctx, idx_slice=slice(self.start, self.end)
             )
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank
-            global_total = self.comm.reduce(local_total, op=MPI.SUM, root=0)
-            if global_total is None:
-                global_total = float("NaN")
+            gathered_terms = self.comm.gather(local_terms, root=0)
 
-            self.gather_meta_data(ctx)
+        self.gather_meta_data(ctx)
 
-        return global_total
+        # Since gathered will now be a list of list, we unpack it
+        terms: list[float] = []
+
+        if gathered_terms is not None:
+            [terms.extend(m) for m in gathered_terms]
+
+        ctx.loss = self.cob.reduction(terms)
+        return ctx.loss
 
     def __exit__(
         self,
