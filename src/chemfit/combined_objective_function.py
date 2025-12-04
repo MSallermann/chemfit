@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from typing import Any, Callable, Protocol
 
@@ -24,6 +25,22 @@ def transform_generic_callables(
         else:
             res.append(WrappedObjectiveFunctor(func))
     return res
+
+
+class Reducer(Protocol):
+    def __call__(self, terms: Sequence[float]) -> float: ...
+
+
+def sum_reducer(terms: Sequence[float]) -> float:
+    return sum(terms)
+
+
+def mean_reducer(terms: Sequence[float]) -> float:
+    return sum(terms) / len(terms)
+
+
+def root_mean_reducer(terms: Sequence[float]) -> float:
+    return math.sqrt(mean_reducer(terms))
 
 
 class ContextModifer(Protocol):
@@ -55,6 +72,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         objective_functions: Sequence[Callable[[dict[str, Any]], float]],
         weights: Sequence[float] | None = None,
         context_modifier: ContextModifer | None = None,
+        reduction: Reducer = sum_reducer,
     ) -> None:
         """
         Weighted sum of multiple objective functions.
@@ -87,6 +105,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         )
 
         self.context_modifier = context_modifier
+        self.reduction = reduction
 
         if weights is None:
             # Default each weight to 1.0
@@ -290,27 +309,31 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return contexts, idx_list
 
-    @staticmethod
-    def collect_per_term_data(ctx: EvaluateContext) -> None:
-        """
-        Aggregate metadata from all term contexts into the main context.
+    def evaluate_terms(
+        self,
+        parameters: dict[str, Any],
+        ctx: EvaluateContext,
+        idx_slice: slice = DEFAULT_SLICE,
+    ) -> list[float]:
+        contexts, idx_list = self.prepare_evaluation(
+            parameters=parameters, ctx=ctx, idx_slice=idx_slice
+        )
 
-        Args:
-            ctx (EvaluateContext): The main context for the combined objective.
-            contexts (Iterable[EvaluateContext]): The per-term contexts.
+        terms = []
 
-        Notes:
-            The aggregated data is stored under ``ctx.meta["children"]`` as a
-            list of dictionaries, each coming from `EvaluateContext.to_meta_data()`.
+        for idx, weight, ctx_term in zip(
+            idx_list[idx_slice], self.weights[idx_slice], contexts, strict=True
+        ):
+            terms.append(self.objective_functions[idx](parameters, ctx_term) * weight)
 
-        """
         ctx.collect_child_meta_data()
+
+        return terms
 
     def __call__(
         self,
         parameters: dict[str, Any],
         ctx: EvaluateContext | None = None,
-        idx_slice: slice = DEFAULT_SLICE,
     ) -> float:
         """
         Evaluate the weighted sum of all selected objective terms.
@@ -341,17 +364,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         if ctx is None:
             ctx = EvaluateContext()
 
-        contexts, idx_list = self.prepare_evaluation(
-            parameters=parameters, ctx=ctx, idx_slice=idx_slice
+        terms = self.evaluate_terms(
+            parameters=parameters, ctx=ctx, idx_slice=DEFAULT_SLICE
         )
 
-        assert ctx.loss is not None  # for pyright
-
-        for idx, weight, ctx_term in zip(
-            idx_list[idx_slice], self.weights[idx_slice], contexts, strict=True
-        ):
-            ctx.loss += self.objective_functions[idx](parameters, ctx_term) * weight
-
-        CombinedObjectiveFunction.collect_per_term_data(ctx)
-
+        ctx.loss = self.reduction(terms)
         return ctx.loss
