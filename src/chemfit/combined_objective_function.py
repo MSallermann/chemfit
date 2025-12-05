@@ -326,8 +326,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ):
             terms.append(self.objective_functions[idx](parameters, ctx_term) * weight)
 
-        ctx.collect_child_meta_data()
-
         return terms
 
     def __call__(
@@ -367,6 +365,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         terms = self.evaluate_terms(
             parameters=parameters, ctx=ctx, idx_slice=DEFAULT_SLICE
         )
+
+        ctx.collect_child_meta_data()
 
         ctx.loss = self.reduction(terms)
         return ctx.loss

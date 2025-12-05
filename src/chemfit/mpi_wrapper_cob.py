@@ -46,12 +46,18 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         if mpi_debug_log:
             self.comm = log_all_methods(
-                self.comm, lambda msg: logger.warning(f"[Rank {self.rank}] {msg}")
+                self.comm,
+                log_func=self._log_func,
+                log_args=True,
+                log_res=True,
             )
 
         self.start, self.end = list(slice_up_range(self.cob.n_terms(), self.size))[
             self.rank
         ]
+
+    def _log_func(self, msg: str):
+        logger.warning(f"[Rank {self.rank}] {msg}")
 
     def __enter__(self):
         return self
@@ -80,7 +86,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
             _ = self.comm.gather(local_terms, root=0)
 
     def worker_gather_meta_data(self, ctx: EvaluateContext):
-        # The local meta data should already be in the context
+        ctx.collect_child_meta_data()
         assert "children" in ctx.meta
         local_meta_data = ctx.meta["children"]
         self.comm.gather(local_meta_data, root=0)
@@ -111,12 +117,13 @@ class MPIWrapperCOB(ObjectiveFunctor):
             msg = "`gather_meta_data` can only be used on rank 0"
             raise RuntimeError(msg)
 
+        ctx.collect_child_meta_data()
         # The local meta data should already be in the context
         assert "children" in ctx.meta
         local_meta_data = ctx.meta["children"]
 
         # Broadcast the signal
-        gathered = self.comm.gather(local_meta_data)
+        gathered = self.comm.gather(local_meta_data, root=0)
 
         # Since gathered will now be a list of list, we unpack it
         total_meta_data: list[dict[str, Any] | None] = []
