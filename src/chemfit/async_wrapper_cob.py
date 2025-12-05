@@ -122,5 +122,7 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             )
         )
 
+        ctx.collect_child_meta_data()
+
         ctx.loss = self.cob.reduction(terms)
         return ctx.loss

@@ -56,6 +56,8 @@ class EvaluateContext:
             if recursive:
                 [c.collect_child_meta_data(recursive) for c in self._children]
             self.meta["children"] = [c.to_meta_data() for c in self._children]
+        else:
+            self.meta["children"] = []
 
     def to_meta_data(self) -> dict[str, Any]:
         """
