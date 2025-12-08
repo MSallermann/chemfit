@@ -291,8 +291,7 @@ class FileBasedQuantityComputer(QuantityComputer):
             except subprocess.CalledProcessError as e:
                 msg = (
                     f"Exception in `subprocess.run` of FileBasedQuantityComputer.\n"
-                    f"  stderr (if captured) = {e.stderr}\n"
-                    f"  stdout (if captured) = {e.stdout}\n"
+                    f"  stderr (if captured) = {e.stderr.decode('utf-8')}\n"
                     f"  ctx.temp = {ctx.temp}"
                 )
 
