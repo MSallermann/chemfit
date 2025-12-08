@@ -126,6 +126,8 @@ class Fitter:
         bounds: dict[str, Any] | None = None,
         near_bound_tol: float | None = None,
         value_bad_params: float = 1e5,
+        swallow_exceptions: bool = False,
+        log_exceptions: bool = True,
     ) -> None:
         """
         Driver class for parameter optimization.
@@ -159,7 +161,11 @@ class Fitter:
         if not isinstance(objective_function, ObjectiveFunctor):
             objective_function = to_objective_functor(objective_function)
 
-        self.objective_function = FitterObjectiveFunctor(objective_function)
+        self.objective_function = FitterObjectiveFunctor(
+            objective_function,
+            swallow_exceptions=swallow_exceptions,
+            log_exceptions=log_exceptions,
+        )
 
         self.initial_parameters = initial_params
 

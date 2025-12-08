@@ -82,6 +82,8 @@ class FileBasedQuantityComputer(QuantityComputer):
         poll_interval: float = 1,
         subprocess_run_args: dict | None = None,
         delete_temp_workdirs: bool = True,
+        write_dump_file_after_crash: bool = True,
+        keep_temp_workdir_after_crash: bool = True,
     ):
         """
         Initialize a file-based quantity computer.
@@ -131,6 +133,8 @@ class FileBasedQuantityComputer(QuantityComputer):
 
         self.output_files = output_files
         self.base_working_directory = base_working_directory
+        self.write_dump_file_after_crash = write_dump_file_after_crash
+        self.keep_temp_workdir_after_crash = keep_temp_workdir_after_crash
 
         # We need to make sure none of the output files is absolute.
         # The reason for this is that, to facilitate multiple concurrent evaluations,
@@ -176,7 +180,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         """Build the command to be executed."""
         return self.executable_cmd(parameters, ctx.temp.workdir)
 
-    def _compute(
+    def _compute(  # noqa: PLR0912, PLR0915
         self,
         parameters: dict[str, Any],
         ctx: EvaluateContext,
@@ -291,8 +295,26 @@ class FileBasedQuantityComputer(QuantityComputer):
                     f"  stdout (if captured) = {e.stdout}\n"
                     f"  ctx.temp = {ctx.temp}"
                 )
-                logger.exception(msg)
-                raise e
+
+                # Try to write a dump file
+                if self.write_dump_file_after_crash:
+                    dump_path = (
+                        self.base_working_directory / ctx.temp.workdir.name
+                    ).with_suffix(".dump")
+                    try:
+                        with dump_path.open("w") as f:
+                            f.write("Stderr:\n")
+                            f.write(e.stderr.decode("utf-8"))
+                            f.write("Stdout:\n")
+                            f.write(e.stdout.decode("utf-8"))
+                            f.write("ctx.temp:\n")
+                            f.write(f"{ctx.temp}")
+                    except Exception as exc_dump:
+                        logger.exception(
+                            f"Could not write dump file to {dump_path}, because of {exc_dump}"
+                        )
+
+                raise Exception(msg) from e
 
             # Block here until file appears (or timeout)
             # The main reason to implement this extra check is to eventually support remote execution, e.g. on clusters
@@ -330,18 +352,25 @@ class FileBasedQuantityComputer(QuantityComputer):
                 if not success:
                     res.update(o(ctx.temp.output_files))
 
-            return res
         except Exception as e:
             msg = (
                 "Exception in `_compute` of FileBasedQuantityComputer.\n"
                 f"  ctx.temp = {ctx.temp}"
             )
 
-            logger.exception(msg)
-            raise e
-        finally:
+            if self.delete_temp_workdirs and not self.keep_temp_workdir_after_crash:
+                shutil.rmtree(ctx.temp.workdir)
+            else:
+                msg += (
+                    f"\nKeeping temporary workdir '{ctx.temp.workdir}' for inspection"
+                )
+
+            raise Exception(msg) from e
+        else:
             if self.delete_temp_workdirs:
                 shutil.rmtree(ctx.temp.workdir)
+
+        return res
 
     def _file_watch_loop(
         self,
