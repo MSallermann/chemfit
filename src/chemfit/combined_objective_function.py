@@ -43,6 +43,22 @@ def root_mean_reducer(terms: Sequence[float]) -> float:
     return math.sqrt(mean_reducer(terms))
 
 
+class ExceptionHandler(Protocol):
+    def __call__(self, exception: Exception) -> float | None: ...
+
+
+def raising_exception_handler(exception: Exception) -> float | None:
+    raise exception
+
+
+def nan_exception_handler(exception: Exception) -> float | None:  # noqa: ARG001
+    return math.nan
+
+
+def skip_exception_handler(exception: Exception) -> float | None:  # noqa: ARG001
+    return None
+
+
 class ContextModifer(Protocol):
     """
     Protocol to modify the list of child contexts after they have been spawned by the parent context.
@@ -73,6 +89,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         weights: Sequence[float] | None = None,
         context_modifier: ContextModifer | None = None,
         reduction: Reducer = sum_reducer,
+        exception_handler: ExceptionHandler = raising_exception_handler,
     ) -> None:
         """
         Weighted sum of multiple objective functions.
@@ -106,6 +123,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         self.context_modifier = context_modifier
         self.reduction = reduction
+        self.exception_handler = exception_handler
 
         if weights is None:
             # Default each weight to 1.0
@@ -309,6 +327,16 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return contexts, idx_list
 
+    def evaluate_term(
+        self, parameters: dict[str, Any], ctx_term: EvaluateContext, idx: int
+    ) -> float | None:
+        try:
+            return (
+                self.objective_functions[idx](parameters, ctx_term) * self.weights[idx]
+            )
+        except Exception as e:
+            return self.exception_handler(e)
+
     def evaluate_terms(
         self,
         parameters: dict[str, Any],
@@ -321,12 +349,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         terms = []
 
-        for idx, weight, ctx_term in zip(
-            idx_list[idx_slice], self.weights[idx_slice], contexts, strict=True
-        ):
-            terms.append(self.objective_functions[idx](parameters, ctx_term) * weight)
+        for idx, ctx_term in zip(idx_list[idx_slice], contexts, strict=True):
+            terms.append(self.evaluate_term(parameters, ctx_term, idx))
 
-        return terms
+        return [t for t in terms if t is not None]
 
     def __call__(
         self,
