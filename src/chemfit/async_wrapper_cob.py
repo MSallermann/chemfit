@@ -49,7 +49,9 @@ class AsyncWrapperCOB(ObjectiveFunctor):
         tb: object,
     ): ...
 
-    async def async_term(self, params: dict[str, Any], ctx: EvaluateContext, idx: int):
+    async def async_term(
+        self, params: dict[str, Any], ctx: EvaluateContext, idx: int
+    ) -> float | None:
         """
         Evaluate a single term of the objective asynchronously.
 
@@ -61,14 +63,11 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             The term's contribution value.
 
         """
+
         loop = asyncio.get_running_loop()
 
         return await loop.run_in_executor(
-            self._executor,
-            lambda params, ctx: self.cob.weights[idx]
-            * self.cob.objective_functions[idx](params, ctx),
-            params,
-            ctx,
+            self._executor, self.cob.evaluate_term, params, ctx, idx
         )
 
     async def async_evaluate_terms(
@@ -97,7 +96,7 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             for child_ctx, idx in zip(contexts, idx_list, strict=True)
         ]
 
-        return await asyncio.gather(*futures)
+        return [t for t in await asyncio.gather(*futures) if t is not None]
 
     def __call__(
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None

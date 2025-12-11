@@ -74,12 +74,11 @@ class MPIWrapperCOB(ObjectiveFunctor):
             local_terms = self.cob.evaluate_terms(
                 params, ctx=ctx, idx_slice=slice(self.start, self.end)
             )
-
         except Exception as e:
-            # If we catch an exception we should just crash the code
-            logger.exception(e, stack_info=True, stacklevel=2)
-            raise e  # <-- from here we enter the __exit__ method, the worker rank will crash and consequently all processes are stopped
-        finally:
+            # If we catch an exception we send it to the master rank and continue
+            logger.exception(e)
+            self.comm.gather([e], root=0)
+        else:
             # Finally, we have to run the reduce.
             # This must always happen, otherwise, we might cause deadlocks because other ranks might wait on a reduce.
             # Sum up all local_totals into a global_total on the master rank
@@ -168,6 +167,11 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         if gathered_terms is not None:
             [terms.extend(m) for m in gathered_terms]
+
+        # If any exceptions from worker loops were sent to us we re-raise it
+        for t in terms:
+            if isinstance(t, Exception):
+                raise t
 
         ctx.loss = self.cob.reduction(terms)
         return ctx.loss
