@@ -44,18 +44,32 @@ def root_mean_reducer(terms: Sequence[float]) -> float:
 
 
 class ExceptionHandler(Protocol):
-    def __call__(self, exception: Exception) -> float | None: ...
+    def __call__(
+        self, exception: Exception, ctx: EvaluateContext, idx: int
+    ) -> float | None: ...
 
 
-def raising_exception_handler(exception: Exception) -> float | None:
+def raising_exception_handler(
+    exception: Exception,
+    ctx: EvaluateContext,  # noqa: ARG001
+    idx: int,  # noqa: ARG001
+) -> float | None:
     raise exception
 
 
-def nan_exception_handler(exception: Exception) -> float | None:  # noqa: ARG001
+def nan_exception_handler(
+    exception: Exception,  # noqa: ARG001
+    ctx: EvaluateContext,  # noqa: ARG001
+    idx: int,  # noqa: ARG001
+) -> float | None:
     return math.nan
 
 
-def skip_exception_handler(exception: Exception) -> float | None:  # noqa: ARG001
+def skip_exception_handler(
+    exception: Exception,  # noqa: ARG001
+    ctx: EvaluateContext,  # noqa: ARG001
+    idx: int,  # noqa: ARG001
+) -> float | None:
     return None
 
 
@@ -335,7 +349,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
                 self.objective_functions[idx](parameters, ctx_term) * self.weights[idx]
             )
         except Exception as e:
-            return self.exception_handler(e)
+            return self.exception_handler(e, ctx_term, idx)
 
     def evaluate_terms(
         self,
