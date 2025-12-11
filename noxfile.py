@@ -23,4 +23,4 @@ def tests(session):  # noqa: ANN001
 def tests_mpi(session):  # noqa: ANN001
     session.install("pytest")
     session.install(".[mpi]")
-    session.run("mpiexec", "-n", "2", "pytest", "-k", "mpi")
+    session.run("mpiexec", "-n", "4", "pytest", "-k", "mpi")

@@ -83,10 +83,10 @@ def test_exception_handlers():
     with pytest.raises(RuntimeError):
         ob({})
 
+    ctx = EvaluateContext()
     # now we change to the nan exception handler, we should get nan
     ob.exception_handler = combined_objective_function.nan_exception_handler
-    res = ob({})
-    print(res)
+    res = ob({}, ctx)
     assert math.isnan(res)
 
     # now we change to the skip exception handler, we should just get the result from func1
@@ -95,7 +95,7 @@ def test_exception_handlers():
     print(res)
     assert math.isclose(res, func1({}))
 
-    ####### repeat for async wrapper #######3
+    ####### repeat for async wrapper #######
     ob.exception_handler = combined_objective_function.raising_exception_handler
     ob_async = AsyncWrapperCOB(ob)
     with pytest.raises(RuntimeError):

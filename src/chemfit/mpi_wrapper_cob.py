@@ -64,31 +64,36 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
     def worker_process_params(self, params: dict[str, Any], ctx: EvaluateContext):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
-        # Therefore, the error handling is slightly different than on rank 0 and we log the exception here before re-raising
 
-        local_terms = [
-            math.nan for _ in range(self.start - self.end)
-        ]  # this way local_terms is always bound
-        try:
-            # First we try to obtain a value the normal way
-            local_terms = self.cob.evaluate_terms(
-                params, ctx=ctx, idx_slice=slice(self.start, self.end)
-            )
-        except Exception as e:
-            # If we catch an exception we send it to the master rank and continue
-            logger.exception(e)
-            self.comm.gather([e], root=0)
-        else:
-            # Finally, we have to run the reduce.
-            # This must always happen, otherwise, we might cause deadlocks because other ranks might wait on a reduce.
-            # Sum up all local_totals into a global_total on the master rank
-            _ = self.comm.gather(local_terms, root=0)
+        idx_slice = slice(self.start, self.end)
+        contexts, idx_list = self.cob.prepare_evaluation(
+            parameters=params, ctx=ctx, idx_slice=idx_slice
+        )
+        local_terms = []
+
+        for idx, ctx_term in zip(idx_list[idx_slice], contexts, strict=True):
+            try:
+                res = self.cob.evaluate_term(params, ctx_term, idx)
+                if res is not None:
+                    local_terms.append(res)
+            except Exception as e:  # noqa: PERF203
+                # If we catch an exception we log it and append it to the local terms
+                # It will be sent to master and raised there
+                logger.exception(e)
+                local_terms.append(e)
+
+        # Finally, we have to run the gather
+        # This must always happen, otherwise, we might cause deadlocks because other ranks might wait on a reduce.
+        # Sum up all local_totals into a global_total on the master rank
+        _ = self.comm.gather(local_terms, root=0)
 
     def worker_gather_meta_data(self, ctx: EvaluateContext):
         ctx.collect_child_meta_data()
-        assert "children" in ctx.meta
-        local_meta_data = ctx.meta["children"]
-        self.comm.gather(local_meta_data, root=0)
+        if "children" in ctx.meta:
+            local_meta_data = ctx.meta["children"]
+            self.comm.gather(local_meta_data, root=0)
+        else:
+            self.comm.gather([], root=0)
 
     def worker_loop(self):
         # Ensure only rank 0 can call this
