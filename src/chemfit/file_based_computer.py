@@ -308,11 +308,9 @@ class FileBasedQuantityComputer(QuantityComputer):
                             f.write(e.stdout.decode("utf-8"))
                             f.write("ctx.temp:\n")
                             f.write(f"{ctx.temp}")
+                        msg += f"\nWrote dump file to `{dump_path}`."
                     except Exception as exc_dump:
-                        logger.exception(
-                            f"Could not write dump file to {dump_path}, because of {exc_dump}"
-                        )
-
+                        msg += f"\nCould not write dump file to `{dump_path}`, because of {exc_dump}."
                 raise Exception(msg) from e
 
             # Block here until file appears (or timeout)
