@@ -7,7 +7,9 @@ from typing import Any, Callable
 
 
 class EvaluateContext:
-    def __init__(self, temp: SimpleNamespace | None = None):
+    def __init__(
+        self, temp: SimpleNamespace | None = None, static: SimpleNamespace | None = None
+    ):
         """
         Container for per-evaluation state.
 
@@ -40,13 +42,15 @@ class EvaluateContext:
         self.parameters: dict[str, Any] | None = None
         self.loss: float | None = None
         self.temp = SimpleNamespace() if temp is None else temp
+        self.static = SimpleNamespace() if static is None else static
         self.meta: dict[str, Any] = {}
         self._children: list[EvaluateContext] = []
 
     def spawn_children(self, n_children: int) -> list[EvaluateContext]:
-        """Spawns dependent child contexts, with a deepcopy of the `temp` data."""
+        """Spawns dependent child contexts, with a deepcopy of the `temp` data and access to the same static data."""
         self._children = [
-            EvaluateContext(temp=copy.deepcopy(self.temp)) for _ in range(n_children)
+            EvaluateContext(temp=copy.deepcopy(self.temp), static=self.static)
+            for _ in range(n_children)
         ]
         return self._children
 
