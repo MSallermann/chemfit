@@ -91,7 +91,7 @@ class ContextModifer(Protocol):
         self,
         idx_child_ctx: int,
         child_ctx: EvaluateContext,
-        num_ctx: int,
+        num_children: int,
         parent_ctx: EvaluateContext,
     ): ...
 
@@ -333,7 +333,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
                 self.context_modifier(
                     idx_child_ctx=idx_cur_ctx,
                     child_ctx=child_ctx,
-                    num_ctx=self.n_terms(),
+                    num_children=self.n_terms(),
                     parent_ctx=ctx,
                 )
                 for idx_cur_ctx, child_ctx in zip(sliced_idx_list, contexts)
