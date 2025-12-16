@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
 from chemfit.combined_objective_function import DEFAULT_SLICE, CombinedObjectiveFunction
 
-if TYPE_CHECKING:
-    from concurrent.futures import ThreadPoolExecutor
-
 
 class AsyncWrapperCOB(ObjectiveFunctor):
-    def __init__(
-        self, cob: CombinedObjectiveFunction, executor: ThreadPoolExecutor | None = None
-    ):
+    def __init__(self, cob: CombinedObjectiveFunction):
         """
         Wrap a CombinedObjectiveFunction for concurrent async evaluation.
 
@@ -28,7 +24,6 @@ class AsyncWrapperCOB(ObjectiveFunctor):
 
         """
         self.cob = cob
-        self._executor = executor
 
     def __enter__(self):
         """
@@ -66,8 +61,14 @@ class AsyncWrapperCOB(ObjectiveFunctor):
 
         loop = asyncio.get_running_loop()
 
+        if hasattr(ctx.static, "executor"):
+            assert isinstance(ctx.static.executor, ThreadPoolExecutor)
+            executor = ctx.static.executor
+        else:
+            executor = ThreadPoolExecutor(max_workers=self.cob.n_terms())
+
         return await loop.run_in_executor(
-            self._executor, self.cob.evaluate_term, params, ctx, idx
+            executor, self.cob.evaluate_term, params, ctx, idx
         )
 
     async def async_evaluate_terms(
