@@ -61,9 +61,8 @@ class AsyncWrapperCOB(ObjectiveFunctor):
 
         loop = asyncio.get_running_loop()
 
-        if hasattr(ctx.static, "executor"):
-            assert isinstance(ctx.static.executor, ThreadPoolExecutor)
-            executor = ctx.static.executor
+        if ctx.executor is not None:
+            executor = ctx.executor
         else:
             executor = ThreadPoolExecutor(max_workers=self.cob.n_terms())
 
