@@ -139,7 +139,9 @@ class QuantityComputer(abc.ABC):
         """
         self.static_meta_data: dict[str, Any] = {}  # For static meta data
 
-    def __call__(self, parameters: dict[str, Any], ctx: EvaluateContext | None = None):
+    def __call__(
+        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
+    ) -> dict[str, Any]:
         """
         Compute quantities for the given parameters.
 

@@ -41,9 +41,10 @@ class WrappedQuantityComputer(QuantityComputer):
     def _compute(
         self,
         parameters: dict[str, Any],
-        ctx: EvaluateContext,  # noqa: ARG002
+        ctx: EvaluateContext,
     ) -> dict[str, Any]:
-        return self.func(parameters)
+        ctx.quantities = self.func(parameters)
+        return ctx.quantities
 
 
 def to_quantity_computer(func: Callable[[dict[str, Any]], dict[str, Any]]):
