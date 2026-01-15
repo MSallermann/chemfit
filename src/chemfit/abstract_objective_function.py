@@ -177,13 +177,16 @@ class QuantityComputer(abc.ABC):
         ...
 
 
+LossFunction = (
+    Callable[[dict[str, Any]], float]
+    | Callable[[dict[str, Any], dict[str, Any]], float]
+)
+
+
 class QuantityComputerObjectiveFunction(ObjectiveFunctor):
     def __init__(
         self,
-        loss_function: (
-            Callable[[dict[str, Any]], float]
-            | Callable[[dict[str, Any], dict[str, Any]], float]
-        ),
+        loss_function: LossFunction,
         quantity_computer: QuantityComputer,
     ) -> None:
         """
