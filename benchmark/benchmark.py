@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
+from loky import ProcessPoolExecutor
 from scipy.optimize import curve_fit
 
 from chemfit.abstract_objective_function import (
