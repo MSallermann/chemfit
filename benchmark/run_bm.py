@@ -30,6 +30,21 @@ params = benchmark.BenchmarkParams(
     use_threads=True,
     n_workers=4,
 )
+output = Path("bm_result_processes.json")
+res = benchmark.run_benchmark(params)
+with output.open("w") as f:
+    json.dump(asdict(res), f, indent=4)
+
+# Process pool
+params = benchmark.BenchmarkParams(
+    n_params=10,
+    n_terms=10,
+    release_gil=True,
+    n_evals=100,
+    wait_times=np.logspace(-7, -2, 10).tolist(),
+    use_processes=True,
+    n_workers=4,
+)
 output = Path("bm_result_threads.json")
 res = benchmark.run_benchmark(params)
 with output.open("w") as f:
