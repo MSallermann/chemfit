@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.combined_objective_function import DEFAULT_SLICE, CombinedObjectiveFunction
+from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 
 class AsyncWrapperCOB(ObjectiveFunctor):
@@ -44,60 +43,6 @@ class AsyncWrapperCOB(ObjectiveFunctor):
         tb: object,
     ): ...
 
-    async def async_term(
-        self, params: dict[str, Any], ctx: EvaluateContext, idx: int
-    ) -> float | None:
-        """
-        Evaluate a single term of the objective asynchronously.
-
-        Args:
-            params: Parameter dictionary passed to the objective.
-            idx: Index of the term to compute.
-
-        Returns:
-            The term's contribution value.
-
-        """
-
-        loop = asyncio.get_running_loop()
-
-        if ctx.executor is not None:
-            executor = ctx.executor
-        else:
-            executor = ThreadPoolExecutor(max_workers=self.cob.n_terms())
-
-        return await loop.run_in_executor(
-            executor, self.cob.evaluate_term, params, ctx, idx
-        )
-
-    async def async_evaluate_terms(
-        self,
-        parameters: dict[str, Any],
-        ctx: EvaluateContext,
-        idx_slice: slice = DEFAULT_SLICE,
-    ) -> list[float]:
-        """
-        Evaluate all objective terms in this slice concurrently.
-
-        Args:
-            params: Parameter dictionary for evaluation.
-
-        Returns:
-            Sum of all term contributions.
-
-        """
-
-        contexts, idx_list = self.cob.prepare_evaluation(
-            parameters=parameters, ctx=ctx, idx_slice=idx_slice
-        )
-
-        futures = [
-            self.async_term(parameters, child_ctx, idx)
-            for child_ctx, idx in zip(contexts, idx_list, strict=True)
-        ]
-
-        return [t for t in await asyncio.gather(*futures) if t is not None]
-
     def __call__(
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
     ) -> float:
@@ -115,13 +60,19 @@ class AsyncWrapperCOB(ObjectiveFunctor):
         if ctx is None:
             ctx = EvaluateContext()
 
-        terms = asyncio.run(
-            self.async_evaluate_terms(
-                parameters=parameters, ctx=ctx, idx_slice=DEFAULT_SLICE
-            )
+        contexts, idx_list = self.cob.prepare_evaluation(parameters=parameters, ctx=ctx)
+
+        executor = ctx.executor if ctx.executor is not None else ThreadPoolExecutor()
+
+        terms = executor.map(
+            self.cob.evaluate_term,
+            [parameters for _ in range(self.cob.n_terms())],
+            contexts,
+            idx_list,
         )
+
+        ctx.loss = self.cob.reduction(list(terms))
 
         ctx.collect_child_meta_data()
 
-        ctx.loss = self.cob.reduction(terms)
         return ctx.loss

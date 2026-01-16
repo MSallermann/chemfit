@@ -1,12 +1,30 @@
 from __future__ import annotations
 
-import abc
 import copy
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
-    from concurrent.futures import Executor
+    from collections.abc import Generator, Iterable
+
+T = TypeVar("T", covariant=True)  # noqa: PLC0105
+
+
+class Future(Generic[T], Protocol):
+    def result(self, timeout: float | None = None) -> T: ...
+    def cancel(self): ...
+
+
+class Executor(Protocol):
+    def submit(self, fn: Callable[..., T], /, *args, **kwargs) -> Future[T]: ...
+
+    def map(
+        self,
+        fn: Callable[..., T],
+        *iterables: Iterable[Any],
+        timeout: float | None = None,
+        chunksize: int = 1,
+    ) -> Generator[T]: ...
 
 
 class EvaluateContext:
@@ -53,6 +71,13 @@ class EvaluateContext:
         self.meta: dict[str, Any] = {}
         self._children: list[EvaluateContext] = []
 
+    def __getstate__(self) -> dict[str, Any]:
+        return {"temp": self.temp, "static": self.static}
+
+    def __setstate__(self, state: dict[str, Any]):
+        self.temp = state["temp"]
+        self.static = state["static"]
+
     def spawn_children(self, n_children: int) -> list[EvaluateContext]:
         """Spawns dependent child contexts, with a deepcopy of the `temp` data and access to the same static data."""
         self._children = [
@@ -89,8 +114,7 @@ class EvaluateContext:
         }
 
 
-class ObjectiveFunctor(abc.ABC):
-    @abc.abstractmethod
+class ObjectiveFunctor:
     def __call__(
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
     ) -> float:
@@ -120,9 +144,10 @@ class ObjectiveFunctor(abc.ABC):
               this method in multiple threads/tasks.
 
         """
+        raise NotImplementedError
 
 
-class QuantityComputer(abc.ABC):
+class QuantityComputer:
     def __init__(self):
         """
         Base class for computing intermediate quantities.
@@ -169,12 +194,11 @@ class QuantityComputer(abc.ABC):
 
         return ctx.quantities
 
-    @abc.abstractmethod
     def _compute(
         self, parameters: dict[str, Any], ctx: EvaluateContext
     ) -> dict[str, Any]:
         """Compute dictionary of quantities for a given set of new parameters."""
-        ...
+        raise NotImplementedError
 
 
 LossFunction = (
