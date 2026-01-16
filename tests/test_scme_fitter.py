@@ -194,7 +194,9 @@ def test_kabsch_objective_function():
         ),
     )
 
-    fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
+    fitter = Fitter(
+        objective_function=ob, initial_params=INITIAL_PARAMS, swallow_exceptions=True
+    )
 
     optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
 

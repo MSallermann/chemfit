@@ -19,7 +19,7 @@ from scipy.optimize import OptimizeResult, minimize
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
 from chemfit.async_helpers import async_eval_many
 from chemfit.utils import check_params_near_bounds
-from chemfit.wrap_funcs import to_objective_functor
+from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +159,9 @@ class Fitter:
 
         # Make sure that we have an ObjectiveFunctor instance
         if not isinstance(objective_function, ObjectiveFunctor):
-            objective_function = to_objective_functor(objective_function)
+            objective_function = WrappedObjectiveFunctor(
+                func=objective_function, pass_ctx=False
+            )
 
         self.objective_function = FitterObjectiveFunctor(
             objective_function,

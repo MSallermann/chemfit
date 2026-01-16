@@ -24,13 +24,13 @@ class MockExecutor(ThreadPoolExecutor):
 
 
 def test_async_cob():
-    @to_objective_functor
-    def a(p: dict):
+    @to_objective_functor(pass_ctx=False)
+    def a(p: dict[str, float]) -> float:
         time.sleep(0.5)
         return p["x"] ** 2
 
-    @to_objective_functor
-    def b(p: dict):
+    @to_objective_functor()
+    def b(p: dict[str, float]) -> float:
         time.sleep(0.5)
         return p["y"] ** 2
 
