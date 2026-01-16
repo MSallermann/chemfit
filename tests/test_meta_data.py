@@ -26,12 +26,12 @@ class MyFunctor(ObjectiveFunctor):
         return val
 
 
-@to_objective_functor
+@to_objective_functor()
 def a(p: dict):
     return p["y"] ** 2
 
 
-@to_quantity_computer
+@to_quantity_computer()
 def quants(p: dict):
     return {"x_plus_y": p["x"] + p["y"]}
 
