@@ -71,6 +71,8 @@ class AsyncWrapperCOB(ObjectiveFunctor):
             idx_list,
         )
 
+        terms = [t for t in terms if t is not None]
+
         ctx.loss = self.cob.reduction(list(terms))
 
         ctx.collect_child_meta_data()
