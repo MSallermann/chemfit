@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -8,6 +9,7 @@ from enum import Enum
 from typing import Any
 
 import numpy as np
+from dask.distributed import Client
 from loky import ProcessPoolExecutor
 from scipy.optimize import curve_fit
 
@@ -17,6 +19,7 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 from chemfit.wrap_funcs import to_quantity_computer
 
 
@@ -43,6 +46,8 @@ class Method(str, Enum):
     threadpool = "threadpool"
     loky_processpool = "loky_processpool"
     synchronous = "synchronous"
+    mpi = "mpi"
+    dask = "dask"
 
 
 @dataclass
@@ -93,6 +98,15 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
         ctx.executor = ProcessPoolExecutor(max_workers=bm_params.n_workers)
     elif bm_params.method == Method.synchronous:
         ob = cob
+    elif bm_params.method == Method.mpi:
+        # Since we dont use the wrapper as a context, we have to remember to shut it down later
+        ob = MPIWrapperCOB(cob, mpi_debug_log=False)
+        if ob.rank != 0:
+            ob.worker_loop()
+            return None
+    elif bm_params.method == Method.dask:
+        ctx.executor = Client("127.0.0.1:8786").get_executor()
+        ob = AsyncWrapperCOB(cob)
 
     time_taken_list = []
     for wait_time in bm_params.wait_times:
@@ -103,11 +117,24 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
             ob(params, ctx)
 
         _time_total = 0.0
-        for _ in range(bm_params.n_evals):
+        for i_eval in range(bm_params.n_evals):
+            print(f"{wait_time = }, eval {i_eval} / {bm_params.n_evals}")
+
+            # different parameters each time, so nothing get get cached or anything funny like that
             params = {chr(i): random.random() for i in range(bm_params.n_params)}  # noqa: S311
+
+            # We only time the eval part
             time_start = time.perf_counter()
-            _ = ob(params, ctx)
+            res = ob(params, ctx)
             _time_total += time.perf_counter() - time_start
+
+            # Ensure the results are correct
+            expected = cob.n_terms() * sum(v**2 for v in params.values())
+
+            print(f"   {res = }")
+            print(f"   {expected = }")
+
+            assert math.isclose(res, expected)
 
         time_taken_list.append(_time_total / bm_params.n_evals)
 
@@ -120,6 +147,10 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
         time_taken_list,
         sigma=1.0 / np.log(time_taken_list),
     )
+
+    # shut down mpi if used
+    if bm_params.method == Method.mpi:
+        ob.release_workers()
 
     return BenchmarkResult(
         params=bm_params,
