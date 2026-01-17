@@ -2,50 +2,29 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-import numpy as np
+import tomllib
 
 import benchmark
 
-# Synchronous
-params = benchmark.BenchmarkParams(
-    n_params=10,
-    n_terms=10,
-    release_gil=True,
-    n_evals=100,
-    wait_times=np.logspace(-7, -2, 10).tolist(),
-)
-output = Path("bm_result_sync.json")
-res = benchmark.run_benchmark(params)
-with output.open("w") as f:
-    json.dump(asdict(res), f, indent=4)
+INPUT = Path("./benchmark_settings.toml")
+OUTPUT_FOLDER = Path("./results")
+OUTPUT_FOLDER.mkdir(exist_ok=True)
 
+with INPUT.open("rb") as f:
+    input_data = tomllib.load(f)
 
-# Threadpool
-params = benchmark.BenchmarkParams(
-    n_params=10,
-    n_terms=10,
-    release_gil=True,
-    n_evals=100,
-    wait_times=np.logspace(-7, -2, 10).tolist(),
-    use_threads=True,
-    n_workers=4,
-)
-output = Path("bm_result_processes.json")
-res = benchmark.run_benchmark(params)
-with output.open("w") as f:
-    json.dump(asdict(res), f, indent=4)
+default_values = input_data.get("DEFAULT", {})
 
-# Process pool
-params = benchmark.BenchmarkParams(
-    n_params=10,
-    n_terms=10,
-    release_gil=True,
-    n_evals=100,
-    wait_times=np.logspace(-7, -2, 10).tolist(),
-    use_processes=True,
-    n_workers=4,
-)
-output = Path("bm_result_threads.json")
-res = benchmark.run_benchmark(params)
-with output.open("w") as f:
-    json.dump(asdict(res), f, indent=4)
+for k, v in input_data.items():
+    if k == "DEFAULT":
+        continue
+
+    print(f"Running benchmark: {k}")
+
+    bm_param_dict = default_values.copy()
+    bm_param_dict.update(v)
+    params = benchmark.BenchmarkParams(**bm_param_dict)
+    result = benchmark.run_benchmark(params)
+    output = OUTPUT_FOLDER / f"bm_result_{k}.json"
+    with output.open("w") as f:
+        json.dump(asdict(result), f, indent=4)
