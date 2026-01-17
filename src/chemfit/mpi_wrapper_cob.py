@@ -109,9 +109,10 @@ class MPIWrapperCOB(ObjectiveFunctor):
             if signal == Signal.ABORT:
                 break
 
-            if isinstance(signal, dict):
-                params: dict[str, Any] = signal
-                ctx = EvaluateContext()
+            if isinstance(signal, EvaluateContext):
+                assert signal.parameters is not None
+                params: dict[str, Any] = signal.parameters
+                ctx = signal
                 self.worker_process_params(params, ctx)
                 self.worker_gather_meta_data(ctx)
 
@@ -146,13 +147,15 @@ class MPIWrapperCOB(ObjectiveFunctor):
         if ctx is None:
             ctx = EvaluateContext()
 
+        ctx.parameters = params
+
         # Ensure only rank 0 can call this
         if self.rank != 0:
             msg = "`__call__` can only be used on rank 0"
             raise RuntimeError(msg)
 
         # Broadcast the params to the worker ranks
-        self.comm.bcast(params, root=0)
+        self.comm.bcast(ctx, root=0)
 
         local_terms: list[float] = []  # So we get NaN in case the local compute fails
         try:
@@ -181,13 +184,16 @@ class MPIWrapperCOB(ObjectiveFunctor):
         ctx.loss = self.cob.reduction(terms)
         return ctx.loss
 
+    def release_workers(self):
+        # Only rank 0 needs to shut down workers
+        if self.rank == 0 and self.size > 1:
+            # send the poison-pill (None) so workers break out
+            self.comm.bcast(Signal.ABORT, root=0)
+
     def __exit__(
         self,
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         tb: object,
     ):
-        # Only rank 0 needs to shut down workers
-        if self.rank == 0 and self.size > 1:
-            # send the poison-pill (None) so workers break out
-            self.comm.bcast(Signal.ABORT, root=0)
+        self.release_workers()
