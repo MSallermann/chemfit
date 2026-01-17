@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import random
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
+import numpy as np
 from loky import ProcessPoolExecutor
 from scipy.optimize import curve_fit
 
@@ -36,16 +39,26 @@ def rmsd(quantities: dict[str, Any]) -> float:
     return sum(quantities.values())
 
 
+class Method(str, Enum):
+    threadpool = "threadpool"
+    loky_processpool = "loky_processpool"
+    synchronous = "synchronous"
+
+
 @dataclass
 class BenchmarkParams:
+    label: str = ""
+
     n_params: int = 10
     n_terms: int = 10
     release_gil: bool = True
     n_evals: int = 10
 
     n_workers: int | None = None
-    use_threads: bool = False
-    use_processes: bool = False
+
+    n_warmup: int = 10
+
+    method: Method = Method.synchronous
 
     wait_times: list[float] = field(default_factory=list)
 
@@ -65,35 +78,48 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
         )
         for _ in range(bm_params.n_terms)
     ]
-    ob = CombinedObjectiveFunction(terms)
+    cob = CombinedObjectiveFunction(terms)
 
     params = {chr(i): float(i) for i in range(bm_params.n_params)}
 
     ctx = EvaluateContext()
     ctx.static.release_gil = bm_params.release_gil
 
-    if bm_params.use_threads:
-        ob = AsyncWrapperCOB(ob)
+    if bm_params.method == Method.threadpool:
+        ob = AsyncWrapperCOB(cob)
         ctx.executor = ThreadPoolExecutor(max_workers=bm_params.n_workers)
-    elif bm_params.use_processes:
-        ob = AsyncWrapperCOB(ob)
+    elif bm_params.method == Method.loky_processpool:
+        ob = AsyncWrapperCOB(cob)
         ctx.executor = ProcessPoolExecutor(max_workers=bm_params.n_workers)
+    elif bm_params.method == Method.synchronous:
+        ob = cob
 
     time_taken_list = []
     for wait_time in bm_params.wait_times:
         ctx.static.wait_time = wait_time
 
-        time_start = time.perf_counter()
-
-        for _ in range(bm_params.n_evals):
+        # some warmup iterations
+        for _ in range(bm_params.n_warmup):
             ob(params, ctx)
 
-        time_taken_list.append((time.perf_counter() - time_start) / bm_params.n_evals)
+        _time_total = 0.0
+        for _ in range(bm_params.n_evals):
+            params = {chr(i): random.random() for i in range(bm_params.n_params)}  # noqa: S311
+            time_start = time.perf_counter()
+            _ = ob(params, ctx)
+            _time_total += time.perf_counter() - time_start
+
+        time_taken_list.append(_time_total / bm_params.n_evals)
 
     def cost_func(x: float, a: float, b: float):
         return a * x + b
 
-    popt, pcov = curve_fit(cost_func, bm_params.wait_times, time_taken_list)
+    popt, pcov = curve_fit(
+        cost_func,
+        bm_params.wait_times,
+        time_taken_list,
+        sigma=1.0 / np.log(time_taken_list),
+    )
 
     return BenchmarkResult(
         params=bm_params,

@@ -1,0 +1,53 @@
+[DEFAULT]
+wait_times = [
+    1e-5,
+    2e-5,
+    4e-5,
+    8e-5,
+    16e-5,
+    32e-5,
+    64e-5,
+    128e-5,
+    256e-5,
+    512e-5,
+    1024e-5,
+    2048e-5,
+]
+n_evals = 60
+
+
+[sync]
+label = "synchronous"
+n_params = 10
+n_terms = 10
+release_gil = true
+method = "synchronous"
+
+[threadpool]
+label = "threadpool (release GIL)"
+n_params = 10
+n_terms = 10
+release_gil = true
+method = "threadpool"
+
+
+[threadpool_hold_gil]
+label = "threadpool (hold GIL)"
+n_params = 10
+n_terms = 10
+release_gil = false
+method = "threadpool"
+
+[processpool_release_GIL]
+label = "processpool (release GIL)"
+n_params = 10
+n_terms = 10
+release_gil = true
+method = "loky_processpool"
+
+[processpool_hold_GIL]
+label = "processpool (hold GIL)"
+n_params = 10
+n_terms = 10
+release_gil = false
+method = "loky_processpool"
