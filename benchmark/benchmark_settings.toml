@@ -12,42 +12,35 @@ wait_times = [
     512e-5,
     1024e-5,
     2048e-5,
+    5096e-5,
 ]
 n_evals = 60
-
+n_workers = 4
+n_params = 10
+n_terms = 10
 
 [sync]
 label = "synchronous"
-n_params = 10
-n_terms = 10
+
 release_gil = true
 method = "synchronous"
 
 [threadpool]
 label = "threadpool (release GIL)"
-n_params = 10
-n_terms = 10
 release_gil = true
 method = "threadpool"
 
-
 [threadpool_hold_gil]
 label = "threadpool (hold GIL)"
-n_params = 10
-n_terms = 10
 release_gil = false
 method = "threadpool"
 
 [processpool_release_GIL]
 label = "processpool (release GIL)"
-n_params = 10
-n_terms = 10
 release_gil = true
 method = "loky_processpool"
 
 [processpool_hold_GIL]
 label = "processpool (hold GIL)"
-n_params = 10
-n_terms = 10
 release_gil = false
 method = "loky_processpool"
