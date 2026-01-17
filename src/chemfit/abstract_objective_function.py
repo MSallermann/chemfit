@@ -74,13 +74,15 @@ class EvaluateContext:
         self.temp = SimpleNamespace() if temp is None else temp
         self.static = SimpleNamespace() if static is None else static
         self.meta: dict[str, Any] = {}
+        self.executor = None
         self._children: list[EvaluateContext] = []
 
     def __getstate__(self) -> dict[str, Any]:
-        return {"temp": self.temp, "static": self.static}
+        return {"parameters": self.parameters, "temp": self.temp, "static": self.static}
 
     def __setstate__(self, state: dict[str, Any]):
         self._set_defaults(temp=state["temp"], static=state["static"])
+        self.parameters = state["parameters"]
 
     def spawn_children(self, n_children: int) -> list[EvaluateContext]:
         """Spawns dependent child contexts, with a deepcopy of the `temp` data and access to the same static data."""
