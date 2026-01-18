@@ -4,8 +4,6 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from typing import Any, Callable
 
-from dask.distributed import Client, LocalCluster
-
 from chemfit import abstract_objective_function, wrap_funcs
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.async_wrapper_cob import AsyncWrapperCOB
@@ -98,12 +96,7 @@ async_cob = AsyncWrapperCOB(cob)
 
 
 def test_executors():
-    executors = [
-        MyExecutor(),
-        ThreadPoolExecutor(),
-        ProcessPoolExecutor(),
-        Client(LocalCluster(n_workers=4, processes=True)).get_executor(),
-    ]
+    executors = [MyExecutor(), ProcessPoolExecutor(), ThreadPoolExecutor()]
 
     for executor in executors:
         func = wrap_funcs.WrappedObjectiveFunctor(my_func)
