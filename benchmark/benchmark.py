@@ -105,7 +105,8 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
             ob.worker_loop()
             return None
     elif bm_params.method == Method.dask:
-        ctx.executor = Client("127.0.0.1:8786").get_executor()
+        client = Client("127.0.0.1:8786")
+        ctx.executor = client.get_executor()
         ob = AsyncWrapperCOB(cob)
 
     time_taken_list = []
@@ -138,6 +139,13 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
 
         time_taken_list.append(_time_total / bm_params.n_evals)
 
+    # shut down mpi if used
+    if bm_params.method == Method.mpi:
+        ob.release_workers()
+
+    if bm_params.method == Method.dask:
+        client.close()
+
     def cost_func(x: float, a: float, b: float):
         return a * x + b
 
@@ -145,12 +153,10 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
         cost_func,
         bm_params.wait_times,
         time_taken_list,
-        sigma=1.0 / np.log(time_taken_list),
+        sigma=np.array(time_taken_list)
+        / np.log(time_taken_list),  # this creates an even weight in log-space
+        absolute_sigma=True,
     )
-
-    # shut down mpi if used
-    if bm_params.method == Method.mpi:
-        ob.release_workers()
 
     return BenchmarkResult(
         params=bm_params,
