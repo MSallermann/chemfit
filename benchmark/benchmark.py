@@ -105,7 +105,7 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
             ob.worker_loop()
             return None
     elif bm_params.method == Method.dask:
-        client = Client("127.0.0.1:8786")
+        client = Client(scheduler_file="./scheduler.json")
         ctx.executor = client.get_executor()
         ob = AsyncWrapperCOB(cob)
 
