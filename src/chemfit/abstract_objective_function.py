@@ -5,7 +5,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
+    from collections.abc import Iterable
 
 T = TypeVar("T", covariant=True)  # noqa: PLC0105
 
@@ -24,7 +24,7 @@ class Executor(Protocol):
         *iterables: Iterable[Any],
         timeout: float | None = None,
         chunksize: int = 1,
-    ) -> Generator[T]: ...
+    ) -> Iterable[T]: ...
 
 
 class EvaluateContext:

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import math
 import time
+from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
 from typing import Any, Callable, cast
 
@@ -16,8 +16,11 @@ from pydictnest import (
 )
 from scipy.optimize import OptimizeResult, minimize
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.async_helpers import async_eval_many
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    Executor,
+    ObjectiveFunctor,
+)
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
@@ -256,6 +259,7 @@ class Fitter:
         optimizer_str: str = "NgIohTuned",
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
+        executor: Executor | None = None,
     ) -> dict[str, Any]:
         """
         Optimize parameters using a nevergrad optimizer.
@@ -285,6 +289,9 @@ class Fitter:
             implement your own async driver around `async_eval_many`.
 
         """
+
+        if num_workers != 1 and executor is None:
+            executor = ThreadPoolExecutor(num_workers)
 
         self._hook_pre_fit()
 
@@ -334,7 +341,8 @@ class Fitter:
             if num_workers == 1:
                 losses = [f_ng(flat_params[0], self.contexts[0])]
             else:
-                losses = asyncio.run(async_eval_many(f_ng, flat_params, self.contexts))  # pyright: ignore[reportArgumentType]
+                assert executor is not None
+                losses = executor.map(f_ng, flat_params, self.contexts)
 
             [
                 optimizer.tell(params, loss)
@@ -345,10 +353,12 @@ class Fitter:
                 callback(step, self.contexts)
 
         recommendation = optimizer.provide_recommendation()
-        args, kwargs = recommendation.value
 
+        args, kwargs = recommendation.value
         # Our optimal params are the first positional argument
         flat_opt_params = args[0]
+
+        print(flat_opt_params)
 
         opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
 
