@@ -374,7 +374,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ctx: EvaluateContext | None = None,
     ) -> float:
         """
-        Evaluate the weighted sum of all selected objective terms.
+        Evaluate the reduction of all selected (and weighted) objective terms.
 
         Each selected term receives its own `EvaluateContext` (created by
         `prepare_evaluation`), and its contribution is accumulated into
