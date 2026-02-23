@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 T = TypeVar("T", covariant=True)  # noqa: PLC0105
 
 
-class Future(Generic[T], Protocol):
+class Future(Protocol, Generic[T]):
     def result(self, timeout: float | None = None) -> T: ...
     def cancel(self): ...
 
