@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from typing import Any
+
+import numpy as np
 
 from chemfit.fitter import FitterEvaluateContext
 
@@ -32,6 +35,13 @@ def log_progress(step: int, ctxs: list[FitterEvaluateContext]):
     logger.info("-" * 40)
 
 
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, o: Any):
+        if isinstance(o, np.ndarray):
+            return o.tolist()
+        return super().default(o)
+
+
 class SaveMetaData:
     def __init__(self, output_folder: Path | str):
         """Saves the meta data to a folder."""
@@ -45,10 +55,7 @@ class SaveMetaData:
                     "w"
                 ) as f:
                     json.dump(
-                        ctx.to_meta_data(),
-                        f,
-                        indent=4,
-                        skipkeys=True,
+                        ctx.to_meta_data(), f, indent=4, skipkeys=True, cls=NumpyEncoder
                     )
         except Exception:
             logger.exception("Exception when trying to save meta data!")
