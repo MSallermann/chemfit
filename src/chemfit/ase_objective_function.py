@@ -78,8 +78,21 @@ class PathAtomsFactory(AtomsFactory):
         return atoms
 
 
-def default_quantity_processor(calc: Calculator, atoms: Atoms) -> dict[str, Any]:
-    return {**calc.results, "n_atoms": len(atoms)}
+class DefaultQuantityProcessor:
+    def __init__(self, filter_keys: list[str] | None = None) -> None:
+        """
+        Initialize a default quantitiy processor, that returns all of the `results` of the calculator.
+
+        Keys which are contained in `filter_keys` are ignored.
+        """
+
+        self.filter_keys = filter_keys
+
+    def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:
+        res = {**calc.results, "n_atoms": len(atoms)}
+        if self.filter_keys is not None:
+            [res.pop(k) for k in self.filter_keys]
+        return res
 
 
 class SinglePointASEComputer(QuantityComputer):
@@ -126,10 +139,12 @@ class SinglePointASEComputer(QuantityComputer):
         self.atoms_factory = atoms_factory
         self.atoms_post_processor = atoms_post_processor
 
-        self.quantity_processors: list[QuantityProcessor] = [default_quantity_processor]
-
-        if quantity_processors is not None:
-            self.quantity_processors += quantity_processors
+        if quantity_processors is None:
+            self.quantity_processors: list[QuantityProcessor] = [
+                DefaultQuantityProcessor()
+            ]
+        else:
+            self.quantity_processors = quantity_processors
 
         for qp in self.quantity_processors:
             check_protocol(qp, QuantityProcessor)
