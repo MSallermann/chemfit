@@ -10,13 +10,13 @@ if TYPE_CHECKING:
 T = TypeVar("T", covariant=True)  # noqa: PLC0105
 
 
-class Future(Protocol, Generic[T]):
+class FutureLike(Protocol, Generic[T]):
     def result(self, timeout: float | None = None) -> T: ...
-    def cancel(self): ...
+    def cancel(self) -> bool: ...
 
 
-class Executor(Protocol):
-    def submit(self, fn: Callable[..., T], /, *args, **kwargs) -> Future[T]: ...
+class ExecutorLike(Protocol):
+    def submit(self, fn: Callable[..., T], /, *args, **kwargs) -> FutureLike[T]: ...
 
     def map(
         self,
@@ -32,7 +32,7 @@ class EvaluateContext:
         self,
         temp: SimpleNamespace | None = None,
         static: SimpleNamespace | None = None,
-        executor: Executor | None = None,
+        executor: ExecutorLike | None = None,
     ):
         """
         Container for per-evaluation state.
@@ -63,7 +63,7 @@ class EvaluateContext:
         """
 
         self._set_defaults(temp, static)
-        self.executor: Executor | None = executor
+        self.executor: ExecutorLike | None = executor
 
     def _set_defaults(
         self, temp: SimpleNamespace | None, static: SimpleNamespace | None
@@ -78,11 +78,17 @@ class EvaluateContext:
         self._children: list[EvaluateContext] = []
 
     def __getstate__(self) -> dict[str, Any]:
-        return {"parameters": self.parameters, "temp": self.temp, "static": self.static}
+        return {
+            "parameters": self.parameters,
+            "temp": self.temp,
+            "static": self.static,
+            "loss": self.loss,
+        }
 
     def __setstate__(self, state: dict[str, Any]):
         self._set_defaults(temp=state["temp"], static=state["static"])
         self.parameters = state["parameters"]
+        self.loss = state["loss"]
 
     def spawn_children(self, n_children: int) -> list[EvaluateContext]:
         """Spawns dependent child contexts, with a deepcopy of the `temp` data and access to the same static data."""

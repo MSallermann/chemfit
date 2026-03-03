@@ -18,7 +18,7 @@ from scipy.optimize import OptimizeResult, minimize
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
-    Executor,
+    ExecutorLike,
     ObjectiveFunctor,
 )
 from chemfit.utils import check_params_near_bounds
@@ -40,6 +40,19 @@ class FitterEvaluateContext(EvaluateContext):
         self.n_evals: int = 0
         self.opt_loss: float | None = None
         self.opt_params: dict[str, Any] | None = None
+
+    def __getstate__(self) -> dict[str, Any]:
+        state = super().__getstate__()
+        state["n_evals"] = self.n_evals
+        state["opt_loss"] = self.opt_loss
+        state["opt_params"] = self.opt_params
+        return state
+
+    def __setstate__(self, state: dict[str, Any]):
+        super().__setstate__(state)
+        self.n_evals = state["n_evals"]
+        self.opt_loss = state["opt_loss"]
+        self.opt_params = state["opt_params"]
 
 
 class FitterObjectiveFunctor(ObjectiveFunctor):
@@ -259,7 +272,7 @@ class Fitter:
         optimizer_str: str = "NgIohTuned",
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
-        executor: Executor | None = None,
+        executor: ExecutorLike | None = None,
     ) -> dict[str, Any]:
         """
         Optimize parameters using a nevergrad optimizer.
@@ -342,7 +355,7 @@ class Fitter:
                 losses = [f_ng(flat_params[0], self.contexts[0])]
             else:
                 assert executor is not None
-                losses = executor.map(f_ng, flat_params, self.contexts)
+                losses = executor.map(f_ng, flat_params, contexts)
 
             [
                 optimizer.tell(params, loss)

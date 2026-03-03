@@ -1,4 +1,5 @@
 import numpy as np
+from loky import ProcessPoolExecutor
 from pydictnest import get_nested, has_nested, items_nested
 
 from chemfit.async_wrapper_cob import AsyncWrapperCOB
@@ -208,8 +209,14 @@ def test_with_square_func_async():
             n_steps=NSTEPS_CB,
         )
 
+        contexts = [FitterEvaluateContext() for _ in range(NUM_WORKERS)]
+
         optimal_params = fitter.fit_nevergrad(
-            budget=NG_BUDGET, optimizer_str=opt, num_workers=NUM_WORKERS
+            budget=NG_BUDGET,
+            optimizer_str=opt,
+            num_workers=NUM_WORKERS,
+            executor=ProcessPoolExecutor(NUM_WORKERS),
+            contexts=contexts,
         )
 
         print(f"{opt = }")

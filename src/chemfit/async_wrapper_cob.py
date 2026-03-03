@@ -3,12 +3,18 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ExecutorLike,
+    ObjectiveFunctor,
+)
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 
 class AsyncWrapperCOB(ObjectiveFunctor):
-    def __init__(self, cob: CombinedObjectiveFunction):
+    def __init__(
+        self, cob: CombinedObjectiveFunction, executor: ExecutorLike | None = None
+    ):
         """
         Wrap a CombinedObjectiveFunction for concurrent async evaluation.
 
@@ -23,6 +29,7 @@ class AsyncWrapperCOB(ObjectiveFunctor):
 
         """
         self.cob = cob
+        self.executor: ExecutorLike | None = executor
 
     def __enter__(self):
         """
@@ -62,7 +69,12 @@ class AsyncWrapperCOB(ObjectiveFunctor):
 
         contexts, idx_list = self.cob.prepare_evaluation(parameters=parameters, ctx=ctx)
 
-        executor = ctx.executor if ctx.executor is not None else ThreadPoolExecutor()
+        if ctx.executor is None:
+            self.executor = ThreadPoolExecutor()
+
+        executor = ctx.executor if ctx.executor is not None else self.executor
+
+        assert executor is not None
 
         terms = executor.map(
             self.cob.evaluate_term,
