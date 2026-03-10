@@ -40,12 +40,14 @@ class FitterEvaluateContext(EvaluateContext):
         self.n_evals: int = 0
         self.opt_loss: float | None = None
         self.opt_params: dict[str, Any] | None = None
+        self.opt_meta: dict[str, Any] | None = None
 
     def __getstate__(self) -> dict[str, Any]:
         state = super().__getstate__()
         state["n_evals"] = self.n_evals
         state["opt_loss"] = self.opt_loss
         state["opt_params"] = self.opt_params
+        state["opt_meta"] = self.opt_meta
         return state
 
     def __setstate__(self, state: dict[str, Any]):
@@ -53,6 +55,7 @@ class FitterEvaluateContext(EvaluateContext):
         self.n_evals = state["n_evals"]
         self.opt_loss = state["opt_loss"]
         self.opt_params = state["opt_params"]
+        self.opt_meta = state["opt_meta"]
 
 
 class FitterObjectiveFunctor(ObjectiveFunctor):
@@ -129,7 +132,8 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
 
         if ctx.opt_loss is None or loss < ctx.opt_loss:
             ctx.opt_loss = loss
-            ctx.opt_params = parameters
+            ctx.opt_params = dict(parameters)
+            ctx.opt_meta = dict(ctx.meta)
 
         return loss
 
@@ -370,8 +374,6 @@ class Fitter:
         args, kwargs = recommendation.value
         # Our optimal params are the first positional argument
         flat_opt_params = args[0]
-
-        print(flat_opt_params)
 
         opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
 

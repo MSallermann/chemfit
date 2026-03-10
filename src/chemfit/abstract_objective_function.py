@@ -200,9 +200,9 @@ class QuantityComputer:
             ctx = EvaluateContext()
 
         ctx.parameters = parameters
-        ctx.quantities = self._compute(parameters, ctx)
 
         ctx.meta.update(self.static_meta_data)
+        ctx.quantities = self._compute(parameters, ctx)
 
         return ctx.quantities
 
