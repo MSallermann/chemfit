@@ -81,7 +81,7 @@ class PathAtomsFactory(AtomsFactory):
 class DefaultQuantityProcessor:
     def __init__(self, filter_keys: list[str] | None = None) -> None:
         """
-        Initialize a default quantitiy processor, that returns all of the `results` of the calculator.
+        Initialize a default quantity processor, that returns all of the `results` of the calculator.
 
         Keys which are contained in `filter_keys` are ignored.
         """
