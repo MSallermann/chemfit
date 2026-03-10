@@ -16,8 +16,8 @@ wait_times = [
 ]
 n_evals = 60
 n_workers = 4
-n_params = 10
-n_terms = 10
+n_params_list = [10]
+n_terms_list = [10]
 
 [dask]
 label = "dask"

@@ -1,2 +1,5 @@
 loky
 dask
+distributed
+mpi4py
+polars
