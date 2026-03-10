@@ -11,17 +11,15 @@ wait_times = [
     256e-5,
     512e-5,
     1024e-5,
-    2048e-5,
-    5096e-5,
+    2048e-5
 ]
-n_evals = 60
+n_params_list = [10]
+n_terms_list = [12]
+n_evals = 40
 n_workers = 4
-n_params = 10
-n_terms = 10
 
 [sync]
 label = "synchronous"
-
 release_gil = true
 method = "synchronous"
 
