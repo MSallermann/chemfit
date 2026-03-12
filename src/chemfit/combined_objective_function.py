@@ -342,7 +342,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         return contexts, idx_list
 
     def evaluate_term(
-        self, parameters: dict[str, Any], ctx_term: EvaluateContext, idx: int
+        self,
+        parameters: dict[str, Any],
+        idx: int,
+        ctx_term: EvaluateContext,
     ) -> float | None:
         try:
             return (
@@ -364,7 +367,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         terms = []
 
         for idx, ctx_term in zip(idx_list[idx_slice], contexts, strict=True):
-            terms.append(self.evaluate_term(parameters, ctx_term, idx))
+            terms.append(self.evaluate_term(parameters, idx, ctx_term))
 
         return [t for t in terms if t is not None]
 

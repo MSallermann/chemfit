@@ -9,6 +9,7 @@ from chemfit.abstract_objective_function import (
     ObjectiveFunctor,
 )
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.executor_utils import map_with_context
 
 
 class AsyncWrapperCOB(ObjectiveFunctor):
@@ -76,11 +77,12 @@ class AsyncWrapperCOB(ObjectiveFunctor):
 
         assert executor is not None
 
-        terms = executor.map(
+        terms = map_with_context(
+            executor,
             self.cob.evaluate_term,
             [parameters for _ in range(self.cob.n_terms())],
-            contexts,
             idx_list,
+            ctxs=contexts,
         )
 
         terms = [t for t in terms if t is not None]
