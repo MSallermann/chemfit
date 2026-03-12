@@ -21,6 +21,7 @@ from chemfit.abstract_objective_function import (
     ExecutorLike,
     ObjectiveFunctor,
 )
+from chemfit.executor_utils import map_with_context
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
@@ -359,7 +360,8 @@ class Fitter:
                 losses = [f_ng(flat_params[0], self.contexts[0])]
             else:
                 assert executor is not None
-                losses = executor.map(f_ng, flat_params, contexts)
+                assert contexts is not None
+                losses = map_with_context(executor, f_ng, flat_params, ctxs=contexts)
 
             [
                 optimizer.tell(params, loss)

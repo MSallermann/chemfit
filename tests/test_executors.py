@@ -21,7 +21,7 @@ def _result_or_cancel(fut: MyFuture, timeout: float | None = None):
         del fut
 
 
-class MyFuture(abstract_objective_function.Future):
+class MyFuture(abstract_objective_function.FutureLike):
     def __init__(self, func: Callable, args: Any) -> None:
         """Initialize a future."""
 
@@ -34,12 +34,18 @@ class MyFuture(abstract_objective_function.Future):
     def cancel(self): ...
 
 
-class MyExecutor(abstract_objective_function.Executor):
+class MyExecutor(abstract_objective_function.ExecutorLike):
     def submit(self, fn: Callable, *args) -> MyFuture:
         print(f"Submit with args {args}")
         return MyFuture(fn, args)
 
-    def map(self, fn: Callable, *iterables, timeout: float | None = None):
+    def map(
+        self,
+        fn: Callable,
+        *iterables,
+        timeout: float | None = None,
+        chunksize: int = 1,  # noqa: ARG002
+    ):
         if timeout is not None:
             end_time = timeout + time.monotonic()
 
