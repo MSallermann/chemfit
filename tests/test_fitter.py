@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
-from loky import ProcessPoolExecutor
+import pytest
 from pydictnest import get_nested, has_nested, items_nested
 
 from chemfit.async_wrapper_cob import AsyncWrapperCOB
@@ -186,7 +188,7 @@ def test_with_complicated_dict():
     check_solution(optimal_params)
 
 
-def test_with_square_func_async():
+def test_with_square_func_threadpool():
     def cont1(params: dict):
         return 2.0 * (params["x"] - 2) ** 2
 
@@ -217,7 +219,59 @@ def test_with_square_func_async():
             budget=NG_BUDGET,
             optimizer_str=opt,
             num_workers=NUM_WORKERS,
-            executor=ProcessPoolExecutor(NUM_WORKERS),
+            executor=ThreadPoolExecutor(NUM_WORKERS),
+            contexts=contexts,
+        )
+
+        print(f"{opt = }")
+        print(f"{optimal_params = }")
+        print(f"{len(progress) = }")
+        print(f"{NG_BUDGET // NSTEPS_CB = }")
+        print(f"{obj_func(optimal_params) = }")
+
+        # This assert is interesting because intuitively we would expect,
+        # these to be exactly equal, but this is solver dependent!!
+        # The "CMA" solver, for instance, may recommend parameters it has not actually visited yet
+        # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
+        # obj_func(optimal_params) value may be very slightly different
+        assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
+        assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
+
+
+def test_with_square_func_processpool():
+    loky = pytest.importorskip("loky", reason="Missing loky")
+
+    def cont1(params: dict):
+        return 2.0 * (params["x"] - 2) ** 2
+
+    def cont2(params: dict):
+        return 3.0 * (params["y"] + 1) ** 2
+
+    obj_func = CombinedObjectiveFunction([cont1, cont2])
+    async_obj_func = AsyncWrapperCOB(obj_func)
+
+    initial_params = {"x": 0.0, "y": 0.0}
+    fitter = Fitter(objective_function=async_obj_func, initial_params=initial_params)
+
+    NUM_WORKERS = 5
+
+    for opt in NG_SOLVERS:
+        progress = []
+
+        fitter.register_callback(
+            lambda step, ctxs, progress=progress: collect_progress(
+                step, ctxs, progress=progress, print_to_console=True
+            ),
+            n_steps=NSTEPS_CB,
+        )
+
+        contexts = [FitterEvaluateContext() for _ in range(NUM_WORKERS)]
+
+        optimal_params = fitter.fit_nevergrad(
+            budget=NG_BUDGET,
+            optimizer_str=opt,
+            num_workers=NUM_WORKERS,
+            executor=loky.ProcessPoolExecutor(NUM_WORKERS),
             contexts=contexts,
         )
 
