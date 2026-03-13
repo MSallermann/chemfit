@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from pydictnest import get_nested, has_nested, items_nested
 
-from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.utils import check_params_near_bounds
 
@@ -196,7 +196,7 @@ def test_with_square_func_threadpool():
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
-    async_obj_func = AsyncWrapperCOB(obj_func)
+    async_obj_func = ExecutorWrapperCOB(obj_func)
 
     initial_params = {"x": 0.0, "y": 0.0}
     fitter = Fitter(objective_function=async_obj_func, initial_params=initial_params)
@@ -248,7 +248,7 @@ def test_with_square_func_processpool():
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction([cont1, cont2])
-    async_obj_func = AsyncWrapperCOB(obj_func)
+    async_obj_func = ExecutorWrapperCOB(obj_func)
 
     initial_params = {"x": 0.0, "y": 0.0}
     fitter = Fitter(objective_function=async_obj_func, initial_params=initial_params)

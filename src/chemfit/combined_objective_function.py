@@ -73,17 +73,29 @@ def skip_exception_handler(
     return None
 
 
-class ContextModifer(Protocol):
+class ChildContextConfigurator(Protocol):
     """
-    Protocol to modify the list of child contexts after they have been spawned by the parent context.
+    Protocol for configuring child evaluation contexts before term evaluation.
 
-    `idx_child_ctx` and `num_ctx` refer to the absolute index of the child context within all terms, **even if a slice is used**.
+    The configurator is called once for each child context after the
+    parent context has spawned them in ``prepare_evaluation()``. It may
+    mutate the child context or the parent context in place to configure
+    term-specific metadata, execution resources, or other evaluation
+    settings.
 
-    If really needed, the *relative* index within the slice can be computed from the information in the `parent_ctx` as follows:
+    The ``idx_child_ctx`` and ``num_children`` arguments refer to the
+    **absolute term index** and the total number of terms in the combined
+    objective, even when only a slice of terms is being evaluated.
+
+    If needed, the *relative index within the slice* can be derived from
+    the metadata stored in the parent context:
 
     >>> indices = range(parent_ctx.meta["n_terms"])
-    >>> start, stop, step = parent_ctx.meta["slice_start"], parent_ctx.meta["slice_stop"], parent_ctx.meta["slice_step"]
-    >>> idx_relative = indices[start:stop:step]
+    >>> start = parent_ctx.meta["slice_start"]
+    >>> stop = parent_ctx.meta["slice_stop"]
+    >>> step = parent_ctx.meta["slice_step"]
+    >>> sliced_indices = indices[start:stop:step]
+    >>> idx_relative = sliced_indices.index(idx_child_ctx)
 
     """
 
@@ -101,32 +113,38 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         self,
         objective_functions: Sequence[Callable[[dict[str, Any]], float]],
         weights: Sequence[float] | None = None,
-        context_modifier: ContextModifer | None = None,
+        child_context_configurator: ChildContextConfigurator | None = None,
         reduction: Reducer = sum_reducer,
         exception_handler: ExceptionHandler = raising_exception_handler,
     ) -> None:
         """
-        Weighted sum of multiple objective functions.
+        Initialize a combined objective from multiple weighted terms.
 
-        A `CombinedObjectiveFunction` aggregates several `ObjectiveFunctor`
-        instances (or generic callables) and evaluates them as a weighted sum.
-        Each term receives its own `EvaluateContext`, while the main context
-        accumulates metadata and the final combined loss.
+        Each objective term is evaluated independently in its own child
+        context. The resulting term values are multiplied by their
+        corresponding weights, optionally filtered through
+        ``exception_handler`` if evaluation fails, and then combined using
+        ``reduction``.
 
-        The evaluation is sliceable: callers may evaluate only a subset of
-        terms using the ``idx_slice`` argument in ``__call__``.
+        Generic callables are automatically wrapped as ``ObjectiveFunctor``
+        instances.
 
         Args:
-            objective_functions (Sequence[Callable[[dict], float]]):
-                A sequence of callables. Each callable must accept a dictionary mapping parameter
-                names (str) to values (float) and return a float.
-            weights (Sequence[float], optional):
-                A sequence of non-negative floats specifying the weight for each objective function.
-                If None, all weights default to 1.0.
+            objective_functions: Sequence of objective functors or compatible
+                callables.
+            weights: Optional non-negative weight for each objective term. If
+                ``None``, all weights default to ``1.0``.
+            child_context_configurator: Optional callable used to configure
+                each spawned child context before term evaluation.
+            reduction: Callable used to reduce the list of weighted term
+                values to a single scalar loss.
+            exception_handler: Callable used to handle exceptions raised
+                during term evaluation. It may return a replacement value or
+                ``None`` to skip the term entirely.
 
         Raises:
-            AssertionError: If `weights` is provided but its length differs from the number of
-                objective functions, or if any weight is negative.
+            AssertionError: If the number of weights does not match the
+                number of objective functions, or if any weight is negative.
 
         """
 
@@ -135,7 +153,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             objective_functions
         )
 
-        self.context_modifier = context_modifier
+        self.child_context_configurator = child_context_configurator
         self.reduction = reduction
         self.exception_handler = exception_handler
 
@@ -153,13 +171,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
     def n_terms(self) -> int:
-        """
-        Return the number of objective terms.
-
-        Returns:
-            int: The number of (function, weight) pairs stored internally.
-
-        """
+        """Return the number of objective terms."""
         return len(self.weights)
 
     def add(
@@ -171,31 +183,29 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         weights: Sequence[float] | float = 1.0,
     ) -> Self:
         """
-        Add one or more objective functions (and corresponding weights) to this instance.
+        Add one or more objective terms to the combined objective.
 
-        If `obj_funcs` is a single callable, it is appended; if it is a sequence of callables,
-        each is appended in order. The `weights` argument must align:
-        - If `weights` is a single float, that same weight is used for each newly added function.
-        - If `weights` is a sequence, its length must match the number of functions being added.
+        Each added callable is converted to an ``ObjectiveFunctor`` if
+        needed and appended to the existing term list. The corresponding
+        weights are appended in the same order.
 
         Args:
-            obj_funcs (Callable[dict], float]
-                or Sequence[Callable[[dict], float]]):
-                Either a single objective-function callable or a sequence of such callables. Each callable
-                must accept a `dict` and return a float.
-            weights (float or Sequence[float], optional):
-                Either a float (used for every new function) or a sequence of non-negative floats.
-                If a sequence, its length must equal the number of functions in `obj_funcs`.
-                Defaults to 1.0.
+            obj_funcs: A single objective callable or a sequence of objective
+                callables to add.
+            weights: Either a single non-negative weight applied to every
+                added callable, or a sequence of non-negative weights whose
+                length matches the number of added callables.
 
         Returns:
-            Self: The current instance (allows chaining).
+            The current instance.
 
         Raises:
-            AssertionError: If `weights` is a sequence but its length does not match the number
-                of functions in `obj_funcs`, or if any provided weight is negative.
+            AssertionError: If a sequence of weights is provided with a
+                length that does not match the number of added callables, or
+                if any provided weight is negative.
 
         """
+
         # Determine how many new functions are being added
         if isinstance(obj_funcs, Sequence) and not callable(obj_funcs):
             funcs_to_add = list(obj_funcs)  # type: ignore[assignment]
@@ -239,28 +249,37 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         weights: Sequence[float] | None = None,
     ) -> Self:
         """
-        Create a new, "flat" CombinedObjectiveFunction by merging multiple existing instances.
+        Flatten multiple combined objectives into a single instance.
 
-        Each input instance is scaled by its corresponding weight, and all internal objective functions
-        are concatenated into a single-level structure.
+        The objective functions from all input instances are concatenated
+        into one flat list. The weights of each input instance are scaled by
+        the corresponding entry in ``weights`` before concatenation.
+
+        Warning:
+            This method **does not preserve execution policy** from the input
+            combined objectives. The resulting instance uses the default
+            ``reduction``, ``exception_handler``, and
+            ``child_context_configurator`` unless they are explicitly set
+            afterward.
 
         Args:
-            combined_objective_functions_list (Sequence[CombinedObjectiveFunction]):
-                A sequence of CombinedObjectiveFunction instances to combine.
-            weights (Sequence[float]):
-                A sequence of non-negative floats, one per CombinedObjectiveFunction. Each sub-instance's
-                internal weights are multiplied by its associated weight.
+            combined_objective_functions_list: Combined objective instances to
+                flatten.
+            weights: Optional non-negative scaling weights, one per input
+                combined objective. If ``None``, all scaling weights default
+                to ``1.0``.
 
         Returns:
-            CombinedObjectiveFunction: A new instance whose `objective_functions` list is the
-                concatenation of all sub-instances' objective functions, and whose `weights` list
-                is the scaled and concatenated weights.
+            A new combined objective containing all flattened terms and
+            scaled weights.
 
         Raises:
-            AssertionError: If the lengths of `combined_objective_functions_list` and `weights` differ,
-                or if any weight is negative.
+            AssertionError: If the number of scaling weights does not match
+                the number of combined objectives, or if any scaling weight
+                is negative.
 
         """
+
         if weights is None:
             weights = [1.0 for _ in combined_objective_functions_list]
 
@@ -294,21 +313,31 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         idx_slice: slice = DEFAULT_SLICE,
     ) -> tuple[list[EvaluateContext], list[int]]:
         """
-        Prepare per-term contexts for evaluation.
 
-        This method allocates one `EvaluateContext` per selected term and
-        writes basic metadata into the main context.
+        Prepare child contexts and metadata for term evaluation.
+
+        This method initializes the parent context for a combined
+        evaluation, records slice metadata, spawns one child context per
+        selected term, and optionally applies
+        ``child_context_configurator`` to each spawned child context.
 
         Args:
-            parameters (dict[str, Any]): Parameter dictionary for the evaluation.
-            ctx (EvaluateContext): Main context that will accumulate metadata
-                and final loss.
-            idx_slice (slice): Slice selecting which terms to evaluate.
+            parameters: Parameter dictionary for the current evaluation.
+            ctx: Parent evaluation context that will receive aggregate
+                metadata and final loss information.
+            idx_slice: Slice selecting which objective terms to evaluate.
 
         Returns:
-            tuple[list[EvaluateContext], list[int]]:
-                - List of new per-term contexts.
-                - List of indices corresponding to the selected terms.
+            A tuple containing:
+                - The list of spawned child contexts corresponding to the
+                selected terms.
+                - The full list of absolute term indices before slicing.
+
+        Side Effects:
+            - Sets ``ctx.loss`` to ``0.0``.
+            - Stores ``parameters`` in ``ctx.parameters``.
+            - Updates ``ctx.meta`` with term-count and slice information.
+            - Spawns child contexts via ``ctx.spawn_children(...)``.
 
         """
 
@@ -328,9 +357,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         contexts = ctx.spawn_children(n_children=len(sliced_idx_list))
 
-        if self.context_modifier is not None:
+        if self.child_context_configurator is not None:
             [
-                self.context_modifier(
+                self.child_context_configurator(
                     idx_child_ctx=idx_cur_ctx,
                     child_ctx=child_ctx,
                     num_children=self.n_terms(),
@@ -347,6 +376,25 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         idx: int,
         ctx: EvaluateContext,
     ) -> float | None:
+        """
+        Evaluate a single weighted objective term.
+
+        The selected objective function is evaluated with the provided
+        parameters and child context, then multiplied by its corresponding
+        weight. If evaluation raises an exception, the configured
+        ``exception_handler`` is called.
+
+        Args:
+            parameters: Parameter dictionary for the current evaluation.
+            idx: Absolute index of the objective term to evaluate.
+            ctx: Child evaluation context for this term.
+
+        Returns:
+            The weighted term value, or ``None`` if the exception handler
+            chooses to skip the term.
+
+        """
+
         try:
             return self.objective_functions[idx](parameters, ctx) * self.weights[idx]
         except Exception as e:
@@ -358,6 +406,24 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ctx: EvaluateContext,
         idx_slice: slice = DEFAULT_SLICE,
     ) -> list[float]:
+        """
+        Evaluate a selected subset of objective terms.
+
+        This method prepares child contexts, evaluates each selected term in
+        its own context, and drops any terms for which ``evaluate_term()``
+        returns ``None``.
+
+        Args:
+            parameters: Parameter dictionary for the current evaluation.
+            ctx: Parent evaluation context.
+            idx_slice: Slice selecting which terms to evaluate.
+
+        Returns:
+            List of weighted term values that were successfully evaluated and
+            not skipped by the exception handler.
+
+        """
+
         contexts, idx_list = self.prepare_evaluation(
             parameters=parameters, ctx=ctx, idx_slice=idx_slice
         )
@@ -375,28 +441,27 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ctx: EvaluateContext | None = None,
     ) -> float:
         """
-        Evaluate the reduction of all selected (and weighted) objective terms.
+        Evaluate the combined objective.
 
-        Each selected term receives its own `EvaluateContext` (created by
-        `prepare_evaluation`), and its contribution is accumulated into
-        the main context's `loss` value.
+        Each objective term is evaluated in its own child context using the
+        same parameter dictionary. The weighted term values are combined
+        using ``self.reduction``. After evaluation, child metadata is
+        collected into the parent context and the reduced loss is stored in
+        ``ctx.loss``.
 
         Args:
-            parameters (dict[str, Any]):
-                Parameter dictionary for this evaluation.
-            ctx (EvaluateContext | None):
-                Evaluation context. If None, a new one is created.
-            idx_slice (slice):
-                Slice selecting which terms to evaluate. Defaults to all terms.
+            parameters: Parameter dictionary for the evaluation.
+            ctx: Optional parent evaluation context. If ``None``, a new
+                ``EvaluateContext`` is created.
 
         Returns:
-            float: Weighted sum of the selected objective-function values.
+            The reduced scalar loss computed from the evaluated terms.
 
-        Notes:
-            - Each term uses the **same** parameter dictionary.
-            - Each term uses a **distinct** `EvaluateContext`.
-            - Per-term data is merged into the main context after all terms
-              have been evaluated.
+        Side Effects:
+            - Populates ``ctx.parameters``.
+            - Spawns child contexts in ``ctx``.
+            - Collects child metadata into ``ctx.meta["children"]``.
+            - Stores the final reduced loss in ``ctx.loss``.
 
         """
 

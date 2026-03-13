@@ -6,8 +6,8 @@ import numpy as np
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.async_helpers import async_eval_many
-from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 from chemfit.wrap_funcs import to_objective_functor
 
 
@@ -39,7 +39,7 @@ def test_async_cob():
     # We create a combined objective function
     cob = CombinedObjectiveFunction([a, a, b, b])
     # ... and an async wrapper around it
-    async_cob = AsyncWrapperCOB(cob)
+    async_cob = ExecutorWrapperCOB(cob)
 
     # Here we make sure that the async result matches the syn result and that the executor was used
     ctx_sync = EvaluateContext()

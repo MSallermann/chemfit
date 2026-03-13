@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class OutputParser(Protocol):
-    """Protocol for parsing output files and obtaining quantities."""
+    """Protocol for parsing output files into a quantity dictionary."""
 
     def __call__(self, output_files: list[Path]) -> dict[str, Any]:
         """
@@ -88,6 +88,11 @@ class FileBasedQuantityComputer(QuantityComputer):
         """
         Initialize a file-based quantity computer.
 
+        This quantity computer evaluates parameters by creating a temporary
+        working directory, executing an external command, waiting for the
+        expected output files to appear, and parsing those files into a
+        quantity dictionary.
+
         Args:
             output_files (list[Path]):
                 Paths to output files that are expected to be created by
@@ -122,6 +127,11 @@ class FileBasedQuantityComputer(QuantityComputer):
             delete_temp_workdirs (bool, optional):
                 Whether to delete temporary working directories after each
                 evaluation. Defaults to True.
+            write_dump_file_after_crash: Whether to write a dump file with
+                subprocess output when command execution fails.
+            keep_temp_workdir_after_crash: Whether to keep the temporary
+                working directory for inspection after a failed evaluation.
+
 
         Raises:
             Exception: If any path in `output_files` is absolute rather
@@ -171,13 +181,32 @@ class FileBasedQuantityComputer(QuantityComputer):
         self.retries_output_parsing = 1
 
     def create_temp_workdir(self) -> Path:
+        """
+        Create and return a fresh temporary working directory.
+
+        Returns:
+            Path to the newly created working directory.
+
+        """
+
         name = str(uuid.uuid4())
         temp_workdir = self.base_working_directory / name
         temp_workdir.mkdir(exist_ok=False, parents=True)
         return temp_workdir
 
     def build_cmd(self, parameters: dict[str, Any], ctx: EvaluateContext) -> list[str]:
-        """Build the command to be executed."""
+        """
+        Build the external command for the current evaluation.
+
+        Args:
+            parameters: Parameter dictionary for the current evaluation.
+            ctx: Evaluation context whose temporary working directory is
+                used when constructing the command.
+
+        Returns:
+            Command to execute, formatted for ``subprocess.run``.
+
+        """
         return self.executable_cmd(parameters, ctx.temp.workdir)
 
     def _compute(  # noqa: PLR0912, PLR0915
@@ -186,7 +215,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         ctx: EvaluateContext,
     ) -> dict[str, Any]:
         """
-        Execute external command and parse quantities.
+        Execute external command and parse parse its output files.
 
         This method implements the core logic:
 
@@ -197,6 +226,29 @@ class FileBasedQuantityComputer(QuantityComputer):
         5. Run the configured output parsers and merge the resulting
            quantity dictionaries.
         6. Optionally delete the temporary working directory.
+
+        Args:
+            parameters: Parameter dictionary for this evaluation.
+            ctx: Evaluation context for this call. The temporary working
+                directory, resolved output file paths, and executed command
+                are stored in ``ctx.temp``.
+
+        Returns:
+            Dictionary of parsed quantities.
+
+        Side Effects:
+            - Creates and stores ``ctx.temp.workdir``.
+            - Stores the resolved output file paths in
+            ``ctx.temp.output_files``.
+            - Stores the executed command in ``ctx.temp.cmd``.
+            - Creates and optionally deletes a temporary working directory.
+            - Runs an external subprocess.
+
+        Raises:
+            TimeoutError: If the configured output files do not appear
+                before ``wait_timeout`` expires.
+            Exception: If subprocess execution fails, output parsing fails,
+                or temporary working-directory management fails.
 
         ----------------------
         IMPORTANT WARNINGS
@@ -247,13 +299,43 @@ class FileBasedQuantityComputer(QuantityComputer):
         - Or implement a parser that verifies file completeness (checksum, fixed-size,
         closing footer, etc.).
 
-        Args:
-            parameters (dict[str, Any]): Parameter dictionary for this evaluation.
-            ctx (EvaluateContext): Context for this evaluation. The temporary
-                working directory and command are stored in ``ctx.temp``.
+        **4. Crash diagnostics and dump files**
 
-        Returns:
-            dict[str, Any]: Dictionary of parsed quantities.
+        If the external command fails (i.e. ``subprocess.run`` raises
+        ``subprocess.CalledProcessError``), this class can optionally write a
+        diagnostic dump file to help with debugging.
+
+        When ``write_dump_file_after_crash=True``, a dump file is written to the
+        base working directory using the name of the temporary work directory
+        with the suffix ``.dump``.
+
+        For example:
+
+            base_working_directory/
+                7f4d9c1a-8cbb-4b6f-b88c-8a1c53eae6c3/
+                7f4d9c1a-8cbb-4b6f-b88c-8a1c53eae6c3.dump
+
+        The dump file contains diagnostic information including:
+
+        - the captured ``stderr`` of the external program (if available)
+        - the captured ``stdout`` of the external program (if available)
+        - the contents of ``ctx.temp`` at the time of failure
+
+        This information often provides enough context to diagnose failures
+        without needing to reproduce the run manually.
+
+        The dump file is especially useful when:
+
+        - evaluations run inside large optimization loops
+        - runs are executed on remote clusters
+        - temporary working directories are automatically deleted
+
+        If ``keep_temp_workdir_after_crash=True``, the temporary working
+        directory is preserved for manual inspection. Otherwise it may be
+        deleted depending on the configuration.
+
+        Keeping both the dump file and the working directory can make it much
+        easier to reproduce and debug failed evaluations.
 
         """
 
