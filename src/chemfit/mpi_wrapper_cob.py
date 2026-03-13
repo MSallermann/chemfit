@@ -73,7 +73,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         for idx, ctx_term in zip(idx_list[idx_slice], contexts, strict=True):
             try:
-                res = self.cob.evaluate_term(params, ctx_term, idx)
+                res = self.cob.evaluate_term(params, idx, ctx_term)
                 if res is not None:
                     local_terms.append(res)
             except Exception as e:  # noqa: PERF203

@@ -345,14 +345,12 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         self,
         parameters: dict[str, Any],
         idx: int,
-        ctx_term: EvaluateContext,
+        ctx: EvaluateContext,
     ) -> float | None:
         try:
-            return (
-                self.objective_functions[idx](parameters, ctx_term) * self.weights[idx]
-            )
+            return self.objective_functions[idx](parameters, ctx) * self.weights[idx]
         except Exception as e:
-            return self.exception_handler(e, ctx_term, idx)
+            return self.exception_handler(e, ctx, idx)
 
     def evaluate_terms(
         self,

@@ -4,8 +4,7 @@ import nox
 # reduced set of tests for all python versions
 @nox.session(python=["3.10", "3.11", "3.12", "3.13"])
 def tests_all_versions(session):  # noqa: ANN001
-    session.install("pytest")
-    session.install(".")
+    session.install(".[test]")
     session.run("pytest", "tests/test_fitter.py::test_with_complicated_dict")
     session.run("pytest", "-k", "lj")
 
@@ -13,14 +12,12 @@ def tests_all_versions(session):  # noqa: ANN001
 # full set of tests for 3.12
 @nox.session(python=["3.12"])
 def tests(session):  # noqa: ANN001
-    session.install("pytest")
-    session.install(".")
+    session.install(".[test]")
     session.run("pytest")
 
 
 # mpi tests for 3.12
 @nox.session(python=["3.12"])
 def tests_mpi(session):  # noqa: ANN001
-    session.install("pytest")
-    session.install(".[mpi]")
+    session.install(".[test,mpi]")
     session.run("mpiexec", "-n", "4", "pytest", "-k", "mpi")
