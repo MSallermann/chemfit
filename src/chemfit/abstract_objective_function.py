@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import copy
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
@@ -50,12 +51,17 @@ class EvaluateContext:
         """
         Container for per-evaluation state.
 
-        A new instance of `EvaluateContext` should be created for each
+        A new instance of `EvaluateContext` should generally be created for each
         evaluation of an objective function or quantity computation.
         Implementations write all per-call information into the context
         rather than storing it in the objective instance.
         This makes evaluation easier to reason about and
         compatible with concurrent execution.
+
+        The context may also own a single batch of child contexts representing
+        nested sub-evaluations. Such child contexts can be created explicitly
+        with ``spawn_children()`` or managed with the ``child_contexts()``
+        context manager.
 
         Args:
             temp:
@@ -93,6 +99,22 @@ class EvaluateContext:
         self._set_defaults(temp, static)
         self.executor: ExecutorLike | None = executor
 
+    def to_meta_data(self) -> dict[str, Any]:
+        """
+        Return a dictionary summarizing the evaluation state.
+
+        Returns:
+            dict[str, Any]: A dictionary containing the fields
+            `quantities`, `parameters`, `loss`, and `meta`.
+
+        """
+        return {
+            "quantities": self.quantities,
+            "parameters": self.parameters,
+            "loss": self.loss,
+            "meta": self.meta,
+        }
+
     def _set_defaults(
         self, temp: SimpleNamespace | None, static: SimpleNamespace | None
     ):
@@ -105,25 +127,20 @@ class EvaluateContext:
         self.executor = None
         self._children: list[EvaluateContext] = []
 
-    def __getstate__(self) -> dict[str, Any]:
-        return {
-            "parameters": self.parameters,
-            "temp": self.temp,
-            "static": self.static,
-            "loss": self.loss,
-        }
-
-    def __setstate__(self, state: dict[str, Any]):
-        self._set_defaults(temp=state["temp"], static=state["static"])
-        self.parameters = state["parameters"]
-        self.loss = state["loss"]
-
     def spawn_children(self, n_children: int) -> list[EvaluateContext]:
         """
         Create child contexts linked to this context.
 
         Each child receives a deep copy of ``temp``, while sharing the
         same ``static`` namespace and executor reference as the parent.
+
+        An ``EvaluateContext`` is intended to manage at most one batch of
+        child contexts per evaluation. Calling ``spawn_children()`` again on
+        the same context replaces the previous child batch.
+
+        In many cases, ``child_contexts()`` is the preferred interface, since
+        it automatically collects child metadata when the nested evaluation
+        scope exits.
 
         Args:
             n_children: Number of child contexts to create.
@@ -149,9 +166,24 @@ class EvaluateContext:
 
         The collected child metadata is stored in ``self.meta["children"]``.
 
+        Components that spawn child contexts are generally expected to collect
+        their child metadata before returning to their caller. The
+        ``child_contexts()`` context manager provides a convenient scoped way
+        to do this automatically.
+
         Args:
-            recursive: If ``True``, recursively collect metadata from
-                descendants before serializing the immediate children.
+            If ``True``, metadata from all descendants is collected before
+            serializing the immediate children. This produces a fully
+            materialized metadata tree.
+
+            If ``False``, only the immediate children are serialized. This
+            can be useful when nested components manage their own metadata
+            collection and have already populated their ``meta`` fields.
+
+        Notes:
+            In most cases ``recursive=True`` is the safest choice, since it
+            ensures that nested child contexts are fully represented in the
+            resulting metadata structure.
 
         """
 
@@ -160,21 +192,46 @@ class EvaluateContext:
                 [c.collect_child_meta_data(recursive) for c in self._children]
             self.meta["children"] = [c.to_meta_data() for c in self._children]
 
-    def to_meta_data(self) -> dict[str, Any]:
+    @contextlib.contextmanager
+    def child_contexts(self, n_children: int, recursive: bool = True):
         """
-        Return a dictionary summarizing the evaluation state.
+        Create a scoped child-context batch and collect its metadata on exit.
 
-        Returns:
-            dict[str, Any]: A dictionary containing the fields
-            `quantities`, `parameters`, `loss`, and `meta`.
+        This context manager is a convenience wrapper around
+        ``spawn_children()`` and ``collect_child_meta_data()``. It is intended
+        for nested evaluations where the component spawning child contexts is
+        also responsible for collecting their metadata before returning.
+
+        Args:
+            n_children: Number of child contexts to create.
+
+        Yields:
+            The list of spawned child contexts.
+
+        Notes:
+            Child metadata is collected automatically when the context manager
+            exits, even if an exception is raised inside the managed block.
 
         """
+
+        children = self.spawn_children(n_children)
+        try:
+            yield children
+        finally:
+            self.collect_child_meta_data(recursive)
+
+    def __getstate__(self) -> dict[str, Any]:
         return {
-            "quantities": self.quantities,
             "parameters": self.parameters,
+            "temp": self.temp,
+            "static": self.static,
             "loss": self.loss,
-            "meta": self.meta,
         }
+
+    def __setstate__(self, state: dict[str, Any]):
+        self._set_defaults(temp=state["temp"], static=state["static"])
+        self.parameters = state["parameters"]
+        self.loss = state["loss"]
 
 
 class ObjectiveFunctor:
