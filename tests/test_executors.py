@@ -6,8 +6,8 @@ from typing import Any, Callable
 
 from chemfit import abstract_objective_function, wrap_funcs
 from chemfit.abstract_objective_function import EvaluateContext
-from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 
 
 def _result_or_cancel(fut: MyFuture, timeout: float | None = None):
@@ -98,7 +98,7 @@ def b(p: dict):
 # We create a combined objective function
 cob = CombinedObjectiveFunction([a, a, b, b])
 # ... and an async wrapper around it
-async_cob = AsyncWrapperCOB(cob)
+async_cob = ExecutorWrapperCOB(cob)
 
 
 def test_executors():

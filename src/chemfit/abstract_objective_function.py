@@ -11,11 +11,24 @@ T = TypeVar("T", covariant=True)  # noqa: PLC0105
 
 
 class FutureLike(Protocol, Generic[T]):
+    """
+    Minimal protocol for future-like objects used by the evaluation framework.
+
+    This protocol intentionally mirrors the subset of the interface provided by
+    :class:`concurrent.futures.Future`
+    """
+
     def result(self, timeout: float | None = None) -> T: ...
     def cancel(self) -> bool: ...
 
 
 class ExecutorLike(Protocol):
+    """
+    Minimal executor protocol used for parallel evaluation.
+
+    This interface is modeled after :class:`concurrent.futures.Executor`.
+    """
+
     def submit(self, fn: Callable[..., T], /, *args, **kwargs) -> FutureLike[T]: ...
 
     def map(
@@ -40,8 +53,23 @@ class EvaluateContext:
         A new instance of `EvaluateContext` should be created for each
         evaluation of an objective function or quantity computation.
         Implementations write all per-call information into the context
-        rather than storing it in the objective instance. This makes the
-        system safe for concurrent or asynchronous evaluation.
+        rather than storing it in the objective instance.
+        This makes evaluation easier to reason about and
+        compatible with concurrent execution.
+
+        Args:
+            temp:
+                Optional scratch namespace for transient, non-public data.
+                Values stored here are intended only for internal coordination
+                during an evaluation and are not included in
+                :meth:`to_meta_data`.
+            static:
+                Optional namespace for shared read-only state that may be
+                reused across related contexts, such as parent/child
+                evaluations.
+            executor:
+                Optional executor-like object that can be used by evaluation
+                code to schedule parallel work.
 
         Attributes:
             quantities (dict[str, Any] | None): Intermediate quantities
@@ -91,7 +119,20 @@ class EvaluateContext:
         self.loss = state["loss"]
 
     def spawn_children(self, n_children: int) -> list[EvaluateContext]:
-        """Spawns dependent child contexts, with a deepcopy of the `temp` data and access to the same static data."""
+        """
+        Create child contexts linked to this context.
+
+        Each child receives a deep copy of ``temp``, while sharing the
+        same ``static`` namespace and executor reference as the parent.
+
+        Args:
+            n_children: Number of child contexts to create.
+
+        Returns:
+            The newly created child contexts.
+
+        """
+
         self._children = [
             EvaluateContext(
                 temp=copy.deepcopy(self.temp),
@@ -103,7 +144,17 @@ class EvaluateContext:
         return self._children
 
     def collect_child_meta_data(self, recursive: bool = True):
-        """Collect the meta data from child contexts."""
+        """
+        Collect metadata from child contexts.
+
+        The collected child metadata is stored in ``self.meta["children"]``.
+
+        Args:
+            recursive: If ``True``, recursively collect metadata from
+                descendants before serializing the immediate children.
+
+        """
+
         if len(self._children) > 0:
             if recursive:
                 [c.collect_child_meta_data(recursive) for c in self._children]
@@ -135,8 +186,8 @@ class ObjectiveFunctor:
 
         Implementations should compute a scalar loss from the given
         parameter dictionary. All per-evaluation state must be written
-        into the provided `EvaluateContext`. If no context is supplied,
-        a fresh one should be created internally.
+        into the provided `ctx`. If no context is supplied,
+        a new one should be created internally.
 
         Args:
             parameters (dict[str, Any]): Mapping of parameter names to
@@ -145,7 +196,7 @@ class ObjectiveFunctor:
                 None, a new `EvaluateContext` should be created.
 
         Returns:
-            float: The computed scalar loss value.
+            float: The computed scalar loss.
 
         Notes:
             - Implementations should avoid mutating `self` during the
@@ -162,11 +213,12 @@ class ObjectiveFunctor:
 class QuantityComputer:
     def __init__(self):
         """
-        Base class for computing intermediate quantities.
+        Initialize a quantity computer.
 
         A `QuantityComputer` maps a parameter dictionary to a dictionary
         of intermediate quantities, typically used by an objective
-        function. It should not store per-evaluation state internally.
+        function. Instances may hold static configuration, but
+        should not store per-evaluation state internally.
 
         Attributes:
             static_meta_data (dict[str, Any]): Static metadata associated
@@ -194,6 +246,11 @@ class QuantityComputer:
             Implementations of `_compute` must not mutate `self`. All
             per-evaluation information should be written into `ctx`.
 
+        Side Effects:
+            Stores ``parameters`` in ``ctx.parameters``.
+            Merges ``self.static_meta_data`` into ``ctx.meta``.
+            Stores the computed quantities in ``ctx.quantities``.
+
         """
 
         if ctx is None:
@@ -209,7 +266,7 @@ class QuantityComputer:
     def _compute(
         self, parameters: dict[str, Any], ctx: EvaluateContext
     ) -> dict[str, Any]:
-        """Compute dictionary of quantities for a given set of new parameters."""
+        """Compute dictionary of quantities for a given set of parameters."""
         raise NotImplementedError
 
 
@@ -226,11 +283,11 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
         quantity_computer: QuantityComputer,
     ) -> None:
         """
-        Objective function composed of a `QuantityComputer` and a loss.
+        Objective function composed of a `QuantityComputer` and a loss function.
 
-        This class first evaluates the `quantity_computer` to produce
-        intermediate quantities and then applies the `loss_function` to
-        compute a scalar loss.
+        This objective first computes intermediate quantities using
+        ``quantity_computer`` and then applies ``loss_function`` to
+        obtain a scalar loss.
 
         Args:
             loss_function (Callable): A function with signature:
@@ -271,6 +328,17 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):
 
         Returns:
             float: The computed scalar loss.
+
+        Side Effects:
+            Stores the computed loss in ``ctx.loss``.
+            Updates ``ctx.meta`` with ``self.static_meta_data`` after the
+            wrapped ``QuantityComputer`` may have already added metadata.
+            Populates ``ctx.quantities`` and ``ctx.parameters`` via the
+            wrapped ``QuantityComputer``.
+
+        Notes:
+            ``loss_function`` may accept either ``(quantities)`` or
+            ``(quantities, parameters) as positional args``.
 
         """
 

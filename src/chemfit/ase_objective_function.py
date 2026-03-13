@@ -19,7 +19,12 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class CalculatorFactory(Protocol):
-    """Protocol for a factory that constructs an ASE calculator in-place and attaches it to `atoms`."""
+    """
+    Protocol for a callable that attaches an ASE calculator to atoms.
+
+    Implementations are expected to construct or configure a calculator
+    for the given ``Atoms`` object and assign it to ``atoms.calc``.
+    """
 
     def __call__(self, atoms: Atoms) -> None:
         """Construct a calculator and overwrite `atoms.calc`."""
@@ -28,7 +33,7 @@ class CalculatorFactory(Protocol):
 
 @runtime_checkable
 class ParameterApplier(Protocol):
-    """Protocol for a function that applies parameters to an ASE calculator."""
+    """Protocol for a callable that applies parameters to an ASE calculator."""
 
     def __call__(self, atoms: Atoms, params: dict[str, Any]) -> None:
         """Applies a parameter dictionary to `atoms.calc` in-place."""
@@ -37,7 +42,7 @@ class ParameterApplier(Protocol):
 
 @runtime_checkable
 class AtomsPostProcessor(Protocol):
-    """Protocol for a function that post-processes an ASE Atoms object."""
+    """Protocol for a callable that post-processes an ASE Atoms object."""
 
     def __call__(self, atoms: Atoms) -> None:
         """Modify the atoms in-place."""
@@ -55,16 +60,44 @@ class AtomsFactory(Protocol):
 
 @runtime_checkable
 class QuantityProcessor(Protocol):
-    """Protocol for a function that returns the quantities after the `calculate` function."""
+    """
+    Protocol for a callable that extracts quantities from an ASE evaluation.
 
-    def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]: ...
+    A quantity processor is called after the calculator has evaluated an
+    ``Atoms`` object. It receives the calculator and atoms pair and
+    returns a dictionary of quantities to include in the final output.
+    """
+
+    def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:
+        """
+        Extract quantities from an evaluated calculator and atoms pair.
+
+        Args:
+            calc: Calculator that has already evaluated ``atoms``.
+            atoms: Evaluated atoms object.
+
+        Returns:
+            A dictionary of extracted quantities.
+
+        """
+
+        ...
 
 
 class PathAtomsFactory(AtomsFactory):
-    """Implementation of AtomsFactory which reads the atoms from a path."""
+    """Atoms factory that reads a single structure from a filesystem path."""
 
     def __init__(self, path: Path, index: int | None = None) -> None:
-        """Initialize a path atoms factory."""
+        """
+        Initialize the factory.
+
+        Args:
+            path: Path to a structure file readable by ASE.
+            index: Optional ASE index selecting which image to read. The
+                selection must resolve to a single ``Atoms`` object.
+
+        """
+
         self.path = path
         self.index = index
 
@@ -83,7 +116,14 @@ class DefaultQuantityProcessor:
         """
         Initialize a default quantity processor, that returns all of the `results` of the calculator.
 
-        Keys which are contained in `filter_keys` are ignored.
+        The returned quantity dictionary contains all entries from
+        ``calc.results`` plus ``"n_atoms"``. Any keys listed in
+        ``filter_keys`` are excluded from the returned dictionary.
+
+        Args:
+            filter_keys: Optional list of keys to exclude from the returned
+                quantity dictionary.
+
         """
 
         self.filter_keys = filter_keys
@@ -97,10 +137,12 @@ class DefaultQuantityProcessor:
 
 class SinglePointASEComputer(QuantityComputer):
     """
-    Base class for a single point ASE-based computer.
+    ASE-based quantity computer for single-point evaluations.
 
-    This class loads a reference configuration, optionally post-processes the structure,
-    attaches a calculator, and provides an interface for evaluating parameters
+    This class evaluates quantities for a parameterized ASE calculation
+    using an atoms factory, optional atoms post-processing, a
+    calculator factory, a parameter applier, and one or more quantity
+    processors.
     """
 
     def __init__(
@@ -113,16 +155,21 @@ class SinglePointASEComputer(QuantityComputer):
         tag: str | None = None,
     ) -> None:
         """
-        Initialize a SinglePointASEComputer.
+        Initialize the computer.
 
         Args:
-            calc_factory: Factory to create an ASE calculator given an `Atoms` object.
-            param_applier: Function that applies a dict of parameters to `atoms.calc`.
-            atoms_factory: Function to create the Atoms object.
-            atoms_post_processor: Optional function to modify or validate the Atoms object
-                immediately after loading and before attaching the calculator.
-            quantities_processors: list of functions called after the calculate function to update the quantities dictionary
-            tag: Optional label for this computer. Defaults to "tag_None" if None.
+            calc_factory: Callable that attaches a calculator to an
+                ``Atoms`` object.
+            param_applier: Callable that applies a parameter dictionary to
+                the calculator attached to an ``Atoms`` object.
+            atoms_factory: Callable that creates the base ``Atoms`` object.
+            atoms_post_processor: Optional callable that modifies the base
+            atoms object before it is cached and copied for evaluation.
+            quantity_processors: Optional list of callables that extract
+                quantities from the evaluated calculator and atoms pair. If
+                ``None``, a ``DefaultQuantityProcessor`` is used.
+            tag: Optional label for this computer. If ``None``,
+                ``"tag_None"`` is used.
 
         """
 
@@ -158,27 +205,26 @@ class SinglePointASEComputer(QuantityComputer):
             "type": type(self).__name__,
         }
 
-    def create_atoms_object(self) -> Atoms:
-        """
-        Create the atoms object, check it, optionally post-processes it, and attach the calculator.
-
-        Returns:
-            Atoms: ASE Atoms object with calculator attached.
-
-        """
-
-        atoms = self.atoms_factory()
-
-        if self.atoms_post_processor is not None:
-            self.atoms_post_processor(atoms)
-
-        self.calc_factory(atoms)
-
-        return atoms
-
     def prepare_ctx(self, parameters: dict[str, Any], ctx: EvaluateContext):
+        """
+        Prepare the evaluation context for a single-point calculation.
+
+        This method lazily creates and caches a base atoms object using
+        ``atoms_factory``. If provided, ``atoms_post_processor`` is applied
+        once to that base object before it is cached. For each evaluation,
+        the cached atoms object is copied into ``ctx.temp.atoms``, a fresh
+        calculator is attached, and the provided parameters are applied.
+
+        Args:
+            parameters: Parameter dictionary for the current evaluation.
+            ctx: Evaluation context to populate.
+
+        """
+
         if self._atoms is None:
             self._atoms = self.atoms_factory()
+            if self.atoms_post_processor is not None:
+                self.atoms_post_processor(self._atoms)
 
         # Since the calculation may change the internal state of the calculator
         # we create a new calculator and a new atoms object in the context
@@ -192,10 +238,19 @@ class SinglePointASEComputer(QuantityComputer):
         ctx: EvaluateContext,
     ) -> dict[str, Any]:
         """
-        Compute the quantities. This default implementation simply calls the `calculate` function and then returns the results dict from the calculator.
+        Compute quantities from a single-point ASE evaluation.
+
+        This implementation prepares the evaluation context, runs the
+        calculator on the atoms object, and merges the outputs of all
+        configured quantity processors.
 
         Args:
-            parameters: Dictionary of parameter names to float values.
+            parameters: Mapping of parameter names to parameter values.
+            ctx: Evaluation context for the current call.
+
+        Returns:
+            A dictionary containing the merged quantities returned by the
+            configured quantity processors.
 
         """
 
@@ -212,7 +267,13 @@ class SinglePointASEComputer(QuantityComputer):
 
 
 class MinimizationASEComputer(SinglePointASEComputer):
-    """Computer based on the closes local minimum."""
+    """
+    ASE-based quantity computer using a locally optimized structure.
+
+    This computer evaluates quantities after performing a local geometry
+    optimization using the ASE BFGS optimizer. Quantities are extracted
+    from the relaxed structure using the configured quantity processors.
+    """
 
     def __init__(
         self, dt: float = 1e-2, fmax: float = 1e-5, max_steps: int = 2000, **kwargs
@@ -220,12 +281,16 @@ class MinimizationASEComputer(SinglePointASEComputer):
         """
         Initialize a MinimizationASEComputer.
 
-        All kwargs are passed to `SinglePointASEComputer.__init__`.
+        All additional keyword arguments are forwarded to
+        ``SinglePointASEComputer.__init__``.
 
         Args:
-            dt: Time step for relaxation.
-            fmax: Force convergence criterion.
-            max_steps: Maximum optimizer steps.
+            dt: Relaxation step-size parameter retained for compatibility
+                with earlier implementations. Currently unused.
+            fmax: Force convergence criterion passed to the optimizer.
+            max_steps: Maximum number of optimization steps.
+            **kwargs: Additional keyword arguments forwarded to the parent
+                initializer.
 
         """
 
@@ -237,6 +302,28 @@ class MinimizationASEComputer(SinglePointASEComputer):
     def _compute(
         self, parameters: dict[str, Any], ctx: EvaluateContext
     ) -> dict[str, Any]:
+        """
+        Compute quantities after local geometry optimization.
+
+        This method prepares the evaluation context, performs a geometry
+        optimization using ASE's BFGS optimizer, and extracts quantities
+        from the relaxed structure using the configured quantity
+        processors.
+
+        Args:
+            parameters: Mapping of parameter names to parameter values.
+            ctx: Evaluation context for the current call.
+
+        Returns:
+            A dictionary containing the merged quantities returned by the
+            configured quantity processors.
+
+        Side Effects:
+            - Creates and stores an ``Atoms`` object in ``ctx.temp.atoms``.
+            - Attaches a fresh calculator to the atoms object.
+
+        """
+
         self.prepare_ctx(parameters, ctx)
 
         optimizer = BFGS(ctx.temp.atoms, logfile=None)

@@ -7,7 +7,7 @@ import pytest
 
 from chemfit import combined_objective_function
 from chemfit.abstract_objective_function import EvaluateContext
-from chemfit.async_wrapper_cob import AsyncWrapperCOB
+from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ def test_combined_objective_function():
 
 
 def test_combined_objective_function_async():
-    cob_async = AsyncWrapperCOB(cob)
+    cob_async = ExecutorWrapperCOB(cob)
 
     for red in reducers:
         cob.reduction = red
@@ -97,7 +97,7 @@ def test_exception_handlers():
 
     ####### repeat for async wrapper #######
     ob.exception_handler = combined_objective_function.raising_exception_handler
-    ob_async = AsyncWrapperCOB(ob)
+    ob_async = ExecutorWrapperCOB(ob)
     with pytest.raises(RuntimeError):
         ob_async({})
 
