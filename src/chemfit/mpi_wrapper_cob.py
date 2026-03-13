@@ -15,6 +15,22 @@ logger = logging.getLogger(__name__)
 
 
 def slice_up_range(n: int, n_ranks: int):
+    """
+    Split a range of length ``n`` into contiguous rank-local chunks.
+
+    The chunks are distributed as evenly as possible across ``n_ranks``
+    by using a ceiling-based chunk size.
+
+    Args:
+        n: Total number of items to distribute.
+        n_ranks: Number of MPI ranks.
+
+    Yields:
+        Tuples ``(start, end)`` defining half-open index ranges for
+        each rank.
+
+    """
+
     chunk_size = math.ceil(n / n_ranks)
 
     for rank in range(n_ranks):
@@ -28,13 +44,43 @@ class Signal(Enum):
 
 
 class MPIWrapperCOB(ObjectiveFunctor):
+    """
+    MPI-based wrapper for ``CombinedObjectiveFunction``.
+
+    This wrapper distributes the terms of a combined objective across
+    MPI ranks. Rank 0 acts as the driver rank: it broadcasts the
+    evaluation context to all worker ranks, evaluates its own local
+    slice of terms, gathers the worker results, re-raises any worker
+    exceptions, collects child metadata, and applies the wrapped
+    combined objective's reduction.
+
+    Worker ranks do not call ``__call__`` directly. Instead, they run
+    ``worker_loop()``, which waits for broadcast evaluation requests
+    from rank 0 and processes the local slice assigned to that rank.
+    """
+
     def __init__(
         self,
         cob: CombinedObjectiveFunction,
         comm: Any | None = None,
         mpi_debug_log: bool = False,
     ) -> None:
-        """Initialize wrapper for combined objective function."""
+        """
+        Initialize an MPI wrapper for a combined objective.
+
+        Args:
+            cob: Combined objective function whose terms are distributed
+                across MPI ranks.
+            comm: MPI communicator to use. If ``None``, a duplicate of
+                ``MPI.COMM_WORLD`` is created.
+            mpi_debug_log: If ``True``, wrap the communicator so that MPI
+                method calls are logged for debugging.
+
+        Notes:
+            Each rank is assigned a contiguous slice of objective terms at
+            initialization time.
+
+        """
 
         self.cob = cob
         if comm is None:
@@ -96,6 +142,20 @@ class MPIWrapperCOB(ObjectiveFunctor):
             self.comm.gather([], root=0)
 
     def worker_loop(self):
+        """
+        Run the worker-side MPI evaluation loop.
+
+        This method must be called only on nonzero ranks. Each worker rank
+        waits for broadcast messages from rank 0. On receiving an
+        ``EvaluateContext``, it evaluates its assigned slice of the
+        combined objective and gathers both term values and child metadata
+        back to rank 0. On receiving ``Signal.ABORT``, the loop exits.
+
+        Raises:
+            RuntimeError: If called on rank 0.
+
+        """
+
         # Ensure only rank 0 can call this
         if self.rank == 0:
             msg = "`worker_loop` cannot be used on rank 0"
@@ -117,6 +177,28 @@ class MPIWrapperCOB(ObjectiveFunctor):
                 self.worker_gather_meta_data(ctx)
 
     def gather_meta_data(self, ctx: EvaluateContext):
+        """
+        Collect child metadata from all ranks into the parent context.
+
+        This method must be called only on rank 0. It collects the local
+        child metadata from rank 0 together with the metadata gathered from
+        worker ranks and stores the flattened result in
+        ``ctx.meta["children"]``.
+
+        Args:
+            ctx: Parent evaluation context on rank 0.
+
+        Raises:
+            RuntimeError: If called on a nonzero rank.
+
+        Notes:
+            The collected metadata is flattened across ranks. The resulting
+            metadata may therefore contain child entries for ranks whose
+            original child contexts are not present in ``ctx._children`` on
+            rank 0.
+
+        """
+
         # Ensure only rank 0 can call this
         if self.rank != 0:
             msg = "`gather_meta_data` can only be used on rank 0"
@@ -142,6 +224,35 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def __call__(
         self, params: dict[str, Any], ctx: EvaluateContext | None = None
     ) -> float:
+        """
+        Evaluate the combined objective on rank 0 using MPI.
+
+        Rank 0 broadcasts the evaluation context to all worker ranks,
+        evaluates its own assigned slice locally, gathers the worker term
+        values, re-raises any worker exceptions, gathers child metadata
+        from all ranks, and reduces the full list of term values using the
+        wrapped combined objective's reduction function.
+
+        Args:
+            params: Parameter dictionary for the current evaluation.
+            ctx: Optional parent evaluation context. If ``None``, a new
+                ``EvaluateContext`` is created.
+
+        Returns:
+            Reduced scalar loss value.
+
+        Raises:
+            RuntimeError: If called on a nonzero rank.
+            Exception: Re-raises any exception returned from a worker rank.
+
+        Side Effects:
+            - Stores ``params`` in ``ctx.parameters``.
+            - Broadcasts the evaluation context to all worker ranks.
+            - Collects child metadata into ``ctx.meta["children"]``.
+            - Stores the final reduced loss in ``ctx.loss``.
+
+        """
+
         # Function to evaluate the objective function, to be called from rank 0
 
         if ctx is None:

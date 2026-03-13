@@ -31,10 +31,11 @@ logger = logging.getLogger(__name__)
 class FitterEvaluateContext(EvaluateContext):
     def __init__(self):
         """
-        Extended evaluation context used by the fitter.
+        Initialize fitter-specific evaluation state.
 
-        This context tracks additional information useful during
-        optimization.
+        This context extends ``EvaluateContext`` with optimization-specific
+        tracking fields that record the number of evaluations performed and
+        the best loss, parameters, and metadata observed so far during a fit.
         """
 
         super().__init__()
@@ -65,31 +66,34 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
         wrap_me: ObjectiveFunctor,
         swallow_exceptions: bool = False,
         log_exceptions: bool = True,
+        value_bad_params: float = 1e5,
     ):
         """
-        ObjectiveFunctor wrapper with robust error handling and tracking.
+        Initialize a fitter-specific objective wrapper.
 
-        This wrapper sits between the raw objective and the optimizer. It:
+        This wrapper sits between a raw objective and an optimizer. It adds
+        basic robustness and tracking behavior on top of the wrapped
+        objective:
 
-        * Catches exceptions from the wrapped objective.
-        * Optionally logs and/or re-raises them.
-        * Clips non-float and NaN results to a large "bad" value.
-        * Updates the attached `FitterEvaluateContext` with evaluation
-          counts and the best loss/parameters seen so far.
+        - exceptions may be logged and optionally swallowed
+        - non-scalar or NaN return values are replaced by a large penalty
+        - the attached ``FitterEvaluateContext`` is updated with the number of
+        evaluations and the best loss/parameters seen so far
 
         Args:
-            wrap_me (ObjectiveFunctor): The underlying objective functor
-                to be evaluated.
-            swallow_exceptions (bool, optional): If True, exceptions
-                raised by the wrapped objective are converted to NaN and
-                then clipped to ``value_bad_params`` instead of being
-                re-raised. Defaults to False.
-            log_exceptions (bool, optional): If True, exceptions are
-                logged using the module logger. Defaults to True.
+            wrap_me: Underlying objective functor to evaluate.
+            swallow_exceptions: If ``True``, exceptions raised by the wrapped
+                objective are converted into a penalized objective value
+                instead of being re-raised.
+            log_exceptions: If ``True``, exceptions raised by the wrapped
+                objective are logged.
+            value_bad_params (float, optional): Threshold used to represent invalid or numerically
+                unstable parameter regions. Defaults to 1e5.
 
         """
+
         self.wrap_me = wrap_me
-        self.value_bad_params = 1e5
+        self.value_bad_params = value_bad_params
         self.swallow_exceptions: bool = swallow_exceptions
         self.log_exceptions: bool = log_exceptions
 
@@ -188,6 +192,7 @@ class Fitter:
             objective_function,
             swallow_exceptions=swallow_exceptions,
             log_exceptions=log_exceptions,
+            value_bad_params=value_bad_params,
         )
 
         self.initial_parameters = initial_params
@@ -248,12 +253,24 @@ class Fitter:
         return callback, min_n_steps
 
     def _hook_pre_fit(self):
-        """A hook, which is invoked before optimizing."""
+        """Run bookkeeping steps before starting an optimization."""
+
         logger.info("Start fitting")
         self.time_fit_start = time.time()
 
     def _hook_post_fit(self, opt_params: dict[str, Any]):
-        """A hook, which is invoked after optimizing."""
+        """
+        Run bookkeeping steps after an optimization.
+
+        This method records the fit end time, logs completion, and optionally
+        warns if any optimized parameters lie near or outside their bounds.
+
+        Args:
+            opt_params: Optimized parameter dictionary returned by the
+                optimizer.
+
+        """
+
         self.time_fit_end = time.time()
         logger.info("End fitting")
 
@@ -282,29 +299,37 @@ class Fitter:
         """
         Optimize parameters using a nevergrad optimizer.
 
-        This method drives nevergrad's ask/tell interface and optionally
-        evaluates multiple points in parallel using `async_eval_many`.
+        This method drives nevergrad's ask/tell interface and can evaluate
+        multiple candidate points in parallel through an ``ExecutorLike``
+        instance. One ``FitterEvaluateContext`` is used per worker so that
+        evaluation-side state can be tracked independently.
 
         Args:
-            budget (int): Total number of objective evaluations to allow.
-            optimizer_str (str, optional): Name of the nevergrad optimizer
-                to use (key in ``ng.optimizers.registry``). Defaults to
-                ``"NgIohTuned"``.
-            num_workers (int, optional): Number of points to evaluate in
-                parallel per step. If greater than 1, evaluations are
-                performed via `asyncio.run(async_eval_many(...))`. Defaults
-                to 1.
+            budget: Total number of objective evaluations to allow.
+            optimizer_str: Name of the nevergrad optimizer to use. Must be a
+                key in ``ng.optimizers.registry``.
+            num_workers: Number of points to evaluate in parallel per ask/tell
+                step.
+            contexts: Optional list of per-worker fitter contexts. If
+                provided, its length must equal ``num_workers``.
+            executor: Optional executor used for parallel evaluation when
+                ``num_workers > 1``. If ``None``, a ``ThreadPoolExecutor`` is
+                created.
 
         Returns:
-            dict[str, Any]: Dictionary of optimized parameter values.
+            Dictionary of optimized parameter values.
 
-        Warning:
-            When ``num_workers > 1``, this method uses ``asyncio.run`` to
-            perform parallel evaluations. It therefore cannot be safely
-            called from within an already running event loop (e.g. inside
-            ``asyncio`` tasks or some notebook environments). In such
-            cases, you should either run the fit in a separate process or
-            implement your own async driver around `async_eval_many`.
+        Raises:
+            KeyError: If ``optimizer_str`` is not found in the nevergrad
+                optimizer registry.
+            AssertionError: If ``contexts`` is provided and its length does
+                not equal ``num_workers``.
+
+        Side Effects:
+            - Initializes fitter bookkeeping via ``_hook_pre_fit()``.
+            - Populates ``self.contexts`` with one context per worker.
+            - Invokes registered callbacks during optimization.
+            - Runs post-fit checks via ``_hook_post_fit()``.
 
         """
 
@@ -360,8 +385,10 @@ class Fitter:
                 losses = [f_ng(flat_params[0], self.contexts[0])]
             else:
                 assert executor is not None
-                assert contexts is not None
-                losses = map_with_context(executor, f_ng, flat_params, ctxs=contexts)
+                assert self.contexts is not None
+                losses = map_with_context(
+                    executor, f_ng, flat_params, ctxs=self.contexts
+                )
 
             [
                 optimizer.tell(params, loss)
@@ -390,19 +417,32 @@ class Fitter:
         **kwargs,
     ) -> dict[str, Any]:
         """
-        Optimize parameters using SciPy's ``minimize`` function.
+        Optimize parameters using ``scipy.optimize.minimize``.
+
+        The parameter dictionary is flattened into a vector representation for
+        SciPy and reconstructed on each objective evaluation. Because SciPy's
+        ``minimize`` interface is synchronous, a single
+        ``FitterEvaluateContext`` is used for the full optimization run.
 
         Args:
-            method (str, optional): Optimization method passed to
-                ``scipy.optimize.minimize``. Defaults to ``"L-BFGS-B"``.
+            method: Optimization method passed to
+                ``scipy.optimize.minimize``.
+            ctx: Optional fitter evaluation context to reuse during the fit.
+                If ``None``, a new one is created.
             **kwargs: Additional keyword arguments forwarded to
                 ``scipy.optimize.minimize``.
 
         Returns:
-            dict[str, Any]: Dictionary of optimized parameter values.
+            Dictionary of optimized parameter values.
 
         Warning:
             If the optimizer does not converge, a warning is logged.
+
+        Side Effects:
+            - Initializes fitter bookkeeping via ``_hook_pre_fit()``.
+            - Populates ``self.contexts`` with a single context.
+            - Invokes registered callbacks during optimization.
+            - Runs post-fit checks via ``_hook_post_fit()``.
 
         """
 
