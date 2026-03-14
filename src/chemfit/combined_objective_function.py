@@ -82,18 +82,8 @@ class ChildContextConfigurator(Protocol):
     settings.
 
     The ``idx_child_ctx`` and ``num_children`` arguments refer to the
-    **absolute term index** and the total number of terms in the combined
-    objective, even when only a slice of terms is being evaluated.
-
-    If needed, the *relative index within the slice* can be derived from
-    the metadata stored in the parent context:
-
-    >>> indices = range(parent_ctx.meta["n_terms"])
-    >>> start = parent_ctx.meta["slice_start"]
-    >>> stop = parent_ctx.meta["slice_stop"]
-    >>> step = parent_ctx.meta["slice_step"]
-    >>> sliced_indices = indices[start:stop:step]
-    >>> idx_relative = sliced_indices.index(idx_child_ctx)
+    absolute term index and the total number of terms in the combined
+    objective.
 
     """
 

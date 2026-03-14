@@ -92,7 +92,6 @@ class EvaluateContext:
             temp (SimpleNamespace): Scratch space for temporary values
                 during evaluation. Nothing stored here is part of the
                 public API. It is omitted from the `to_meta_data` function.
-                The `temp` meta is *shallow* copied to child contexts.
 
         """
 
@@ -225,13 +224,25 @@ class EvaluateContext:
             "parameters": self.parameters,
             "temp": self.temp,
             "static": self.static,
-            "loss": self.loss,
         }
 
     def __setstate__(self, state: dict[str, Any]):
         self._set_defaults(temp=state["temp"], static=state["static"])
         self.parameters = state["parameters"]
+
+    def to_result_state(self) -> dict[str, Any]:
+        return {
+            "parameters": self.parameters,
+            "loss": self.loss,
+            "quantities": self.quantities,
+            "meta": self.meta,
+        }
+
+    def apply_result_state(self, state: dict[str, Any]):
+        self.parameters = state["parameters"]
         self.loss = state["loss"]
+        self.quantities = state["quantities"]
+        self.meta = state["meta"]
 
 
 class ObjectiveFunctor:
