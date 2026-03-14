@@ -1,4 +1,5 @@
 import math
+import random
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product
@@ -13,6 +14,7 @@ except ImportError:
 
 from chemfit import combined_objective_function
 from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
+from chemfit.executor_utils import map_with_context
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 
 N_TERMS = 10
@@ -28,14 +30,20 @@ def make_weights(n_terms: int = N_TERMS) -> list[float]:
     return list(range(n_terms))
 
 
-def make_expected_child_losses(n_terms: int = N_TERMS) -> list[float]:
-    return [f(PARAMS) for f in make_funcs(n_terms)]
+def make_expected_child_losses(
+    params: dict[str, float] = PARAMS, n_terms: int = N_TERMS
+) -> list[float]:
+    return [f(params) for f in make_funcs(n_terms)]
 
 
-def make_expected_terms(n_terms: int = N_TERMS) -> list[float]:
+def make_expected_terms(
+    params: dict[str, float] = PARAMS, n_terms: int = N_TERMS
+) -> list[float]:
     return [
         w * f
-        for w, f in zip(make_weights(n_terms), make_expected_child_losses(n_terms))
+        for w, f in zip(
+            make_weights(n_terms), make_expected_child_losses(params, n_terms)
+        )
     ]
 
 
@@ -264,3 +272,38 @@ def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
     serial_child_losses = [child["loss"] for child in ctx_serial.meta["children"]]
     exec_child_losses = [child["loss"] for child in ctx_exec.meta["children"]]
     assert np.allclose(serial_child_losses, exec_child_losses)
+
+
+N_EVALS = 4
+EXECUTORS_OUTER = [ThreadPoolExecutor(N_EVALS)]
+
+if loky is not None:
+    EXECUTORS_OUTER.append(loky.ProcessPoolExecutor(N_EVALS))
+
+
+@pytest.mark.parametrize(
+    ("executor_outer", "executor_inner"), list(product(EXECUTORS_OUTER, EXECUTORS))
+)
+def test_parallel_evaluation(
+    executor_outer: ExecutorLike, executor_inner: ExecutorLike
+):
+    cob = make_cob()
+    wrapped = ExecutorWrapperCOB(cob, executor=executor_inner)
+
+    executor_outer = ThreadPoolExecutor(N_EVALS)
+
+    params_list = [
+        {"x": random.random(), "y": random.random()}  # noqa: S311
+        for _ in range(N_EVALS)
+    ]
+    results_expected = [cob(p) for p in params_list]
+
+    ctxs = [EvaluateContext() for _ in range(N_EVALS)]
+
+    results = map_with_context(executor_outer, wrapped, params_list, ctxs=ctxs)
+
+    assert results == results_expected
+
+    for ctx, params in zip(ctxs, params_list):
+        child_losses = [child["loss"] for child in ctx.meta["children"]]
+        assert np.allclose(child_losses, make_expected_child_losses(params))

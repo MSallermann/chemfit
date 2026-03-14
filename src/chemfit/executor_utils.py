@@ -66,7 +66,7 @@ class AttachContextAsReturnValue(Generic[T_co]):
 
         ctx = cast("EvaluateContext", args[-1])
         assert isinstance(ctx, EvaluateContext)
-        return (self.func(*args), ctx.__getstate__())
+        return (self.func(*args), ctx.to_result_state())
 
 
 def map_with_context(
@@ -120,7 +120,7 @@ def map_with_context(
 
     return_vals = []
     for ctx_in, (r, ctx_r) in zip(ctxs, return_vals_with_ctx):
-        ctx_in.__setstate__(ctx_r)
+        ctx_in.apply_result_state(ctx_r)
         return_vals.append(r)
 
     return return_vals
