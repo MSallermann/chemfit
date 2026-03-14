@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any, Callable, Protocol
 
 from typing_extensions import Self
@@ -11,8 +11,6 @@ from chemfit.abstract_objective_function import (
     ObjectiveFunctor,
 )
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
-
-DEFAULT_SLICE = slice(None, None, None)
 
 
 def transform_generic_callables(
@@ -306,69 +304,31 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return cls(total_objective_functions, total_weights)
 
-    def prepare_evaluation(
-        self,
-        parameters: dict[str, Any],
-        ctx: EvaluateContext,
-        idx_slice: slice = DEFAULT_SLICE,
-    ) -> tuple[list[EvaluateContext], list[int]]:
+    def prepare_child_contexts(
+        self, ctx: EvaluateContext, child_contexts: Iterable[EvaluateContext]
+    ):
         """
+        Prepare child contexts for term evaluation.
 
-        Prepare child contexts and metadata for term evaluation.
-
-        This method initializes the parent context for a combined
-        evaluation, records slice metadata, spawns one child context per
-        selected term, and optionally applies
-        ``child_context_configurator`` to each spawned child context.
+        This method applies ``child_context_configurator`` to each spawned child context.
 
         Args:
-            parameters: Parameter dictionary for the current evaluation.
-            ctx: Parent evaluation context that will receive aggregate
-                metadata and final loss information.
-            idx_slice: Slice selecting which objective terms to evaluate.
+            ctx: Parent evaluation context
+            child_contexts: Child contexts that will be prepared
 
-        Returns:
-            A tuple containing:
-                - The list of spawned child contexts corresponding to the
-                selected terms.
-                - The full list of absolute term indices before slicing.
-
-        Side Effects:
-            - Sets ``ctx.loss`` to ``0.0``.
-            - Stores ``parameters`` in ``ctx.parameters``.
-            - Updates ``ctx.meta`` with term-count and slice information.
-            - Spawns child contexts via ``ctx.spawn_children(...)``.
+        Side effects:
+            - Arbitrary changes in the child contexts
 
         """
 
-        ctx.loss = 0.0
-        ctx.parameters = parameters
-        ctx.meta.update(
-            {
-                "n_terms": self.n_terms(),
-                "slice_start": idx_slice.start,
-                "slice_stop": idx_slice.stop,
-                "slice_step": idx_slice.step,
-            }
-        )
-
-        idx_list = list(range(self.n_terms()))
-        sliced_idx_list = idx_list[idx_slice]
-
-        contexts = ctx.spawn_children(n_children=len(sliced_idx_list))
-
         if self.child_context_configurator is not None:
-            [
+            for idx_cur_ctx, child_ctx in enumerate(child_contexts):
                 self.child_context_configurator(
                     idx_child_ctx=idx_cur_ctx,
                     child_ctx=child_ctx,
                     num_children=self.n_terms(),
                     parent_ctx=ctx,
                 )
-                for idx_cur_ctx, child_ctx in zip(sliced_idx_list, contexts)
-            ]
-
-        return contexts, idx_list
 
     def evaluate_term(
         self,
@@ -401,13 +361,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             return self.exception_handler(e, ctx, idx)
 
     def evaluate_terms(
-        self,
-        parameters: dict[str, Any],
-        ctx: EvaluateContext,
-        idx_slice: slice = DEFAULT_SLICE,
+        self, parameters: dict[str, Any], ctx: EvaluateContext
     ) -> list[float]:
         """
-        Evaluate a selected subset of objective terms.
+        Evaluate the objective terms.
 
         This method prepares child contexts, evaluates each selected term in
         its own context, and drops any terms for which ``evaluate_term()``
@@ -416,7 +373,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         Args:
             parameters: Parameter dictionary for the current evaluation.
             ctx: Parent evaluation context.
-            idx_slice: Slice selecting which terms to evaluate.
 
         Returns:
             List of weighted term values that were successfully evaluated and
@@ -424,16 +380,17 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         """
 
-        contexts, idx_list = self.prepare_evaluation(
-            parameters=parameters, ctx=ctx, idx_slice=idx_slice
-        )
+        ctx.meta.update({"n_terms": self.n_terms()})
 
-        terms = []
+        with ctx.child_contexts(n_children=self.n_terms()) as child_ctxs:
+            self.prepare_child_contexts(ctx, child_contexts=child_ctxs)
 
-        for idx, ctx_term in zip(idx_list[idx_slice], contexts, strict=True):
-            terms.append(self.evaluate_term(parameters, idx, ctx_term))
+            terms = []
 
-        return [t for t in terms if t is not None]
+            for idx, ctx_term in enumerate(child_ctxs):
+                terms.append(self.evaluate_term(parameters, idx, ctx_term))
+
+            return [t for t in terms if t is not None]
 
     def __call__(
         self,
@@ -468,11 +425,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         if ctx is None:
             ctx = EvaluateContext()
 
-        terms = self.evaluate_terms(
-            parameters=parameters, ctx=ctx, idx_slice=DEFAULT_SLICE
-        )
+        ctx.parameters = parameters
 
-        ctx.collect_child_meta_data()
+        terms = self.evaluate_terms(parameters=parameters, ctx=ctx)
 
         ctx.loss = self.reduction(terms)
         return ctx.loss

@@ -96,24 +96,26 @@ class ExecutorWrapperCOB(ObjectiveFunctor):
         if ctx is None:
             ctx = EvaluateContext()
 
-        contexts, idx_list = self.cob.prepare_evaluation(parameters=parameters, ctx=ctx)
+        ctx.parameters = parameters
 
         executor = ctx.executor or self.executor or ThreadPoolExecutor()
 
         assert executor is not None
 
-        terms = map_with_context(
-            executor,
-            self.cob.evaluate_term,
-            [parameters for _ in range(self.cob.n_terms())],
-            idx_list,
-            ctxs=contexts,
-        )
+        ctx.parameters = parameters
+        ctx.meta.update({"n_terms": self.cob.n_terms()})
 
-        terms = [t for t in terms if t is not None]
+        with ctx.child_contexts(self.cob.n_terms()) as child_contexts:
+            self.cob.prepare_child_contexts(ctx, child_contexts=child_contexts)
 
-        ctx.loss = self.cob.reduction(list(terms))
-
-        ctx.collect_child_meta_data()
+            terms = map_with_context(
+                executor,
+                self.cob.evaluate_term,
+                [parameters for _ in range(self.cob.n_terms())],
+                range(self.cob.n_terms()),
+                ctxs=child_contexts,
+            )
+            terms = [t for t in terms if t is not None]
+            ctx.loss = self.cob.reduction(list(terms))
 
         return ctx.loss
