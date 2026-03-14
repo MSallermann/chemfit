@@ -5,7 +5,11 @@ from itertools import product
 
 import numpy as np
 import pytest
-from loky import ProcessPoolExecutor
+
+try:
+    import loky
+except ImportError:
+    loky = None
 
 from chemfit import combined_objective_function
 from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
@@ -52,7 +56,11 @@ REDUCERS = [
     std_reducer,
 ]
 
-EXECUTORS = [ThreadPoolExecutor(2), ProcessPoolExecutor(2)]
+
+EXECUTORS = [ThreadPoolExecutor(2)]
+
+if loky is not None:
+    EXECUTORS.append(loky.ProcessPoolExecutor(2))
 
 
 @pytest.mark.parametrize("reduction", REDUCERS)
