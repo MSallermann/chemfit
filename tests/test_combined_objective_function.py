@@ -1,11 +1,14 @@
 import math
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from itertools import product
 
 import numpy as np
 import pytest
+from loky import ProcessPoolExecutor
 
 from chemfit import combined_objective_function
-from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 
 N_TERMS = 10
@@ -49,6 +52,8 @@ REDUCERS = [
     std_reducer,
 ]
 
+EXECUTORS = [ThreadPoolExecutor(2), ProcessPoolExecutor(2)]
+
 
 @pytest.mark.parametrize("reduction", REDUCERS)
 def test_combined_objective_reduces_terms_serially(
@@ -71,12 +76,12 @@ def test_combined_objective_reduces_terms_serially(
     assert np.isclose(res, reduction(make_expected_terms()))
 
 
-@pytest.mark.parametrize("reduction", REDUCERS)
+@pytest.mark.parametrize(("reduction", "executor"), list(product(REDUCERS, EXECUTORS)))
 def test_combined_objective_reduces_terms_with_executor(
-    reduction: combined_objective_function.Reducer,
+    reduction: combined_objective_function.Reducer, executor: ExecutorLike
 ):
     cob = make_cob(reduction=reduction)
-    wrapped = ExecutorWrapperCOB(cob)
+    wrapped = ExecutorWrapperCOB(cob, executor=executor)
 
     ctx = EvaluateContext()
     res = wrapped({}, ctx)
@@ -149,7 +154,8 @@ def test_combined_objective_exception_handlers_serial():
     assert math.isclose(ctx.loss, func1({}))
 
 
-def test_combined_objective_exception_handlers_with_executor():
+@pytest.mark.parametrize("executor", EXECUTORS)
+def test_combined_objective_exception_handlers_with_executor(executor: ExecutorLike):
     def func1(params: dict) -> float:  # noqa: ARG001
         return 1.0
 
@@ -158,7 +164,7 @@ def test_combined_objective_exception_handlers_with_executor():
         raise RuntimeError(msg)
 
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
-    wrapped = ExecutorWrapperCOB(ob)
+    wrapped = ExecutorWrapperCOB(ob, executor=executor)
 
     ob.exception_handler = combined_objective_function.raising_exception_handler
     with pytest.raises(RuntimeError, match="Whoops"):
@@ -227,9 +233,10 @@ def test_combined_objective_exception_handlers_with_mpi():
             mpi.worker_loop()
 
 
-def test_executor_wrapper_matches_serial_result():
+@pytest.mark.parametrize("executor", EXECUTORS)
+def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
     cob = make_cob()
-    wrapped = ExecutorWrapperCOB(cob)
+    wrapped = ExecutorWrapperCOB(cob, executor=executor)
 
     ctx_serial = EvaluateContext()
     ctx_exec = EvaluateContext()
