@@ -17,9 +17,11 @@ from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 
 N_TERMS = 10
 
+PARAMS = {"x": 2.0, "y": 1.0}
+
 
 def make_funcs(n_terms: int = N_TERMS) -> list[Callable[[dict], float]]:
-    return [lambda p, i=i: float(i) for i in range(n_terms)]  # noqa: ARG005
+    return [lambda p, i=i: p["x"] ** 2 - i * p["y"] for i in range(n_terms)]
 
 
 def make_weights(n_terms: int = N_TERMS) -> list[float]:
@@ -27,7 +29,7 @@ def make_weights(n_terms: int = N_TERMS) -> list[float]:
 
 
 def make_expected_child_losses(n_terms: int = N_TERMS) -> list[float]:
-    return [f({}) for f in make_funcs(n_terms)]
+    return [f(PARAMS) for f in make_funcs(n_terms)]
 
 
 def make_expected_terms(n_terms: int = N_TERMS) -> list[float]:
@@ -70,9 +72,9 @@ def test_combined_objective_reduces_terms_serially(
     cob = make_cob(reduction=reduction)
 
     ctx = EvaluateContext()
-    res = cob({}, ctx)
+    res = cob(PARAMS, ctx)
 
-    assert ctx.parameters == {}
+    assert ctx.parameters == PARAMS
     assert np.isclose(ctx.loss, res)
 
     assert "children" in ctx.meta
@@ -92,9 +94,9 @@ def test_combined_objective_reduces_terms_with_executor(
     wrapped = ExecutorWrapperCOB(cob, executor=executor)
 
     ctx = EvaluateContext()
-    res = wrapped({}, ctx)
+    res = wrapped(PARAMS, ctx)
 
-    assert ctx.parameters == {}
+    assert ctx.parameters == PARAMS
     assert np.isclose(ctx.loss, res)
 
     assert "children" in ctx.meta
@@ -119,9 +121,9 @@ def test_combined_objective_reduces_terms_with_mpi(
     with mpi_wrapper_cob.MPIWrapperCOB(cob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = mpi({}, ctx)
+            res = mpi(PARAMS, ctx)
 
-            assert ctx.parameters == {}
+            assert ctx.parameters == PARAMS
             assert np.isclose(ctx.loss, res)
 
             assert "children" in ctx.meta
@@ -147,19 +149,19 @@ def test_combined_objective_exception_handlers_serial():
 
     ob.exception_handler = combined_objective_function.raising_exception_handler
     with pytest.raises(RuntimeError, match="Whoops"):
-        ob({})
+        ob(PARAMS)
 
     ob.exception_handler = combined_objective_function.nan_exception_handler
     ctx = EvaluateContext()
-    res = ob({}, ctx)
+    res = ob(PARAMS, ctx)
     assert math.isnan(res)
     assert math.isnan(ctx.loss)
 
     ob.exception_handler = combined_objective_function.skip_exception_handler
     ctx = EvaluateContext()
-    res = ob({}, ctx)
-    assert math.isclose(res, func1({}))
-    assert math.isclose(ctx.loss, func1({}))
+    res = ob(PARAMS, ctx)
+    assert math.isclose(res, func1(PARAMS))
+    assert math.isclose(ctx.loss, func1(PARAMS))
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)
@@ -176,19 +178,19 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
 
     ob.exception_handler = combined_objective_function.raising_exception_handler
     with pytest.raises(RuntimeError, match="Whoops"):
-        wrapped({})
+        wrapped(PARAMS)
 
     ob.exception_handler = combined_objective_function.nan_exception_handler
     ctx = EvaluateContext()
-    res = wrapped({}, ctx)
+    res = wrapped(PARAMS, ctx)
     assert math.isnan(res)
     assert math.isnan(ctx.loss)
 
     ob.exception_handler = combined_objective_function.skip_exception_handler
     ctx = EvaluateContext()
-    res = wrapped({}, ctx)
-    assert math.isclose(res, func1({}))
-    assert math.isclose(ctx.loss, func1({}))
+    res = wrapped(PARAMS, ctx)
+    assert math.isclose(res, func1(PARAMS))
+    assert math.isclose(ctx.loss, func1(PARAMS))
 
 
 def test_combined_objective_exception_handlers_with_mpi():
@@ -210,7 +212,7 @@ def test_combined_objective_exception_handlers_with_mpi():
     with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
             with pytest.raises(RuntimeError, match="Whoops"):
-                mpi({})
+                mpi(PARAMS)
         else:
             mpi.worker_loop()
 
@@ -221,7 +223,7 @@ def test_combined_objective_exception_handlers_with_mpi():
     with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = mpi({}, ctx)
+            res = mpi(PARAMS, ctx)
             assert math.isnan(res)
             assert math.isnan(ctx.loss)
         else:
@@ -234,9 +236,9 @@ def test_combined_objective_exception_handlers_with_mpi():
     with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = mpi({}, ctx)
-            assert math.isclose(res, func1({}))
-            assert math.isclose(ctx.loss, func1({}))
+            res = mpi(PARAMS, ctx)
+            assert math.isclose(res, func1(PARAMS))
+            assert math.isclose(ctx.loss, func1(PARAMS))
         else:
             mpi.worker_loop()
 
@@ -249,8 +251,8 @@ def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
     ctx_serial = EvaluateContext()
     ctx_exec = EvaluateContext()
 
-    res_serial = cob({}, ctx_serial)
-    res_exec = wrapped({}, ctx_exec)
+    res_serial = cob(PARAMS, ctx_serial)
+    res_exec = wrapped(PARAMS, ctx_exec)
 
     assert np.isclose(res_exec, res_serial)
     assert np.isclose(ctx_exec.loss, ctx_serial.loss)
