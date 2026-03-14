@@ -108,25 +108,34 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def __enter__(self):
         return self
 
+    def evaluate_slice(
+        self, params: dict[str, Any], ctx: EvaluateContext
+    ) -> list[float]:
+        idx_slice = slice(self.start, self.end)
+        selected_indices = range(self.cob.n_terms())[idx_slice]
+
+        local_terms = []
+
+        with ctx.child_contexts(len(selected_indices)) as contexts:
+            self.cob.prepare_child_contexts(ctx, child_contexts=contexts)
+
+            for idx, ctx_term in zip(selected_indices, contexts, strict=True):
+                try:
+                    res = self.cob.evaluate_term(params, idx, ctx_term)
+                    if res is not None:
+                        local_terms.append(res)
+                except Exception as e:  # noqa: PERF203
+                    # If we catch an exception we log it and append it to the local terms
+                    # It will be sent to master and raised there
+                    logger.exception(e)
+                    local_terms.append(e)
+
+        return local_terms
+
     def worker_process_params(self, params: dict[str, Any], ctx: EvaluateContext):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
 
-        idx_slice = slice(self.start, self.end)
-        contexts, idx_list = self.cob.prepare_evaluation(
-            parameters=params, ctx=ctx, idx_slice=idx_slice
-        )
-        local_terms = []
-
-        for idx, ctx_term in zip(idx_list[idx_slice], contexts, strict=True):
-            try:
-                res = self.cob.evaluate_term(params, idx, ctx_term)
-                if res is not None:
-                    local_terms.append(res)
-            except Exception as e:  # noqa: PERF203
-                # If we catch an exception we log it and append it to the local terms
-                # It will be sent to master and raised there
-                logger.exception(e)
-                local_terms.append(e)
+        local_terms = self.evaluate_slice(params, ctx)
 
         # Finally, we have to run the gather
         # This must always happen, otherwise, we might cause deadlocks because other ranks might wait on a reduce.
@@ -204,7 +213,6 @@ class MPIWrapperCOB(ObjectiveFunctor):
             msg = "`gather_meta_data` can only be used on rank 0"
             raise RuntimeError(msg)
 
-        ctx.collect_child_meta_data()
         # The local meta data should already be in the context
         assert "children" in ctx.meta
         local_meta_data = ctx.meta["children"]
@@ -271,9 +279,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         local_terms: list[float] = []  # So we get NaN in case the local compute fails
         try:
             # Compute one slice of the objective function on the main rank
-            local_terms = self.cob.evaluate_terms(
-                params, ctx=ctx, idx_slice=slice(self.start, self.end)
-            )
+            local_terms = self.evaluate_slice(params, ctx=ctx)
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank
