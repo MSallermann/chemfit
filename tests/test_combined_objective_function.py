@@ -1,6 +1,5 @@
-import logging
 import math
-from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -9,144 +8,242 @@ from chemfit import combined_objective_function
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 
-logger = logging.getLogger(__name__)
+N_TERMS = 10
 
-n_terms = 10
 
-funcs = [lambda p, i=i: float(i) for i in range(n_terms)]  # noqa: ARG005
-weights = list(range(n_terms))
-expected_terms = [float(i**2) for i in range(n_terms)]
-cob = combined_objective_function.CombinedObjectiveFunction(
-    funcs, weights, reduction=combined_objective_function.sum_reducer
-)
-reducers = [
+def make_funcs(n_terms: int = N_TERMS) -> list[Callable[[dict], float]]:
+    return [lambda p, i=i: float(i) for i in range(n_terms)]  # noqa: ARG005
+
+
+def make_weights(n_terms: int = N_TERMS) -> list[float]:
+    return list(range(n_terms))
+
+
+def make_expected_child_losses(n_terms: int = N_TERMS) -> list[float]:
+    return [f({}) for f in make_funcs(n_terms)]
+
+
+def make_expected_terms(n_terms: int = N_TERMS) -> list[float]:
+    return [
+        w * f
+        for w, f in zip(make_weights(n_terms), make_expected_child_losses(n_terms))
+    ]
+
+
+def make_cob(
+    reduction: combined_objective_function.Reducer = combined_objective_function.sum_reducer,
+) -> combined_objective_function.CombinedObjectiveFunction:
+    return combined_objective_function.CombinedObjectiveFunction(
+        make_funcs(),
+        make_weights(),
+        reduction=reduction,
+    )
+
+
+def std_reducer(terms: list[float]) -> float:
+    return float(np.std(terms))
+
+
+REDUCERS = [
     combined_objective_function.sum_reducer,
-    # combined_objective_function.mean_reducer,
-    # combined_objective_function.root_mean_reducer,
-    lambda terms: np.std(terms),
+    std_reducer,
 ]
 
 
-def test_combined_objective_function():
-    for red in reducers:
-        ctx = EvaluateContext()
-        cob.reduction = red
-        res = cob({}, ctx)
+@pytest.mark.parametrize("reduction", REDUCERS)
+def test_combined_objective_reduces_terms_serially(
+    reduction: combined_objective_function.Reducer,
+):
+    cob = make_cob(reduction=reduction)
 
-        assert len(ctx.meta["children"]) == n_terms
+    ctx = EvaluateContext()
+    res = cob({}, ctx)
 
-        assert np.isclose(res, red(expected_terms))
+    assert ctx.parameters == {}
+    assert np.isclose(ctx.loss, res)
 
+    assert "children" in ctx.meta
+    assert len(ctx.meta["children"]) == N_TERMS
 
-def test_combined_objective_function_async():
-    cob_async = ExecutorWrapperCOB(cob)
+    child_losses = [child["loss"] for child in ctx.meta["children"]]
+    assert np.allclose(child_losses, make_expected_child_losses())
 
-    for red in reducers:
-        cob.reduction = red
-
-        ctx = EvaluateContext()
-        res = cob_async({}, ctx)
-        assert len(ctx.meta["children"]) == n_terms
-
-        assert np.isclose(res, red(expected_terms))
+    assert np.isclose(res, reduction(make_expected_terms()))
 
 
-def test_combined_objective_function_mpi():
+@pytest.mark.parametrize("reduction", REDUCERS)
+def test_combined_objective_reduces_terms_with_executor(
+    reduction: combined_objective_function.Reducer,
+):
+    cob = make_cob(reduction=reduction)
+    wrapped = ExecutorWrapperCOB(cob)
+
+    ctx = EvaluateContext()
+    res = wrapped({}, ctx)
+
+    assert ctx.parameters == {}
+    assert np.isclose(ctx.loss, res)
+
+    assert "children" in ctx.meta
+    assert len(ctx.meta["children"]) == N_TERMS
+
+    child_losses = [child["loss"] for child in ctx.meta["children"]]
+    assert np.allclose(child_losses, make_expected_child_losses())
+
+    assert np.isclose(res, reduction(make_expected_terms()))
+
+
+@pytest.mark.parametrize("reduction", REDUCERS)
+def test_combined_objective_reduces_terms_with_mpi(
+    reduction: combined_objective_function.Reducer,
+):
     mpi_wrapper_cob = pytest.importorskip(
         "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
     )
 
-    # Use the MPI Wrapper to make the combined objective function "MPI aware"
+    cob = make_cob(reduction=reduction)
+
     with mpi_wrapper_cob.MPIWrapperCOB(cob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
-            for red in reducers:
-                cob.reduction = red
-                ctx = EvaluateContext()
-                res = mpi({}, ctx)
-                assert len(ctx.meta["children"]) == n_terms
-                assert np.isclose(res, red(expected_terms))
+            ctx = EvaluateContext()
+            res = mpi({}, ctx)
+
+            assert ctx.parameters == {}
+            assert np.isclose(ctx.loss, res)
+
+            assert "children" in ctx.meta
+            assert len(ctx.meta["children"]) == N_TERMS
+
+            child_losses = [child["loss"] for child in ctx.meta["children"]]
+            assert np.allclose(child_losses, make_expected_child_losses())
+
+            assert np.isclose(res, reduction(make_expected_terms()))
         else:
             mpi.worker_loop()
 
 
-def test_exception_handlers():
-    def func1(params: dict[str, Any]) -> float:  # noqa: ARG001
-        return 1
+def test_combined_objective_exception_handlers_serial():
+    def func1(params: dict) -> float:  # noqa: ARG001
+        return 1.0
 
-    def whoops(params: dict[str, Any]) -> float:  # noqa: ARG001
+    def whoops(params: dict) -> float:  # noqa: ARG001
         msg = "Whoops"
         raise RuntimeError(msg)
 
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
 
-    # default is to re-raise, so we should get a runtime error
-    with pytest.raises(RuntimeError):
+    ob.exception_handler = combined_objective_function.raising_exception_handler
+    with pytest.raises(RuntimeError, match="Whoops"):
         ob({})
 
-    ctx = EvaluateContext()
-    # now we change to the nan exception handler, we should get nan
     ob.exception_handler = combined_objective_function.nan_exception_handler
+    ctx = EvaluateContext()
     res = ob({}, ctx)
     assert math.isnan(res)
+    assert math.isnan(ctx.loss)
 
-    # now we change to the skip exception handler, we should just get the result from func1
     ob.exception_handler = combined_objective_function.skip_exception_handler
-    res = ob({})
-    print(res)
+    ctx = EvaluateContext()
+    res = ob({}, ctx)
     assert math.isclose(res, func1({}))
+    assert math.isclose(ctx.loss, func1({}))
 
-    ####### repeat for async wrapper #######
+
+def test_combined_objective_exception_handlers_with_executor():
+    def func1(params: dict) -> float:  # noqa: ARG001
+        return 1.0
+
+    def whoops(params: dict) -> float:  # noqa: ARG001
+        msg = "Whoops"
+        raise RuntimeError(msg)
+
+    ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
+    wrapped = ExecutorWrapperCOB(ob)
+
     ob.exception_handler = combined_objective_function.raising_exception_handler
-    ob_async = ExecutorWrapperCOB(ob)
-    with pytest.raises(RuntimeError):
-        ob_async({})
+    with pytest.raises(RuntimeError, match="Whoops"):
+        wrapped({})
 
-    # now we change to the nan exception handler, we should get nan
     ob.exception_handler = combined_objective_function.nan_exception_handler
-    res = ob_async({})
-    print(res)
+    ctx = EvaluateContext()
+    res = wrapped({}, ctx)
     assert math.isnan(res)
+    assert math.isnan(ctx.loss)
 
-    # now we change to the skip exception handler, we should just get the result from func1
     ob.exception_handler = combined_objective_function.skip_exception_handler
-    res = ob_async({})
-    print(res)
+    ctx = EvaluateContext()
+    res = wrapped({}, ctx)
     assert math.isclose(res, func1({}))
+    assert math.isclose(ctx.loss, func1({}))
 
 
-def test_exception_handlers_mpi():
-    logging.basicConfig(filename="bla.long", level=logging.INFO)
-
+def test_combined_objective_exception_handlers_with_mpi():
     mpi_wrapper_cob = pytest.importorskip(
         "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
     )
 
-    def func1(params: dict[str, Any]) -> float:  # noqa: ARG001
-        return 1
+    def func1(params: dict) -> float:  # noqa: ARG001
+        return 1.0
 
-    def whoops(params: dict[str, Any]) -> float:  # noqa: ARG001
+    def whoops(params: dict) -> float:  # noqa: ARG001
         msg = "Whoops"
         raise RuntimeError(msg)
 
+    # raising
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.raising_exception_handler
-    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=True) as mpi:
+
+    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
-            with pytest.raises(RuntimeError):
+            with pytest.raises(RuntimeError, match="Whoops"):
                 mpi({})
         else:
             mpi.worker_loop()
 
+    # nan
+    ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.nan_exception_handler
-    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=True) as mpi:
+
+    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
-            assert math.isnan(mpi({}))
+            ctx = EvaluateContext()
+            res = mpi({}, ctx)
+            assert math.isnan(res)
+            assert math.isnan(ctx.loss)
         else:
             mpi.worker_loop()
 
+    # skip
+    ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.skip_exception_handler
-    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=True) as mpi:
+
+    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
         if mpi.rank == 0:
-            assert mpi({}) == func1({})
+            ctx = EvaluateContext()
+            res = mpi({}, ctx)
+            assert math.isclose(res, func1({}))
+            assert math.isclose(ctx.loss, func1({}))
         else:
             mpi.worker_loop()
+
+
+def test_executor_wrapper_matches_serial_result():
+    cob = make_cob()
+    wrapped = ExecutorWrapperCOB(cob)
+
+    ctx_serial = EvaluateContext()
+    ctx_exec = EvaluateContext()
+
+    res_serial = cob({}, ctx_serial)
+    res_exec = wrapped({}, ctx_exec)
+
+    assert np.isclose(res_exec, res_serial)
+    assert np.isclose(ctx_exec.loss, ctx_serial.loss)
+
+    assert "children" in ctx_serial.meta
+    assert "children" in ctx_exec.meta
+    assert len(ctx_serial.meta["children"]) == len(ctx_exec.meta["children"])
+
+    serial_child_losses = [child["loss"] for child in ctx_serial.meta["children"]]
+    exec_child_losses = [child["loss"] for child in ctx_exec.meta["children"]]
+    assert np.allclose(serial_child_losses, exec_child_losses)
