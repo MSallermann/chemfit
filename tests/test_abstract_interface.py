@@ -10,6 +10,7 @@ from pydictnest import get_nested, items_nested
 
 from chemfit import abstract_objective_function, async_helpers
 from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.wrap_funcs import to_quantity_computer
 
 
 class MyFunctor(abstract_objective_function.ObjectiveFunctor):
@@ -164,3 +165,23 @@ def test_async_evaluation():
     print(f"{sync_results = }")
     print(f"{async_results = }")
     assert np.all(np.isclose(sync_results, async_results))
+
+
+def test_quickstart():
+    @to_quantity_computer()
+    def computer(params: dict[str, float]) -> dict[str, float]:
+        return {"x2": params["x"] ** 2, "y2": params["y"] ** 2}
+
+    def loss(q: dict[str, float], target: float):
+        return ((q["x2"] + q["y2"]) - target) ** 2
+
+    TARGET = 2
+    ob = computer.with_loss(functools.partial(loss, target=TARGET))
+
+    PARAMS = {"x": 1, "y": 2}
+    assert np.isclose(ob(PARAMS), (PARAMS["x"] ** 2 + PARAMS["y"] ** 2 - 2) ** 2)
+
+    ctx = EvaluateContext()
+
+    ob(PARAMS, ctx)
+    print(ctx.to_meta_data())
