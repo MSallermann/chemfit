@@ -108,6 +108,37 @@ class MPIWrapperCOB(ObjectiveFunctor):
     def __enter__(self):
         return self
 
+    def shifted_child_context_configurator(
+        self,
+        idx_child_ctx: int,
+        child_ctx: EvaluateContext,
+        num_children: int,  # noqa: ARG002
+        parent_ctx: EvaluateContext,
+    ):
+        """
+        Invoke the parents child context configurator, while accounting for the slicing.
+
+        The goal of this function is to lead to the same behaviour as on the original combined objective function.
+        This means the child_context_configurator has to "see" the idx of the current child not within the current slice, but
+        the absolute index.
+        Fort the same reason we overwrite the number of children.
+
+        Args:
+            idx_child_ctx (int): The index of the current child context *within* the slive
+            child_ctx (EvaluateContext): The child context
+            num_children (int): The number of children *within* the current slice
+            parent_ctx (EvaluateContext): The parent context.
+
+        """
+
+        if self.cob.child_context_configurator is not None:
+            self.cob.child_context_configurator(
+                idx_child_ctx=idx_child_ctx + self.start,
+                child_ctx=child_ctx,
+                num_children=self.cob.n_terms(),
+                parent_ctx=parent_ctx,
+            )
+
     def evaluate_slice(
         self, params: dict[str, Any], ctx: EvaluateContext
     ) -> list[float]:
@@ -116,9 +147,9 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         local_terms = []
 
-        with ctx.child_contexts(len(selected_indices)) as contexts:
-            self.cob.prepare_child_contexts(ctx, child_contexts=contexts)
-
+        with ctx.child_contexts(
+            len(selected_indices), configurator=self.shifted_child_context_configurator
+        ) as contexts:
             for idx, ctx_term in zip(selected_indices, contexts, strict=True):
                 try:
                     res = self.cob.evaluate_term(params, idx, ctx_term)

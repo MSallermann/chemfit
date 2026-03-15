@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Iterable
 
 T = TypeVar("T", covariant=True)  # noqa: PLC0105
 
@@ -51,8 +51,7 @@ class ChildContextConfigurator(Protocol):
     evaluation behavior, metadata, or resource usage.
 
     The ``idx_child_ctx`` argument is the absolute index of the current
-    child within the spawned batch. The ``child_indices`` argument
-    contains the full ordered list of child indices in that batch.
+    child within the spawned batch.
 
     """
 
@@ -60,7 +59,7 @@ class ChildContextConfigurator(Protocol):
         self,
         idx_child_ctx: int,
         child_ctx: EvaluateContext,
-        child_indices: Sequence[int],
+        num_children: int,
         parent_ctx: EvaluateContext,
     ): ...
 
@@ -197,7 +196,7 @@ class EvaluateContext:
                 configurator(
                     idx_child_ctx=idx_child,
                     child_ctx=child_ctx,
-                    child_indices=list(range(n_children)),
+                    num_children=n_children,
                     parent_ctx=self,
                 )
 
