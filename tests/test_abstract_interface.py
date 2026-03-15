@@ -10,6 +10,7 @@ from pydictnest import get_nested, items_nested
 
 from chemfit import abstract_objective_function, async_helpers
 from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.wrap_funcs import to_quantity_computer
 
 
@@ -182,6 +183,25 @@ def test_quickstart():
     assert np.isclose(ob(PARAMS), (PARAMS["x"] ** 2 + PARAMS["y"] ** 2 - 2) ** 2)
 
     ctx = EvaluateContext()
-
     ob(PARAMS, ctx)
+    print(ctx.to_meta_data())
+
+
+def test_quickstart2():
+    @to_quantity_computer()
+    def computer(params: dict[str, float], f: float):
+        return {"fx2": f * params["x"] ** 2, "fy2": f * params["y"] ** 2}
+
+    def loss(q: dict[str, float], target: float) -> float:
+        return (q["fx2"] + q["fy2"] - target) ** 2
+
+    terms = [
+        computer.bind(f=1).with_loss(loss, target=1),
+        computer.bind(f=2).with_loss(loss, target=2),
+    ]
+
+    PARAMS = {"x": 1, "y": 2}
+    combined = CombinedObjectiveFunction(terms)
+    ctx = EvaluateContext()
+    combined(PARAMS, ctx)
     print(ctx.to_meta_data())
