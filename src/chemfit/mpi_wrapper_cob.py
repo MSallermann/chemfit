@@ -124,7 +124,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         Fort the same reason we overwrite the number of children.
 
         Args:
-            idx_child_ctx (int): The index of the current child context *within* the slive
+            idx_child_ctx (int): The index of the current child context *within* the slice
             child_ctx (EvaluateContext): The child context
             num_children (int): The number of children *within* the current slice
             parent_ctx (EvaluateContext): The parent context.
