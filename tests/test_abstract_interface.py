@@ -107,7 +107,7 @@ def test():
 def test_context_stuff():
     # spawn children
     ctx = EvaluateContext()
-    ctx.temp.some_dict = {"bla": 3}
+    ctx.config.some_dict = {"bla": 3}
     children = ctx.spawn_children(3)
 
     # have the children spawn children
@@ -115,12 +115,12 @@ def test_context_stuff():
     ctx.collect_child_meta_data()
 
     # make sure all the copies of the dict are different entitites
-    assert children[0].temp.some_dict == children[1].temp.some_dict
-    children[0].temp.some_dict["bla"] = (
+    assert children[0].config.some_dict == children[1].config.some_dict
+    children[0].config.some_dict["bla"] = (
         4  # this should only change the value of "bla" in the first child
     )
     assert (
-        children[0].temp.some_dict != children[1].temp.some_dict
+        children[0].config.some_dict != children[1].config.some_dict
     )  # so these must be different now
 
     meta_data = ctx.to_meta_data()

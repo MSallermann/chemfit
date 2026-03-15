@@ -105,9 +105,9 @@ class ExecutorWrapperCOB(ObjectiveFunctor):
         ctx.parameters = parameters
         ctx.meta.update({"n_terms": self.cob.n_terms()})
 
-        with ctx.child_contexts(self.cob.n_terms()) as child_contexts:
-            self.cob.prepare_child_contexts(ctx, child_contexts=child_contexts)
-
+        with ctx.child_contexts(
+            self.cob.n_terms(), configurator=self.cob.child_context_configurator
+        ) as child_contexts:
             terms = map_with_context(
                 executor,
                 self.cob.evaluate_term,

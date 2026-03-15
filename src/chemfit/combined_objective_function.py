@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from typing import Any, Callable, Protocol
 
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import (
+    ChildContextConfigurator,
     EvaluateContext,
     ObjectiveFunctor,
 )
@@ -69,31 +70,6 @@ def skip_exception_handler(
     idx: int,  # noqa: ARG001
 ) -> float | None:
     return None
-
-
-class ChildContextConfigurator(Protocol):
-    """
-    Protocol for configuring child evaluation contexts before term evaluation.
-
-    The configurator is called once for each child context after the
-    parent context has spawned them in ``prepare_evaluation()``. It may
-    mutate the child context or the parent context in place to configure
-    term-specific metadata, execution resources, or other evaluation
-    settings.
-
-    The ``idx_child_ctx`` and ``num_children`` arguments refer to the
-    absolute term index and the total number of terms in the combined
-    objective.
-
-    """
-
-    def __call__(
-        self,
-        idx_child_ctx: int,
-        child_ctx: EvaluateContext,
-        num_children: int,
-        parent_ctx: EvaluateContext,
-    ): ...
 
 
 class CombinedObjectiveFunction(ObjectiveFunctor):
@@ -294,32 +270,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         return cls(total_objective_functions, total_weights)
 
-    def prepare_child_contexts(
-        self, ctx: EvaluateContext, child_contexts: Iterable[EvaluateContext]
-    ):
-        """
-        Prepare child contexts for term evaluation.
-
-        This method applies ``child_context_configurator`` to each spawned child context.
-
-        Args:
-            ctx: Parent evaluation context
-            child_contexts: Child contexts that will be prepared
-
-        Side effects:
-            - Arbitrary changes in the child contexts
-
-        """
-
-        if self.child_context_configurator is not None:
-            for idx_cur_ctx, child_ctx in enumerate(child_contexts):
-                self.child_context_configurator(
-                    idx_child_ctx=idx_cur_ctx,
-                    child_ctx=child_ctx,
-                    num_children=self.n_terms(),
-                    parent_ctx=ctx,
-                )
-
     def evaluate_term(
         self,
         parameters: dict[str, Any],
@@ -372,9 +322,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         ctx.meta.update({"n_terms": self.n_terms()})
 
-        with ctx.child_contexts(n_children=self.n_terms()) as child_ctxs:
-            self.prepare_child_contexts(ctx, child_contexts=child_ctxs)
-
+        with ctx.child_contexts(
+            n_children=self.n_terms(), configurator=self.child_context_configurator
+        ) as child_ctxs:
             terms = []
 
             for idx, ctx_term in enumerate(child_ctxs):
