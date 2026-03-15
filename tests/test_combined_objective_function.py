@@ -13,7 +13,10 @@ except ImportError:
     loky = None
 
 from chemfit import combined_objective_function
-from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ExecutorLike,
+)
 from chemfit.executor_utils import map_with_context
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 
@@ -47,6 +50,19 @@ def make_expected_terms(
     ]
 
 
+def context_configurator(
+    idx_child_ctx: int,
+    child_ctx: EvaluateContext,
+    num_children: int,
+    parent_ctx: EvaluateContext,  # noqa: ARG001
+):
+    child_ctx.meta["configurator_number"] = idx_child_ctx + num_children
+
+
+def make_expected_configurator_numbers(n_terms: int = N_TERMS):
+    return [i + n_terms for i in range(n_terms)]
+
+
 def make_cob(
     reduction: combined_objective_function.Reducer = combined_objective_function.sum_reducer,
 ) -> combined_objective_function.CombinedObjectiveFunction:
@@ -54,6 +70,7 @@ def make_cob(
         make_funcs(),
         make_weights(),
         reduction=reduction,
+        child_context_configurator=context_configurator,
     )
 
 
@@ -67,10 +84,35 @@ REDUCERS = [
 ]
 
 
-EXECUTORS = [ThreadPoolExecutor(2)]
+EXECUTORS: list[ExecutorLike] = [ThreadPoolExecutor(2)]
 
 if loky is not None:
     EXECUTORS.append(loky.ProcessPoolExecutor(2))
+
+
+def standard_asserts(
+    res: float,
+    ctx: EvaluateContext,
+    reduction: combined_objective_function.Reducer,
+    params: dict[str, float] = PARAMS,
+    n_terms: int = N_TERMS,
+):
+    assert ctx.parameters == params
+    assert np.isclose(ctx.loss, res)
+
+    assert "children" in ctx.meta
+    assert len(ctx.meta["children"]) == n_terms
+
+    child_losses = [child["loss"] for child in ctx.meta["children"]]
+    assert np.allclose(child_losses, make_expected_child_losses(params, n_terms))
+    assert np.isclose(res, reduction(make_expected_terms(params, n_terms)))
+
+    configured_numbers = [
+        child["meta"]["configurator_number"] for child in ctx.meta["children"]
+    ]
+    assert all(
+        np.isclose(configured_numbers, make_expected_configurator_numbers(n_terms))
+    )
 
 
 @pytest.mark.parametrize("reduction", REDUCERS)
@@ -82,16 +124,7 @@ def test_combined_objective_reduces_terms_serially(
     ctx = EvaluateContext()
     res = cob(PARAMS, ctx)
 
-    assert ctx.parameters == PARAMS
-    assert np.isclose(ctx.loss, res)
-
-    assert "children" in ctx.meta
-    assert len(ctx.meta["children"]) == N_TERMS
-
-    child_losses = [child["loss"] for child in ctx.meta["children"]]
-    assert np.allclose(child_losses, make_expected_child_losses())
-
-    assert np.isclose(res, reduction(make_expected_terms()))
+    standard_asserts(res, ctx, reduction)
 
 
 @pytest.mark.parametrize(("reduction", "executor"), list(product(REDUCERS, EXECUTORS)))
@@ -104,16 +137,7 @@ def test_combined_objective_reduces_terms_with_executor(
     ctx = EvaluateContext()
     res = wrapped(PARAMS, ctx)
 
-    assert ctx.parameters == PARAMS
-    assert np.isclose(ctx.loss, res)
-
-    assert "children" in ctx.meta
-    assert len(ctx.meta["children"]) == N_TERMS
-
-    child_losses = [child["loss"] for child in ctx.meta["children"]]
-    assert np.allclose(child_losses, make_expected_child_losses())
-
-    assert np.isclose(res, reduction(make_expected_terms()))
+    standard_asserts(res, ctx, reduction)
 
 
 @pytest.mark.parametrize("reduction", REDUCERS)
@@ -131,16 +155,8 @@ def test_combined_objective_reduces_terms_with_mpi(
             ctx = EvaluateContext()
             res = mpi(PARAMS, ctx)
 
-            assert ctx.parameters == PARAMS
-            assert np.isclose(ctx.loss, res)
+            standard_asserts(res, ctx, reduction)
 
-            assert "children" in ctx.meta
-            assert len(ctx.meta["children"]) == N_TERMS
-
-            child_losses = [child["loss"] for child in ctx.meta["children"]]
-            assert np.allclose(child_losses, make_expected_child_losses())
-
-            assert np.isclose(res, reduction(make_expected_terms()))
         else:
             mpi.worker_loop()
 
@@ -304,6 +320,14 @@ def test_parallel_evaluation(
 
     assert results == results_expected
 
-    for ctx, params in zip(ctxs, params_list):
+    for res, ctx, params in zip(results, ctxs, params_list):
         child_losses = [child["loss"] for child in ctx.meta["children"]]
         assert np.allclose(child_losses, make_expected_child_losses(params))
+
+        standard_asserts(
+            res=res,
+            ctx=ctx,
+            reduction=cob.reduction,
+            params=params,
+            n_terms=cob.n_terms(),
+        )
