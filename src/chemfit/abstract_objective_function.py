@@ -284,6 +284,7 @@ class EvaluateContext:
             "parameters": self.parameters,
             "config": self.config,
             "shared": self.shared,
+            "meta": self.meta,
         }
 
     def __setstate__(self, state: dict[str, Any]):
@@ -297,6 +298,7 @@ class EvaluateContext:
         """
         self._set_defaults(config=state["config"], shared=state["shared"])
         self.parameters = state["parameters"]
+        self.meta = state["meta"]
 
     def to_result_state(self) -> dict[str, Any]:
         """
