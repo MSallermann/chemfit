@@ -15,7 +15,13 @@ WrappableObjFunction = (
 
 
 class WrappedObjectiveFunctor(ObjectiveFunctor):
-    def __init__(self, func: WrappableObjFunction, pass_ctx: bool = False):
+    def __init__(
+        self,
+        func: WrappableObjFunction,
+        pass_ctx: bool = False,
+        func_args: tuple[Any] | None = None,
+        func_kwargs: dict[str, Any] | None = None,
+    ):
         """
         Initialize a wrapped objective functor.
 
@@ -30,6 +36,37 @@ class WrappedObjectiveFunctor(ObjectiveFunctor):
         super().__init__()
         self.func = func
         self.pass_ctx = pass_ctx
+
+        if func_args is None:
+            self.func_args = ()
+        else:
+            self.func_args = func_args
+
+        if func_kwargs is None:
+            self.func_kwargs = {}
+        else:
+            self.func_kwargs = func_kwargs
+
+    def bind(self, /, *args: Any, **kwargs: Any) -> WrappedObjectiveFunctor:
+        """
+        Return a new quantity computer with extra arguments bound.
+
+        The bound arguments are passed to the wrapped function in addition
+        to the usual ChemFit arguments.
+
+        Args:
+            *args: Positional arguments to bind after ``parameters`` (and
+                after ``ctx`` as well if ``pass_ctx=True``).
+            **kwargs: Keyword arguments to bind.
+
+        Returns:
+            A new wrapped quantity computer with the requested arguments
+            pre-applied.
+
+        """
+        return type(self)(
+            func=self.func, pass_ctx=self.pass_ctx, func_args=args, func_kwargs=kwargs
+        )
 
     def __call__(
         self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
@@ -61,9 +98,11 @@ class WrappedObjectiveFunctor(ObjectiveFunctor):
         ctx.parameters = parameters
 
         if self.pass_ctx:
-            ctx.loss = self.func(parameters, ctx)
+            ctx.loss = self.func(
+                parameters, *self.func_args, **self.func_kwargs, ctx=ctx
+            )
         else:
-            ctx.loss = self.func(parameters)
+            ctx.loss = self.func(parameters, *self.func_args, **self.func_kwargs)
 
         return ctx.loss
 
@@ -89,14 +128,17 @@ def to_objective_functor(pass_ctx: bool = False):
     return wrap
 
 
-WrappableQuantFunction = (
-    Callable[[dict[str, Any]], dict[str, Any]]
-    | Callable[[dict[str, Any], EvaluateContext], dict[str, Any]]
-)
+WrappableQuantFunction = Callable[..., dict[str, Any]]
 
 
 class WrappedQuantityComputer(QuantityComputer):
-    def __init__(self, func: WrappableQuantFunction, pass_ctx: bool = False):
+    def __init__(
+        self,
+        func: WrappableQuantFunction,
+        pass_ctx: bool = False,
+        func_args: tuple[Any] | None = None,
+        func_kwargs: dict[str, Any] | None = None,
+    ):
         """
         Initialize a wrapped quantity computer.
 
@@ -112,6 +154,37 @@ class WrappedQuantityComputer(QuantityComputer):
         super().__init__()
         self.func = func
         self.pass_ctx = pass_ctx
+
+        if func_args is None:
+            self.func_args = ()
+        else:
+            self.func_args = func_args
+
+        if func_kwargs is None:
+            self.func_kwargs = {}
+        else:
+            self.func_kwargs = func_kwargs
+
+    def bind(self, /, *args: Any, **kwargs: Any) -> WrappedQuantityComputer:
+        """
+        Return a new quantity computer with extra arguments bound.
+
+        The bound arguments are passed to the wrapped function in addition
+        to the usual ChemFit arguments.
+
+        Args:
+            *args: Positional arguments to bind after ``parameters`` (and
+                after ``ctx`` as well if ``pass_ctx=True``).
+            **kwargs: Keyword arguments to bind.
+
+        Returns:
+            A new wrapped quantity computer with the requested arguments
+            pre-applied.
+
+        """
+        return type(self)(
+            func=self.func, pass_ctx=self.pass_ctx, func_args=args, func_kwargs=kwargs
+        )
 
     def _compute(
         self,
@@ -135,9 +208,9 @@ class WrappedQuantityComputer(QuantityComputer):
         """
 
         if self.pass_ctx:
-            return self.func(parameters, ctx)
+            return self.func(parameters, *self.func_args, **self.func_kwargs, ctx=ctx)
 
-        return self.func(parameters)
+        return self.func(parameters, *self.func_args, **self.func_kwargs)
 
 
 def to_quantity_computer(pass_ctx: bool = False):
