@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Sequence
 
 T = TypeVar("T", covariant=True)  # noqa: PLC0105
 
@@ -41,11 +41,35 @@ class ExecutorLike(Protocol):
     ) -> Iterable[T]: ...
 
 
+class ChildContextConfigurator(Protocol):
+    """
+    Protocol for configuring child evaluation contexts.
+
+    The configurator is called once for each child context immediately
+    after the parent context has spawned them. It may mutate the child
+    context or the parent context in place to configure child-specific
+    evaluation behavior, metadata, or resource usage.
+
+    The ``idx_child_ctx`` argument is the absolute index of the current
+    child within the spawned batch. The ``child_indices`` argument
+    contains the full ordered list of child indices in that batch.
+
+    """
+
+    def __call__(
+        self,
+        idx_child_ctx: int,
+        child_ctx: EvaluateContext,
+        child_indices: Sequence[int],
+        parent_ctx: EvaluateContext,
+    ): ...
+
+
 class EvaluateContext:
     def __init__(
         self,
-        temp: SimpleNamespace | None = None,
-        static: SimpleNamespace | None = None,
+        config: SimpleNamespace | None = None,
+        shared: SimpleNamespace | None = None,
         executor: ExecutorLike | None = None,
     ):
         """
@@ -64,12 +88,12 @@ class EvaluateContext:
         context manager.
 
         Args:
-            temp:
-                Optional scratch namespace for transient, non-public data.
-                Values stored here are intended only for internal coordination
-                during an evaluation and are not included in
-                :meth:`to_meta_data`.
-            static:
+            config:
+                Optional child-local evaluation configuration. This
+                namespace is copied to spawned child contexts so that
+                children inherit parent defaults but can be configured
+                independently
+            shared:
                 Optional namespace for shared read-only state that may be
                 reused across related contexts, such as parent/child
                 evaluations.
@@ -92,10 +116,14 @@ class EvaluateContext:
             temp (SimpleNamespace): Scratch space for temporary values
                 during evaluation. Nothing stored here is part of the
                 public API. It is omitted from the `to_meta_data` function.
+            config:
+                Child-local evaluation configuration for this context.
+            shared:
+                Shared state or resources reused across related contexts.
 
         """
 
-        self._set_defaults(temp, static)
+        self._set_defaults(config, shared)
         self.executor: ExecutorLike | None = executor
 
     def to_meta_data(self) -> dict[str, Any]:
@@ -115,23 +143,26 @@ class EvaluateContext:
         }
 
     def _set_defaults(
-        self, temp: SimpleNamespace | None, static: SimpleNamespace | None
+        self, config: SimpleNamespace | None, shared: SimpleNamespace | None
     ):
         self.quantities: dict[str, Any] | None = None
         self.parameters: dict[str, Any] | None = None
         self.loss: float | None = None
-        self.temp = SimpleNamespace() if temp is None else temp
-        self.static = SimpleNamespace() if static is None else static
+        self.temp = SimpleNamespace()
+        self.config = SimpleNamespace() if config is None else config
+        self.shared = SimpleNamespace() if shared is None else shared
         self.meta: dict[str, Any] = {}
         self.executor = None
         self._children: list[EvaluateContext] = []
 
-    def spawn_children(self, n_children: int) -> list[EvaluateContext]:
+    def spawn_children(
+        self, n_children: int, configurator: ChildContextConfigurator | None = None
+    ) -> list[EvaluateContext]:
         """
         Create child contexts linked to this context.
 
-        Each child receives a deep copy of ``temp``, while sharing the
-        same ``static`` namespace and executor reference as the parent.
+        Each child receives a deep copy of ``config``, while sharing the
+        same ``shared`` namespace and executor reference as the parent.
 
         An ``EvaluateContext`` is intended to manage at most one batch of
         child contexts per evaluation. Calling ``spawn_children()`` again on
@@ -143,6 +174,9 @@ class EvaluateContext:
 
         Args:
             n_children: Number of child contexts to create.
+            configurator:
+                Optional configurator applied once to each spawned child
+                context immediately after creation.
 
         Returns:
             The newly created child contexts.
@@ -151,12 +185,22 @@ class EvaluateContext:
 
         self._children = [
             EvaluateContext(
-                temp=copy.deepcopy(self.temp),
-                static=self.static,
+                config=copy.deepcopy(self.config),
+                shared=self.shared,
                 executor=self.executor,
             )
             for _ in range(n_children)
         ]
+
+        if configurator is not None:
+            for idx_child, child_ctx in enumerate(self._children):
+                configurator(
+                    idx_child_ctx=idx_child,
+                    child_ctx=child_ctx,
+                    child_indices=list(range(n_children)),
+                    parent_ctx=self,
+                )
+
         return self._children
 
     def collect_child_meta_data(self, recursive: bool = True):
@@ -192,7 +236,12 @@ class EvaluateContext:
             self.meta["children"] = [c.to_meta_data() for c in self._children]
 
     @contextlib.contextmanager
-    def child_contexts(self, n_children: int, recursive: bool = True):
+    def child_contexts(
+        self,
+        n_children: int,
+        configurator: ChildContextConfigurator | None = None,
+        recursive: bool = True,
+    ):
         """
         Create a scoped child-context batch and collect its metadata on exit.
 
@@ -203,6 +252,10 @@ class EvaluateContext:
 
         Args:
             n_children: Number of child contexts to create.
+            configurator:
+                Optional configurator applied to each spawned child context.
+            recursive:
+                Passed to ``collect_child_meta_data()`` when the scope exits.
 
         Yields:
             The list of spawned child contexts.
@@ -213,24 +266,51 @@ class EvaluateContext:
 
         """
 
-        children = self.spawn_children(n_children)
+        children = self.spawn_children(n_children, configurator=configurator)
         try:
             yield children
         finally:
             self.collect_child_meta_data(recursive)
 
     def __getstate__(self) -> dict[str, Any]:
+        """
+        Return the worker-input state for this context.
+
+        Returns:
+            Dictionary containing the context state needed to initialize the
+            context in a worker or other execution environment.
+
+        """
         return {
             "parameters": self.parameters,
-            "temp": self.temp,
-            "static": self.static,
+            "config": self.config,
+            "shared": self.shared,
         }
 
     def __setstate__(self, state: dict[str, Any]):
-        self._set_defaults(temp=state["temp"], static=state["static"])
+        """
+        Restore worker-input state into this context.
+
+        Args:
+            state:
+                State previously produced by ``__getstate__()``.
+
+        """
+        self._set_defaults(config=state["config"], shared=state["shared"])
         self.parameters = state["parameters"]
 
     def to_result_state(self) -> dict[str, Any]:
+        """
+        Return the result-bearing state of this context.
+
+        Returns:
+            Dictionary containing the evaluation results recorded in this
+            context. This state is intended for child/worker-to-parent
+            synchronization and does not include shared resources or child
+            context objects.
+
+        """
+
         return {
             "parameters": self.parameters,
             "loss": self.loss,
@@ -239,6 +319,19 @@ class EvaluateContext:
         }
 
     def apply_result_state(self, state: dict[str, Any]):
+        """
+        Apply result-bearing state from another context.
+
+        Args:
+            state:
+                State previously produced by ``to_result_state()``.
+
+        Side Effects:
+            Updates ``parameters``, ``loss``, ``quantities``, and ``meta``
+            on this context.
+
+        """
+
         self.parameters = state["parameters"]
         self.loss = state["loss"]
         self.quantities = state["quantities"]
