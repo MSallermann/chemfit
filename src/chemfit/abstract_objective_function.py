@@ -372,6 +372,18 @@ class ObjectiveFunctor:
         raise NotImplementedError
 
 
+# We need a forward declaration here, so that we can write the `QuantityComputer.with_loss` function,
+# which returns a QuantityComputerObjectiveFunction
+class QuantityComputerObjectiveFunction:  # type: ignore
+    ...
+
+
+LossFunction = (
+    Callable[[dict[str, Any]], float]
+    | Callable[[dict[str, Any], dict[str, Any]], float]
+)
+
+
 class QuantityComputer:
     def __init__(self):
         """
@@ -431,14 +443,26 @@ class QuantityComputer:
         """Compute dictionary of quantities for a given set of parameters."""
         raise NotImplementedError
 
+    def with_loss(
+        self,
+        loss_function: LossFunction,
+    ) -> QuantityComputerObjectiveFunction:
+        """
+        Create a new QuantityComputerObjectiveFunction from this QuantityComputer.
 
-LossFunction = (
-    Callable[[dict[str, Any]], float]
-    | Callable[[dict[str, Any], dict[str, Any]], float]
-)
+        Args:
+            loss_function (LossFunction): The loss function to use.
+
+        Returns:
+            QuantityComputerObjectiveFunction: A new QuantityComputerObjectiveFunction
+
+        """
+        return QuantityComputerObjectiveFunction(
+            loss_function=loss_function, quantity_computer=self
+        )
 
 
-class QuantityComputerObjectiveFunction(ObjectiveFunctor):
+class QuantityComputerObjectiveFunction(ObjectiveFunctor):  # noqa: F811
     def __init__(
         self,
         loss_function: LossFunction,
