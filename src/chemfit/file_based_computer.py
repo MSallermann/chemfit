@@ -155,7 +155,7 @@ class FileBasedQuantityComputer(QuantityComputer):
             raise Exception(msg)
 
         if subprocess_run_args is None:
-            self.subprocess_run_args = {}
+            self.subprocess_run_args = {"capture_output": True}
         else:
             self.subprocess_run_args = subprocess_run_args
 
@@ -373,9 +373,11 @@ class FileBasedQuantityComputer(QuantityComputer):
             except subprocess.CalledProcessError as e:
                 msg = (
                     f"Exception in `subprocess.run` of FileBasedQuantityComputer.\n"
-                    f"  stderr (if captured) = {e.stderr.decode('utf-8')}\n"
                     f"  ctx.temp = {ctx.temp}"
                 )
+
+                if e.stderr is not None:
+                    msg += f"  stderr (if captured) = {e.stderr.decode('utf-8')}\n"
 
                 # Try to write a dump file
                 if self.write_dump_file_after_crash:
@@ -384,10 +386,12 @@ class FileBasedQuantityComputer(QuantityComputer):
                     ).with_suffix(".dump")
                     try:
                         with dump_path.open("w") as f:
-                            f.write("Stderr:\n")
-                            f.write(e.stderr.decode("utf-8"))
-                            f.write("Stdout:\n")
-                            f.write(e.stdout.decode("utf-8"))
+                            if e.stderr is not None:
+                                f.write("Stderr:\n")
+                                f.write(e.stderr.decode("utf-8"))
+                            if e.stdout is not None:
+                                f.write("Stdout:\n")
+                                f.write(e.stdout.decode("utf-8"))
                             f.write("ctx.temp:\n")
                             f.write(f"{ctx.temp}")
                         msg += f"\nWrote dump file to `{dump_path}`."
