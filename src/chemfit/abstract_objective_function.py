@@ -537,9 +537,9 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):  # noqa: F811
         # Update or set static meta data if needed
         ctx.meta.update(self.static_meta_data)
 
-        # try:
-        ctx.loss = self.loss_function(quantities)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
-        # except TypeError:
-        # ctx.loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+        try:
+            ctx.loss = self.loss_function(quantities)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+        except TypeError:
+            ctx.loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
 
         return ctx.loss
