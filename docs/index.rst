@@ -7,23 +7,21 @@
 ChemFit
 ################
 
-**ChemFit**, is a package to support fitting the parameters of potentials described by an ASE calculator by minimizing objective functions.
+**ChemFit** is a framework for fitting parameters of models used in computational chemistry, molecular dynamics, and materials science.
 
--------------------------
+It provides composable building blocks for constructing objective functions from many independent terms, computing intermediate quantities using simulation workflows, and optimizing model parameters. A small set of core abstractions makes it straightforward to implement custom objective functions and to parallelize their evaluation across objective terms and/or trial parameters.
 
-**Features:**
+Out of the box, ChemFit includes integrations for the calculators defined in the Atomic Simulation Environment (ASE) as well as file-based simulation pipelines.
 
-- An extendable base class for ASE based objective functions (See :ref:`overview_objective_functions`)
-- Implementations of ready-to-use objective functions (energy and structure based)
-- A fitting module with convenient wrappers around optimization backends
 
 **Highlights**:
 
-- **Flexibility:** The objective functions can be combined arbitrarily with custom calculators and ways to create atoms.
-- **Parallelization:** Objective functions can be parallelized over different contributing terms using ``mpi4py`` **without the headache of pickling custom calculators.** The lazy-loading mechanism ensures no superfluous file IO is performed.
+- **Designed for atomistic simulations:** Build objective functions from quantities computed by ASE calculators or external simulation codes.
+- **Composable objectives:** Assemble complex fitting targets from many independent objective terms.
+- **Parallel by construction:** Evaluate objective terms concurrently across processes or MPI ranks without changing the objective definition.
+- **Extensible architecture:** Implement custom objective functions and simulation interfaces using ChemFit's core abstractions.
 
 -------------------------
-
 
 .. _quickstart:
 
@@ -31,104 +29,115 @@ ChemFit
 Quickstart
 *************
 
-To fit the parameters of a potential in **ChemFit**, you need to provide three basic components:
+In ChemFit, an objective function is typically built from two layers:
 
-1. A *factory* that knows how to construct the :py:class:`ase.Atoms` object.
-   If your configurations are stored on disk, use :py:func:`~chemfit.ase_objective_function.PathAtomsFactory`.
-2. A *factory* that knows how to construct the calculator.
-3. A *function* that knows how to apply a given parameter dictionary to the calculator.
+1. A :class:`~chemfit.abstract_objective_function.QuantityComputer`
+   computes intermediate quantities from a parameter dictionary.
+2. A loss function maps those quantities to a scalar loss.
 
-All of these are passed as callable “factory functions” into the objective function.
-For details, see :ref:`ase_objective_function_api`.
+Multiple such objective terms can then be combined using
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
+and optimized with :class:`~chemfit.fitter.Fitter`.
 
-.. note::
+In practical workflows, the quantity computation may be performed by an
+ASE calculator, a file-based simulation pipeline, or custom Python code.
 
-   We do not create the atoms and calculator outside the objective function.
-   This is crucial for the **lazy-loading** mechanism, which ensures that—when running with MPI—
-   each rank only reads the files it needs, avoiding redundant file I/O.
+The following minimal example simply defines a loss function
 
-The following toy example demonstrates how to fit the parameters of a simple **Lennard–Jones potential**.
+.. math::
+
+    L(\text{params}) = (x^2 + y^2 - 2)^2,
+
+where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
 .. code-block:: python
 
-   import numpy as np
-   from ase import Atoms
-   from ase.calculators.lj import LennardJones
-   from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
-   from chemfit.ase_objective_function import SinglePointASEComputer
-   from chemfit.combined_objective_function import CombinedObjectiveFunction
-   from chemfit.fitter import Fitter
+    from chemfit.wrap_funcs import to_quantity_computer
 
-   ########################
-   # Define the factories
-   ########################
+    @to_quantity_computer()
+    def computer(params):
+        return {"x2": params["x"] ** 2, "y2": params["y"] ** 2}
 
-   # Factory that creates an Atoms object for a dimer at distance r
-   class LJAtomsFactory:
-       def __init__(self, r: float):
-           p0 = np.zeros(3)
-           p1 = np.array([r, 0.0, 0.0])
-           self.atoms = Atoms(positions=[p0, p1])
+    def square_deviation(q, target):
+        return (q["x2"] + q["y2"] - target)**2
 
-       def __call__(self):
-           return self.atoms
+    ob = computer.with_loss(square_deviation, target=2)
 
-   # Factory that attaches a Lennard–Jones calculator
-   def construct_lj(atoms: Atoms):
-       atoms.calc = LennardJones(rc=2000)
+    PARAMS = {"x": 1, "y": 2}
+    ob(PARAMS) # <-- 9.0
 
-   # Function to apply parameters to the calculator
-   def apply_params_lj(atoms: Atoms, params: dict[str, float]):
-       atoms.calc.parameters.sigma = params["sigma"]
-       atoms.calc.parameters.epsilon = params["epsilon"]
+The :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
+method combines a quantity computer with a loss function to form a complete objective.
 
-   ################################
-   # Build the objective function
-   ################################
+====================
+Combining functions
+====================
 
-   # Analytical reference energies
-   def e_lj(r, eps, sigma):
-       return 4.0 * eps * ((sigma / r) ** 6 - 1.0) * (sigma / r) ** 6
+Often an objective consists of many independent contributions.
+ChemFit provides :class:`chemfit.combined_objective_function.CombinedObjectiveFunction` to combine multiple objective terms into a single loss.
 
-   eps = 1.0
-   sigma = 1.0
-   r_min = 2 ** (1.0 / 6.0) * sigma
-   r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
+In the next example, we first define a parametrized loss term
 
-   # Create one objective term per configuration
-   terms = []
-   for r in r_list:
-       ref_e = e_lj(r, eps, sigma)
-       computer = SinglePointASEComputer(
-           calc_factory=construct_lj,
-           param_applier=apply_params_lj,
-           atoms_factory=LJAtomsFactory(r),
-           tag=f"lj_{r:.2f}",
-       )
-       term = QuantityComputerObjectiveFunction(
-           loss_function=lambda q, e=ref_e: (q["energy"] - e) ** 2,
-           quantity_computer=computer,
-       )
-       terms.append(term)
+.. math::
 
-   # Combine all terms into a single objective
-   ob = CombinedObjectiveFunction(terms)
+    T(\text{params},f,\text{target}) = (f x^2 + f y^2 - \text{target})^2,
 
-   ################################
-   # Fit the parameters
-   ################################
+where :math:`f` is an external parameter and then we combine them into an overall loss
 
-   initial_params = {"epsilon": 2.0, "sigma": 1.5}
+.. math::
 
-   fitter = Fitter(ob, initial_params=initial_params)
-   opt_params = fitter.fit_scipy(options=dict(disp=True))
+    L(\text{params}) = T(\text{params},1,1) + T(\text{params},2,2).
 
-   print(f"Optimal parameters: {opt_params}")
+.. code-block:: python
 
--------------------------
+    from chemfit.wrap_funcs import to_quantity_computer
+    from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-This example uses the same conceptual building blocks that you will also use
-for more complex calculators, including the SCME potential described in :ref:`example_scme`.
+    @to_quantity_computer()
+    def computer(params, f):
+        return {"fx2": f * params["x"] ** 2, "fy2": f * params["y"] ** 2}
+
+    def loss(q, target):
+        return (q["fx2"] + q["fy2"] - target) ** 2
+
+    terms = [
+        computer.bind(f=1).with_loss(loss, target=1),
+        computer.bind(f=2).with_loss(loss, target=2)
+    ]
+
+    PARAMS = {"x": 1, "y": 2}
+    combined = CombinedObjectiveFunction(terms)
+    combined(PARAMS)
+
+The :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be customized in many ways.
+Details can be found in the dedicated :ref:`combined_objective_functions` page.
+
+======================
+Concurrent evaluation
+======================
+
+====================
+Optimizing
+====================
+
+In principle, objective functions defined with ChemFit can be optimized in any way you like.
+For convenience a :class:`~chemfit.fitter.Fitter` class is provided.
+
+It can be used as follows
+
+.. code-block:: python
+
+    from chemfit.fitter import Fitter
+
+    fitter = Fitter(objective_function, initial_params)
+
+    # fit with nevergrad
+    optimal_params = fitter.fit_nevergrad(100)
+
+    # fit with scipy
+    optimal_params = fitter.fit_scipy()
+
+The :class:`~chemfit.fitter.Fitter` can be configured in many ways, for details refer to :ref:`fitter`.
 
 *************
 Contents

@@ -84,8 +84,7 @@ class ExecutorWrapperCOB(ObjectiveFunctor):
             The reduced scalar loss computed from the evaluated terms.
 
         Side Effects:
-            - Initializes the parent context through
-            ``self.cob.prepare_evaluation(...)``.
+            - Initializes the parent context through ``self.cob.prepare_evaluation(...)``.
             - Spawns one child context per objective term.
             - Evaluates terms through the selected executor.
             - Collects child metadata into ``ctx.meta["children"]``.

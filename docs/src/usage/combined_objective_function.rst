@@ -1,3 +1,5 @@
+.. _combined_objective_functions:
+
 Combined Objective Functions
 =============================
 
