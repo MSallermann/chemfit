@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import math
 from collections.abc import Sequence
-from typing import Any, Callable, Protocol
+from typing import Any, Callable, Protocol, cast
 
 from typing_extensions import Self
 
@@ -28,6 +29,15 @@ def transform_generic_callables(
 
 class Reducer(Protocol):
     def __call__(self, terms: Sequence[float]) -> float: ...
+
+
+class Aggregator(Protocol):
+    def __call__(
+        self,
+        terms: Sequence[float],
+        quantities: Sequence[dict[str, Any]],
+        ctx: EvaluateContext,
+    ) -> float: ...
 
 
 def sum_reducer(terms: Sequence[float]) -> float:
@@ -72,13 +82,30 @@ def skip_exception_handler(
     return None
 
 
+class WrappedReducer(Aggregator):
+    def __init__(self, reducer: Reducer) -> None:
+        """A reducer that is wrapped in order to be used like as an Aggregator."""
+        self.reducer = reducer
+
+    def __call__(
+        self,
+        terms: Sequence[float],
+        quantities: Sequence[dict[str, Any]],  # noqa: ARG002
+        ctx: EvaluateContext,  # noqa: ARG002
+    ) -> float:
+        return self.reducer(terms)
+
+    def to_reducer(self) -> Reducer:
+        return self.reducer
+
+
 class CombinedObjectiveFunction(ObjectiveFunctor):
     def __init__(
         self,
         objective_functions: Sequence[Callable[[dict[str, Any]], float]],
         weights: Sequence[float] | None = None,
         child_context_configurator: ChildContextConfigurator | None = None,
-        reduction: Reducer = sum_reducer,
+        reduction: Reducer | Aggregator = sum_reducer,
         exception_handler: ExceptionHandler = raising_exception_handler,
     ) -> None:
         """
@@ -101,7 +128,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             child_context_configurator: Optional callable used to configure
                 each spawned child context before term evaluation.
             reduction: Callable used to reduce the list of weighted term
-                values to a single scalar loss.
+                values to a single scalar loss. Can be either a simple reducer,
+                or the more advanced Aggregator, which can make use of the full context
+                and the quantities.
             exception_handler: Callable used to handle exceptions raised
                 during term evaluation. It may return a replacement value or
                 ``None`` to skip the term entirely.
@@ -118,7 +147,14 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         )
 
         self.child_context_configurator = child_context_configurator
-        self.reduction = reduction
+
+        if len(inspect.signature(reduction).parameters) == 1:
+            reduction = cast("Reducer", reduction)
+            self.reduction: Aggregator = WrappedReducer(reduction)
+        else:
+            reduction = cast("Aggregator", reduction)
+            self.reduction: Aggregator = reduction
+
         self.exception_handler = exception_handler
 
         if weights is None:
@@ -319,6 +355,13 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ctx.meta["skipped_indices"] = skipped_indices
         return filtered_terms
 
+    def apply_reduction(self, terms: Sequence[float], ctx: EvaluateContext):
+        child_quantities = []
+        for idx, child in enumerate(ctx.meta["children"]):
+            if idx not in ctx.meta["skipped_indices"]:
+                child_quantities.append(child["quantities"])
+        return self.reduction(terms, child_quantities, ctx)
+
     def evaluate_terms(
         self, parameters: dict[str, Any], ctx: EvaluateContext
     ) -> list[float]:
@@ -386,7 +429,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
         ctx.parameters = parameters
 
-        terms = self.evaluate_terms(parameters=parameters, ctx=ctx)
+        filtered_terms = self.evaluate_terms(parameters=parameters, ctx=ctx)
 
-        ctx.loss = self.reduction(terms)
+        ctx.loss = self.apply_reduction(filtered_terms, ctx)
+
         return ctx.loss

@@ -267,6 +267,7 @@ def test_combined_objective_exception_handlers_with_mpi():
             assert math.isclose(res, func1(PARAMS))
             assert math.isclose(ctx.loss, func1(PARAMS))
             assert ctx.meta["skipped_indices"] == [1]
+
         else:
             mpi.worker_loop()
 
@@ -328,10 +329,12 @@ def test_parallel_evaluation(
         child_losses = [child["loss"] for child in ctx.meta["children"]]
         assert np.allclose(child_losses, make_expected_child_losses(params))
 
+        assert isinstance(cob.reduction, combined_objective_function.WrappedReducer)
+
         standard_asserts(
             res=res,
             ctx=ctx,
-            reduction=cob.reduction,
+            reduction=cob.reduction.to_reducer(),
             params=params,
             n_terms=cob.n_terms(),
         )
