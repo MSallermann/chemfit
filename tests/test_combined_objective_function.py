@@ -19,6 +19,7 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.executor_utils import map_with_context
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+from chemfit.wrap_funcs import to_quantity_computer
 
 N_TERMS = 10
 
@@ -270,6 +271,34 @@ def test_combined_objective_exception_handlers_with_mpi():
 
         else:
             mpi.worker_loop()
+
+
+@pytest.mark.parametrize("executor", EXECUTORS)
+def test_aggregator(executor: ExecutorLike):
+    def custom_aggregator(
+        terms: list[float],  # noqa: ARG001
+        quantities: list[dict],
+        ctx: EvaluateContext,
+    ) -> float:
+        ctx.meta["foo"] = "bar"
+        return sum(q["test"] for q in quantities)
+
+    @to_quantity_computer()
+    def q1(parameters: dict[str, float], f: float) -> dict[str, float]:
+        return {"test": f * parameters["x"] + parameters["y"]}
+
+    cob = combined_objective_function.CombinedObjectiveFunction(
+        [q1.bind(f=1).with_loss(lambda p: 0.0), q1.bind(f=2).with_loss(lambda p: 0.0)],  # noqa: ARG005
+        reduction=custom_aggregator,
+    )
+
+    cob_wrapped = ExecutorWrapperCOB(cob, executor)
+
+    ctx = EvaluateContext()
+    res = cob_wrapped(PARAMS, ctx)
+
+    assert math.isclose(res, 8.0)
+    assert ctx.meta["foo"] == "bar"
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)

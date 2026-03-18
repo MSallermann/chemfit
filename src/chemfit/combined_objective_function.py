@@ -28,27 +28,27 @@ def transform_generic_callables(
 
 
 class Reducer(Protocol):
-    def __call__(self, terms: Sequence[float]) -> float: ...
+    def __call__(self, terms: list[float]) -> float: ...
 
 
 class Aggregator(Protocol):
     def __call__(
         self,
-        terms: Sequence[float],
-        quantities: Sequence[dict[str, Any]],
+        terms: list[float],
+        quantities: list[dict[str, Any]],
         ctx: EvaluateContext,
     ) -> float: ...
 
 
-def sum_reducer(terms: Sequence[float]) -> float:
+def sum_reducer(terms: list[float]) -> float:
     return sum(terms)
 
 
-def mean_reducer(terms: Sequence[float]) -> float:
+def mean_reducer(terms: list[float]) -> float:
     return sum(terms) / len(terms)
 
 
-def root_mean_reducer(terms: Sequence[float]) -> float:
+def root_mean_reducer(terms: list[float]) -> float:
     return math.sqrt(mean_reducer(terms))
 
 
