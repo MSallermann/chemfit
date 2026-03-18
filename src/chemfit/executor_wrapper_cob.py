@@ -115,7 +115,8 @@ class ExecutorWrapperCOB(ObjectiveFunctor):
                 range(self.cob.n_terms()),
                 ctxs=child_contexts,
             )
-            terms = [t for t in terms if t is not None]
-            ctx.loss = self.cob.reduction(list(terms))
+
+        terms = self.cob.filter_terms(terms, ctx)
+        ctx.loss = self.cob.reduction(list(terms))
 
         return ctx.loss
