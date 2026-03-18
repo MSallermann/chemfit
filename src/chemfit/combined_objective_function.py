@@ -300,6 +300,25 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         except Exception as e:
             return self.exception_handler(e, ctx, idx)
 
+    def filter_terms(
+        self, terms: list[float | None], ctx: EvaluateContext
+    ) -> list[float]:
+        """
+        Filter out terms that are 'None', while recording the skipped terms in ctx.meta['skipped_indices'].
+
+        Side effects:
+            - Writes to ctx.meta['skipped_indices']
+        """
+        skipped_indices = []
+        filtered_terms = []
+        for i, t in enumerate(terms):
+            if t is None:
+                skipped_indices.append(i)
+            else:
+                filtered_terms.append(t)
+        ctx.meta["skipped_indices"] = skipped_indices
+        return filtered_terms
+
     def evaluate_terms(
         self, parameters: dict[str, Any], ctx: EvaluateContext
     ) -> list[float]:
@@ -330,7 +349,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
             for idx, ctx_term in enumerate(child_ctxs):
                 terms.append(self.evaluate_term(parameters, idx, ctx_term))
 
-            return [t for t in terms if t is not None]
+        return self.filter_terms(terms, ctx)
 
     def __call__(
         self,

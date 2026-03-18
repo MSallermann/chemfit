@@ -141,7 +141,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
     def evaluate_slice(
         self, params: dict[str, Any], ctx: EvaluateContext
-    ) -> list[float]:
+    ) -> list[float | None]:
         idx_slice = slice(self.start, self.end)
         selected_indices = range(self.cob.n_terms())[idx_slice]
 
@@ -152,9 +152,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         ) as contexts:
             for idx, ctx_term in zip(selected_indices, contexts, strict=True):
                 try:
-                    res = self.cob.evaluate_term(params, idx, ctx_term)
-                    if res is not None:
-                        local_terms.append(res)
+                    local_terms.append(self.cob.evaluate_term(params, idx, ctx_term))
                 except Exception as e:  # noqa: PERF203
                     # If we catch an exception we log it and append it to the local terms
                     # It will be sent to master and raised there
@@ -307,7 +305,9 @@ class MPIWrapperCOB(ObjectiveFunctor):
         # Broadcast the params to the worker ranks
         self.comm.bcast(ctx, root=0)
 
-        local_terms: list[float] = []  # So we get NaN in case the local compute fails
+        local_terms: list[
+            float | None
+        ] = []  # So we get NaN in case the local compute fails
         try:
             # Compute one slice of the objective function on the main rank
             local_terms = self.evaluate_slice(params, ctx=ctx)
@@ -319,7 +319,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         self.gather_meta_data(ctx)
 
         # Since gathered will now be a list of list, we unpack it
-        terms: list[float] = []
+        terms: list[float | None] = []
 
         if gathered_terms is not None:
             [terms.extend(m) for m in gathered_terms]
@@ -329,7 +329,8 @@ class MPIWrapperCOB(ObjectiveFunctor):
             if isinstance(t, Exception):
                 raise t
 
-        ctx.loss = self.cob.reduction(terms)
+        filtered_terms = self.cob.filter_terms(terms, ctx)
+        ctx.loss = self.cob.reduction(filtered_terms)
         return ctx.loss
 
     def release_workers(self):

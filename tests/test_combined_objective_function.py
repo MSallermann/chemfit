@@ -186,6 +186,7 @@ def test_combined_objective_exception_handlers_serial():
     res = ob(PARAMS, ctx)
     assert math.isclose(res, func1(PARAMS))
     assert math.isclose(ctx.loss, func1(PARAMS))
+    assert ctx.meta["skipped_indices"] == [1]
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)
@@ -213,8 +214,10 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
     ob.exception_handler = combined_objective_function.skip_exception_handler
     ctx = EvaluateContext()
     res = wrapped(PARAMS, ctx)
+
     assert math.isclose(res, func1(PARAMS))
     assert math.isclose(ctx.loss, func1(PARAMS))
+    assert ctx.meta["skipped_indices"] == [1]
 
 
 def test_combined_objective_exception_handlers_with_mpi():
@@ -263,6 +266,7 @@ def test_combined_objective_exception_handlers_with_mpi():
             res = mpi(PARAMS, ctx)
             assert math.isclose(res, func1(PARAMS))
             assert math.isclose(ctx.loss, func1(PARAMS))
+            assert ctx.meta["skipped_indices"] == [1]
         else:
             mpi.worker_loop()
 
