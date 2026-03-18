@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import inspect
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar, cast
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -537,9 +538,15 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):  # noqa: F811
         # Update or set static meta data if needed
         ctx.meta.update(self.static_meta_data)
 
-        try:
-            ctx.loss = self.loss_function(quantities)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
-        except TypeError:
-            ctx.loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+        if len(inspect.signature(self.loss_function).parameters) == 1:
+            self.loss_function = cast(
+                "Callable[[dict[str, Any]], float]", self.loss_function
+            )
+            ctx.loss = self.loss_function(quantities)
+        else:
+            self.loss_function = cast(
+                "Callable[[dict[str, Any], dict[str, Any]], float]", self.loss_function
+            )
+            ctx.loss = self.loss_function(quantities, parameters)
 
         return ctx.loss
