@@ -74,7 +74,7 @@ Combining functions
 ====================
 
 Often an objective consists of many independent contributions.
-ChemFit provides :class:`chemfit.combined_objective_function.CombinedObjectiveFunction` to combine multiple objective terms into a single loss.
+ChemFit provides :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` to combine multiple objective terms into a single loss.
 
 In the next example, we first define a parametrized loss term
 
@@ -112,9 +112,22 @@ where :math:`f` is an external parameter and then we combine them into an overal
 The :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be customized in many ways.
 Details can be found in the dedicated :ref:`combined_objective_functions` page.
 
-======================
-Concurrent evaluation
-======================
+The evaluation of the terms of a :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be parallelized in two alternate ways:
+
+1. Executors which implement the :class:`~chemfit.abstract_objective_function.ExecutorLike` interface.
+2. By launching multiple processes and using the message passing interface (MPI)
+
+The following demonstrates the use of the "ExecutorLike" approach
+
+.. code-block:: python
+
+    from chemfit.combined_objective_function import CombinedObjectiveFunction
+    from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+    from concurrent.futures import ThreadPool
+
+    cob = CombinedObjectiveFunction( ... ) # define the combined objective function
+    cob_parallel = ExecutorWrapperCOB(cob, executor=ThreadPool(4))
+    cob_parallel(params) #<-- evaluation of the wrapper parallelizes over the terms
 
 ====================
 Optimizing
