@@ -116,7 +116,8 @@ class ExecutorWrapperCOB(ObjectiveFunctor):
                 ctxs=child_contexts,
             )
 
-        terms = self.cob.filter_terms(terms, ctx)
-        ctx.loss = self.cob.reduction(list(terms))
+        filtered_terms = self.cob.filter_terms(terms, ctx)
+
+        ctx.loss = self.cob.apply_reduction(filtered_terms, ctx)
 
         return ctx.loss
