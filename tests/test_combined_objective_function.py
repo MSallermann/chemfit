@@ -99,6 +99,7 @@ def standard_asserts(
     n_terms: int = N_TERMS,
 ):
     assert ctx.parameters == params
+    assert ctx.loss is not None
     assert np.isclose(ctx.loss, res)
 
     assert "children" in ctx.meta
@@ -180,12 +181,14 @@ def test_combined_objective_exception_handlers_serial():
     ctx = EvaluateContext()
     res = ob(PARAMS, ctx)
     assert math.isnan(res)
+    assert ctx.loss is not None
     assert math.isnan(ctx.loss)
 
     ob.exception_handler = combined_objective_function.skip_exception_handler
     ctx = EvaluateContext()
     res = ob(PARAMS, ctx)
     assert math.isclose(res, func1(PARAMS))
+    assert ctx.loss is not None
     assert math.isclose(ctx.loss, func1(PARAMS))
     assert ctx.meta["skipped_indices"] == [1]
 
@@ -210,6 +213,7 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
     ctx = EvaluateContext()
     res = wrapped(PARAMS, ctx)
     assert math.isnan(res)
+    assert ctx.loss is not None
     assert math.isnan(ctx.loss)
 
     ob.exception_handler = combined_objective_function.skip_exception_handler
@@ -217,6 +221,7 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
     res = wrapped(PARAMS, ctx)
 
     assert math.isclose(res, func1(PARAMS))
+    assert ctx.loss is not None
     assert math.isclose(ctx.loss, func1(PARAMS))
     assert ctx.meta["skipped_indices"] == [1]
 
@@ -253,6 +258,7 @@ def test_combined_objective_exception_handlers_with_mpi():
             ctx = EvaluateContext()
             res = mpi(PARAMS, ctx)
             assert math.isnan(res)
+            assert ctx.loss is not None
             assert math.isnan(ctx.loss)
         else:
             mpi.worker_loop()
@@ -266,6 +272,7 @@ def test_combined_objective_exception_handlers_with_mpi():
             ctx = EvaluateContext()
             res = mpi(PARAMS, ctx)
             assert math.isclose(res, func1(PARAMS))
+            assert ctx.loss is not None
             assert math.isclose(ctx.loss, func1(PARAMS))
             assert ctx.meta["skipped_indices"] == [1]
 
@@ -313,6 +320,8 @@ def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
     res_exec = wrapped(PARAMS, ctx_exec)
 
     assert np.isclose(res_exec, res_serial)
+    assert ctx_exec.loss is not None
+    assert ctx_serial.loss is not None
     assert np.isclose(ctx_exec.loss, ctx_serial.loss)
 
     assert "children" in ctx_serial.meta
@@ -325,7 +334,7 @@ def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
 
 
 N_EVALS = 4
-EXECUTORS_OUTER = [ThreadPoolExecutor(N_EVALS)]
+EXECUTORS_OUTER: list[ExecutorLike] = [ThreadPoolExecutor(N_EVALS)]
 
 if loky is not None:
     EXECUTORS_OUTER.append(loky.ProcessPoolExecutor(N_EVALS))
