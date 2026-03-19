@@ -18,6 +18,7 @@ extensions = [
     "sphinx.ext.autosummary",  # Generate summary tables automatically
     "sphinx.ext.napoleon",  # Parse Google-/NumPy-style docstrings
     "sphinx.ext.viewcode",  # Add links to source code
+    "sphinx.ext.doctest",
     # "sphinx_autodoc_typehints",  # Show type hints in docs
 ]
 

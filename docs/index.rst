@@ -50,7 +50,7 @@ The following minimal example simply defines a loss function
 
 where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
-.. code-block:: python
+.. testcode::
 
     from chemfit.wrap_funcs import to_quantity_computer
 
@@ -63,8 +63,13 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
     ob = computer.with_loss(square_deviation, target=2)
 
-    PARAMS = {"x": 1, "y": 2}
-    ob(PARAMS) # <-- 9.0
+    PARAMS = {"x": 1.0, "y": 2.0mh}
+    print(ob(PARAMS)) # <-- 9.0
+
+.. testoutput::
+    :hide:
+
+    9.0
 
 The :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
 method combines a quantity computer with a loss function to form a complete objective.
@@ -88,7 +93,7 @@ where :math:`f` is an external parameter and then we combine them into an overal
 
     L(\text{params}) = T(\text{params},1,1) + T(\text{params},2,2).
 
-.. code-block:: python
+.. testcode::
 
     from chemfit.wrap_funcs import to_quantity_computer
     from chemfit.combined_objective_function import CombinedObjectiveFunction
@@ -107,7 +112,12 @@ where :math:`f` is an external parameter and then we combine them into an overal
 
     PARAMS = {"x": 1, "y": 2}
     combined = CombinedObjectiveFunction(terms)
-    combined(PARAMS)
+    print(combined(PARAMS)) # <-- 80.0
+
+.. testoutput::
+    :hide:
+
+    80.0
 
 The :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be customized in many ways.
 Details can be found in the dedicated :ref:`combined_objective_functions` page.
@@ -119,15 +129,19 @@ The evaluation of the terms of a :class:`~chemfit.combined_objective_function.Co
 
 The following demonstrates the use of the "ExecutorLike" approach
 
-.. code-block:: python
+.. testcode::
 
     from chemfit.combined_objective_function import CombinedObjectiveFunction
     from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
-    from concurrent.futures import ThreadPool
+    from concurrent.futures import ThreadPoolExecutor
 
-    cob = CombinedObjectiveFunction( ... ) # define the combined objective function
-    cob_parallel = ExecutorWrapperCOB(cob, executor=ThreadPool(4))
-    cob_parallel(params) #<-- evaluation of the wrapper parallelizes over the terms
+    cob = CombinedObjectiveFunction( terms ) # define the combined objective function
+    cob_parallel = ExecutorWrapperCOB(cob, executor=ThreadPoolExecutor(4))
+    print(cob_parallel(PARAMS)) # <-- evaluation of the wrapper parallelizes over the terms
+
+.. testoutput::
+
+    80.0
 
 ====================
 Optimizing
