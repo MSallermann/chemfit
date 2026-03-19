@@ -191,7 +191,6 @@ Contents
 
    src/installation
    src/usage/concepts.rst
-   src/usage/overview.rst
    src/usage/abstract_interface.rst
    src/usage/fitter.rst
    src/usage/ase_objective_function_api.rst
