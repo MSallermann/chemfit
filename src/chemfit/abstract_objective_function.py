@@ -215,13 +215,12 @@ class EvaluateContext:
         to do this automatically.
 
         Args:
-            If ``True``, metadata from all descendants is collected before
-            serializing the immediate children. This produces a fully
-            materialized metadata tree.
-
-            If ``False``, only the immediate children are serialized. This
-            can be useful when nested components manage their own metadata
-            collection and have already populated their ``meta`` fields.
+            recursive: If ``True``, metadata from all descendants is collected before
+                serializing the immediate children. This produces a fully
+                materialized metadata tree.
+                If ``False``, only the immediate children are serialized. This
+                can be useful when nested components manage their own metadata
+                collection and have already populated their ``meta`` fields.
 
         Notes:
             In most cases ``recursive=True`` is the safest choice, since it

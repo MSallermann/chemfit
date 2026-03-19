@@ -78,7 +78,7 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
         - exceptions may be logged and optionally swallowed
         - non-scalar or NaN return values are replaced by a large penalty
         - the attached ``FitterEvaluateContext`` is updated with the number of
-        evaluations and the best loss/parameters seen so far
+          evaluations and the best loss/parameters seen so far
 
         Args:
             wrap_me: Underlying objective functor to evaluate.
