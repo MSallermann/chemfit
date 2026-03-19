@@ -63,7 +63,7 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
     ob = computer.with_loss(square_deviation, target=2)
 
-    PARAMS = {"x": 1.0, "y": 2.0mh}
+    PARAMS = {"x": 1.0, "y": 2.0}
     print(ob(PARAMS)) # <-- 9.0
 
 .. testoutput::
@@ -71,8 +71,23 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
     9.0
 
+The quantity computer is defined via a simple Python function, mapping a :class:`dict` of parameters to a :class:`dict` of quantities.
+The :func:`to_quantity_computer` decorator turns this function into a :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` instance.
+
 The :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
 method combines a quantity computer with a loss function to form a complete objective.
+
+.. note::
+
+    The wrapped :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` differs from the plain
+    function in that it can optionally accept an evaluation context
+    (:class:`~chemfit.abstract_objective_function.EvaluateContext`).
+
+    This context is used internally by ChemFit to enable parallel evaluation
+    and to collect metadata during execution. In most cases, you do not need
+    to interact with it directly.
+
+    For more details, see :ref:`concepts`.
 
 ====================
 Combining functions
@@ -125,7 +140,7 @@ Details can be found in the dedicated :ref:`combined_objective_functions` page.
 The evaluation of the terms of a :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be parallelized in two alternate ways:
 
 1. Executors which implement the :class:`~chemfit.abstract_objective_function.ExecutorLike` interface.
-2. By launching multiple processes and using the message passing interface (MPI)
+2. By launching multiple processes and using the message passing interface (MPI). See :ref:`mpi` for details.
 
 The following demonstrates the use of the "ExecutorLike" approach
 
@@ -140,6 +155,7 @@ The following demonstrates the use of the "ExecutorLike" approach
     print(cob_parallel(PARAMS)) # <-- evaluation of the wrapper parallelizes over the terms
 
 .. testoutput::
+    :hide:
 
     80.0
 
@@ -174,6 +190,7 @@ Contents
    :maxdepth: 2
 
    src/installation
+   src/usage/concepts.rst
    src/usage/overview.rst
    src/usage/abstract_interface.rst
    src/usage/fitter.rst
