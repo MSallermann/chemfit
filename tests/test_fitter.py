@@ -290,5 +290,46 @@ def test_with_square_func_processpool():
         assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
 
 
+def test_seed_observations():
+    n_calls = 0
+
+    def objective(params: dict[str, float]) -> float:
+        nonlocal n_calls
+        n_calls += 1
+        return (params["x"] - 3.0) ** 2
+
+    fitter = Fitter(
+        objective_function=objective,
+        initial_params={"x": 0.0},
+        bounds={"x": (0.0, 5.0)},
+    )
+
+    contexts = [FitterEvaluateContext(), FitterEvaluateContext()]
+
+    opt_params = fitter.fit_nevergrad(
+        budget=2,
+        num_workers=2,
+        contexts=contexts,
+        initial_observations=[
+            ({"x": 2.0}, 1.0),  # valid
+            ({"x": 10.0}, 0.0),  # invalid, should be skipped
+        ],
+    )
+
+    # replayed observations should not consume live evaluation budget
+    assert n_calls == 2
+
+    # valid replayed point should have been used to seed incumbent state
+    assert contexts[0].opt_loss is not None
+    assert contexts[0].opt_loss <= 1.0
+
+    # invalid replayed point should not become incumbent
+    assert contexts[0].opt_params is not None
+    assert 0.0 <= contexts[0].opt_params["x"] <= 5.0
+
+    # optimizer should still return an in-bounds result
+    assert 0.0 <= opt_params["x"] <= 5.0
+
+
 if __name__ == "__main__":
     test_with_square_func()
