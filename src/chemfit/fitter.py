@@ -5,7 +5,7 @@ import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
-from typing import Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 import nevergrad as ng
 import numpy as np
@@ -24,6 +24,9 @@ from chemfit.abstract_objective_function import (
 from chemfit.executor_utils import map_with_context
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -97,26 +100,12 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
         self.swallow_exceptions: bool = swallow_exceptions
         self.log_exceptions: bool = log_exceptions
 
-    def __call__(  # type: ignore
-        self, parameters: dict[str, Any], ctx: FitterEvaluateContext | None = None
+    def post_process_return_value(
+        self,
+        parameters: dict[str, Any],
+        value: float | None,
+        ctx: FitterEvaluateContext,
     ) -> float:
-        if ctx is None:
-            ctx = FitterEvaluateContext()
-
-        # first we try if we can get a value at all
-        try:
-            value = self.wrap_me(parameters, ctx)
-        except Exception as e:
-            if self.log_exceptions:
-                logger.exception(
-                    "Caught exception while evaluating objective function."
-                )
-
-            if not self.swallow_exceptions:
-                raise e
-
-            value = float("nan")
-
         ctx.n_evals += 1
 
         # then we make sure that the value is a float
@@ -141,6 +130,30 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
             ctx.opt_meta = dict(ctx.meta)
 
         return loss
+
+    def __call__(  # type: ignore
+        self, parameters: dict[str, Any], ctx: FitterEvaluateContext | None = None
+    ) -> float:
+        if ctx is None:
+            ctx = FitterEvaluateContext()
+
+        # first we try if we can get a value at all
+        try:
+            value = self.wrap_me(parameters, ctx)
+        except Exception as e:
+            if self.log_exceptions:
+                logger.exception(
+                    "Caught exception while evaluating objective function."
+                )
+
+            if not self.swallow_exceptions:
+                raise e
+
+            value = float("nan")
+
+        return self.post_process_return_value(
+            parameters=parameters, value=value, ctx=ctx
+        )
 
 
 class Fitter:
@@ -288,13 +301,15 @@ class Fitter:
                         f"    parameter = {kp}, lower = {lower}, value = {vp}, upper = {upper}"
                     )
 
-    def fit_nevergrad(
+    def fit_nevergrad(  # noqa: PLR0912, PLR0915
         self,
         budget: int,
         optimizer_str: str = "NgIohTuned",
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
         executor: ExecutorLike | None = None,
+        initial_observations: Iterable[tuple[dict[str, Any], float | None]]
+        | None = None,
     ) -> dict[str, Any]:
         """
         Optimize parameters using a nevergrad optimizer.
@@ -315,6 +330,17 @@ class Fitter:
             executor: Optional executor used for parallel evaluation when
                 ``num_workers > 1``. If ``None``, a ``ThreadPoolExecutor`` is
                 created.
+            initial_observations:
+                Optional iterable of previously evaluated ``(parameters, loss)``
+                pairs used to seed the optimizer.
+                These observations are replayed into the optimizer before the main
+                optimization loop begins. This allows approximate continuation of a
+                previous run or warm-starting a new optimization.
+                If any parameter set violates the bounds, it is skipped.
+                These observations do not consume evaluations from the main budget
+                and do not trigger callbacks.
+                This does not restore the exact internal state of the optimizer.
+                Only the provided observations are injected.
 
         Returns:
             Dictionary of optimized parameter values.
@@ -372,6 +398,38 @@ class Fitter:
             assert len(contexts) == num_workers
             self.contexts = contexts
 
+        # After the if statements we know that we have a list of FitterEvaluateContexts and not None
+        self.contexts = cast("list[FitterEvaluateContext]", self.contexts)
+
+        # This applies restart parameters, **if** they are within the bounds
+        if initial_observations is not None:
+            for restart_params, restart_loss_value in initial_observations:
+                skip = False
+
+                flat_params = flatten_dict(restart_params)
+
+                for k, (lower, upper) in flat_bounds.items():
+                    rp = flat_params.get(k, None)
+                    if rp is not None and (rp < lower or rp > upper):
+                        skip = True
+
+                if skip:
+                    continue
+
+                optimizer.suggest(flat_params)
+                asked_params = optimizer.ask()
+
+                # The recorded loss value may be changed by our wrapper
+                # Also we record the side effects on the context this way
+                post_processed_loss_value = (
+                    self.objective_function.post_process_return_value(
+                        parameters=restart_params,
+                        value=restart_loss_value,
+                        ctx=self.contexts[0],
+                    )
+                )
+                optimizer.tell(asked_params, post_processed_loss_value)
+
         for step in range(budget // num_workers):
             # On the first evaluation we ensure that the optimizer suggests the initial params
             if step == 0:
@@ -400,7 +458,7 @@ class Fitter:
 
         recommendation = optimizer.provide_recommendation()
 
-        args, kwargs = recommendation.value
+        args, _ = recommendation.value
         # Our optimal params are the first positional argument
         flat_opt_params = args[0]
 
