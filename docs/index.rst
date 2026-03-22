@@ -139,7 +139,7 @@ Details can be found in the dedicated :ref:`combined_objective_functions` page.
 
 The evaluation of the terms of a :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be parallelized in two alternate ways:
 
-1. Executors which implement the :class:`~chemfit.abstract_objective_function.ExecutorLike` interface.
+1. Executors which implement the :class:`~chemfit.abstract_objective_function.ExecutorLike` interface. For example from `concurrent.futures`.
 2. By launching multiple processes and using the message passing interface (MPI). See :ref:`mpi` for details.
 
 The following demonstrates the use of the "ExecutorLike" approach
@@ -168,19 +168,23 @@ For convenience a :class:`~chemfit.fitter.Fitter` class is provided.
 
 It can be used as follows
 
-.. code-block:: python
+.. testcode::
 
     from chemfit.fitter import Fitter
+    import math
 
-    fitter = Fitter(objective_function, initial_params)
+    fitter = Fitter(objective_function=cob_parallel, initial_params=PARAMS)
 
     # fit with nevergrad
-    optimal_params = fitter.fit_nevergrad(100)
+    optimal_params = fitter.fit_nevergrad(budget=10) # <--- search solutions with a budget of 10
 
     # fit with scipy
     optimal_params = fitter.fit_scipy()
 
-The :class:`~chemfit.fitter.Fitter` can be configured in many ways, for details refer to :ref:`fitter`.
+    assert math.isclose(optimal_params["x"], 0.44721359813354555)
+    assert math.isclose(optimal_params["y"], 0.894427188104411)
+
+The :class:`~chemfit.fitter.Fitter` can be configured in many ways, for details refer to the :ref:`fitter` page.
 
 *************
 Contents
