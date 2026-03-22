@@ -119,8 +119,8 @@ The context can be used to record additional information during evaluation:
     ctx = EvaluateContext()
     computer({"x": 3.0}, ctx)
 
-    print(ctx.quantities)  # {'x2': 9}
-    print(ctx.meta)        # {'x_squared': 9}
+    print(ctx.quantities)  # {'x2': 9.0}
+    print(ctx.meta)        # {'x_squared': 9.0}
 
 .. testoutput::
     :hide:
