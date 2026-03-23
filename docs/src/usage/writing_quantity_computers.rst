@@ -73,6 +73,71 @@ Let's fix the ``GoldenRuleViolator``:
 Now there is no problem. All we ever do is write to ``bad`` which is local to the current function evaluation or to ``ctx.meta.bad`` which explicitly prevents any kind of race conditions.
 
 ******************************************
+Configuring a computer
+******************************************
+
+===========================
+External parameters
+===========================
+
+Besides, the parameter dictionary passed on evaluation, a quantity computer may also want to be configured by different external parameters.
+
+Symbolically we can imagine an external parameter :math:`f`, which influences the computation in some way:
+
+.. math::
+
+    \text{Quantities}(\text{params},f,\text{ctx}) = \{ ... \}
+
+The external parameter :math:`f` may for example be
+
+- A path to file with atomic coordinates
+- A constant numeric prefactor
+- The charge of certain atoms
+- ...
+- You name it! Anything that influences the quantities and is otherwise fixed.
+
+If the quantity computer is a wrapped python function, it's easy to bind external parameters. Check this out:
+
+.. code-block:: python
+
+    from chemfit.wrap_funcs import to_quantity_computer
+
+    @to_quantity_computer(pass_ctx=True)
+    def computer(params,ctx,f):
+        ...
+
+    # Configure f=1
+    f1_computer = computer.bind(f=1)
+    # Configure f=2
+    f2_computer = computer.bind(f=2)
+
+
+.. note::
+
+    If ``pass_ctx==True`` all parameters except ``param`` and ``ctx`` have to be bound.
+
+    If ``pass_ctx==False`` all parameters except ``params`` have to be bound.
+
+If we forego the :py:func:`~chemfit.wrap_funcs.to_quantity_computer` approach and we need external parameters, they should be accepted in the constructor.
+
+.. code-block:: python
+
+    from chemfit.abstract_objective_function import QuantityComputer
+
+    class Computer(QuantityComputer):
+
+        def __init__(self,f):
+            self.f = f
+
+        def _compute(self, params, ctx):
+            # We can make use of self.f in here
+            ...
+
+
+
+
+
+******************************************
 Calling computers from within computers
 ******************************************
 
