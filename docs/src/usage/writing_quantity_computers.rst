@@ -27,7 +27,7 @@ Let's cook
 
 For a completely fresh QuantityComputer, derive from the :py:class:`~chemfit.abstract_objective_function.QuantityComputer` base class and implement the :py:meth:`~chemfit.abstract_objective_function.QuantityComputer._compute` method. That's it.
 
-The ``compute_`` method should accept exactly two arguments: A dictionary of parameters of type :py:class:`dict[str,Any]` and an :py:class:`~chemfit.abstract_objective_function.EvaluateContext`.
+The ``_compute`` method should accept exactly two arguments: A dictionary of parameters of type :py:class:`dict[str,Any]` and an :py:class:`~chemfit.abstract_objective_function.EvaluateContext`.
 It should return the dictionary of quantities.
 
 This is probably a point at which we should familiarize ourselves with the...
@@ -41,17 +41,17 @@ This is probably a point at which we should familiarize ourselves with the...
 
     .. code-block:: python
 
-        class GoldenRuleViolator(QuantityComputer)
+        class GoldenRuleViolator(QuantityComputer):
             # ...
-            def _compute(params, ctx):
+            def _compute(self, params, ctx):
                 self.bad = params["x"] # <-- bad mojo
                 # ...
                 return {"mojo" : self.bad}
 
     Now what happens if you call the same instance of ``GoldenRuleViolator`` in parallel? That's right! Bad things. The reason is that the value of ``self.bad`` could be overwritten by another thread in the middle of the compute function, which would make your ``params`` and the returned quantities mismatched.
 
-    No you might say: "Why would I ever do something so stupid?". Let me just say that you'd be surprised how easy it is to accidentally violate the **Golden Rule**.
-
+    You might say: "Why would I ever do something so stupid?". Let me just say that you'd be surprised how easy it is to accidentally violate the **Golden Rule**. Even seemingly harmless patterns can violate this rule accidentally,
+    especially when storing intermediate results on ``self``.
 
 Therefore, if you have anything to communicate with the outside world, there are two options
 
@@ -62,11 +62,11 @@ Let's fix the ``GoldenRuleViolator``:
 
 .. code-block:: python
 
-    class GoodCitizen(QuantityComputer)
+    class GoodCitizen(QuantityComputer):
         # ...
-        def _compute(params, ctx):
+        def _compute(self, params, ctx):
             bad = params["x"]
-            ctx.meta.bad = bad # <-- no problemo
+            ctx.meta["bad"] = bad # <-- no problemo
             # ...
             return {"mojo" : bad}
 
@@ -103,7 +103,7 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
     from chemfit.wrap_funcs import to_quantity_computer
 
     @to_quantity_computer(pass_ctx=True)
-    def computer(params,ctx,f):
+    def computer(params, ctx, f):
         ...
 
     # Configure f=1
@@ -111,12 +111,11 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
     # Configure f=2
     f2_computer = computer.bind(f=2)
 
-
 .. note::
 
-    If ``pass_ctx==True`` all parameters except ``param`` and ``ctx`` have to be bound.
+    If ``pass_ctx=True``, all arguments except ``params`` and ``ctx`` must be bound..
 
-    If ``pass_ctx==False`` all parameters except ``params`` have to be bound.
+    If ``pass_ctx==False``, all arguments except ``params`` have to be bound.
 
 If we forego the :py:func:`~chemfit.wrap_funcs.to_quantity_computer` approach and we need external parameters, they should be accepted in the constructor.
 
@@ -133,8 +132,115 @@ If we forego the :py:func:`~chemfit.wrap_funcs.to_quantity_computer` approach an
             # We can make use of self.f in here
             ...
 
+.. important::
+
+    A quantity computer becomes fully specified once it depends only on ``(parameters, ctx)``. At that point, all external parameters have been
+    fixed, either via :meth:`bind` (for wrapped functions) or via the constructor (for class-based implementations).
 
 
+******************************************
+Using the evaluation context
+******************************************
+
+The :class:`~chemfit.abstract_objective_function.EvaluateContext`
+provides a structured way to exchange information during evaluation
+without relying on shared state.
+
+It exposes three main fields:
+
+- ``ctx.meta`` — for *results and diagnostics*
+- ``ctx.config`` — for *read-only configuration*
+- ``ctx.shared`` — for *controlled shared state*
+
+====================
+ctx.meta
+====================
+
+``ctx.meta`` is a dictionary used to record information about the current
+evaluation. It is safe to write to and is typically used for:
+
+- logging intermediate quantities
+- debugging
+- exposing additional results to the outside world
+
+.. code-block:: python
+
+    ctx.meta["energy"] = energy
+    ctx.meta["distance"] = distance
+
+Each evaluation has its own ``meta`` dictionary, so there are no race
+conditions.
+
+**Rule of thumb:**
+    If something is specific to a single evaluation and should be
+    inspectable afterwards, put it in ``ctx.meta``.
+
+====================
+ctx.config
+====================
+
+``ctx.config`` provides configuration information to the computation.
+It should be treated as **read-only**.
+
+Typical use cases include:
+
+- passing runtime options
+- controlling execution modes
+- toggling optional behavior
+
+.. code-block:: python
+
+    if ctx.config.get("compute_forces", False):
+        ...
+
+**Rule of thumb:**
+    Use ``ctx.config`` to *influence behavior*, but never modify it
+    inside ``_compute``.
+
+====================
+ctx.shared
+====================
+
+``ctx.shared`` allows controlled sharing of state across multiple
+evaluations.
+
+This is useful for:
+
+- caching expensive results
+- sharing resources between evaluations
+- coordinating work across parallel tasks
+
+However, this is also the most dangerous field.
+
+**Important:**
+    Any data stored in ``ctx.shared`` may be accessed concurrently from
+    multiple threads or processes. You must ensure that all access is
+    thread-safe and does not violate the Golden Rule.
+
+Example (simple cache):
+
+.. code-block:: python
+
+    cache = ctx.shared.setdefault("cache", {})
+
+    key = tuple(sorted(params.items()))
+    if key in cache:
+        return cache[key]
+
+    result = expensive_computation(...)
+    cache[key] = result
+
+**Rule of thumb:**
+    Only use ``ctx.shared`` if you know exactly what you are doing.
+    Prefer ``ctx.meta`` or returning values whenever possible.
+
+====================
+Summary
+====================
+
+- ``ctx.meta``: write freely, per-evaluation data
+- ``ctx.config``: read-only configuration
+- ``ctx.shared``: shared state, use with care
 
 
 ******************************************
@@ -153,7 +259,7 @@ Here is a simple demonstration of the idea: We have an outer computer, which acc
 
     class OuterComputer(QuantityComputer):
 
-        def _compute(params, ctx):
+        def _compute(self, params, ctx):
             # ...
             with ctx.child_contexts(2) as child_contexts:
                 q1 = inner_computer1(params, child_contexts[0])
