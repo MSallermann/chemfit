@@ -76,10 +76,6 @@ Now there is no problem. All we ever do is write to ``bad`` which is local to th
 Configuring a computer
 ******************************************
 
-===========================
-External parameters
-===========================
-
 Besides, the parameter dictionary passed on evaluation, a quantity computer may also want to be configured by different external parameters.
 
 Symbolically we can imagine an external parameter :math:`f`, which influences the computation in some way:
@@ -156,24 +152,43 @@ It exposes three main fields:
 ctx.meta
 ====================
 
-``ctx.meta`` is a dictionary used to record information about the current
-evaluation. It is safe to write to and is typically used for:
+``ctx.meta`` is a dictionary used to record auxiliary information about
+the current evaluation. It is safe to write to and is typically used for:
 
-- logging intermediate quantities
-- debugging
-- exposing additional results to the outside world
+- debugging information
+- intermediate values that are not part of the returned quantities
+- provenance (e.g. which configuration was used)
+- performance metrics
 
 .. code-block:: python
 
-    ctx.meta["energy"] = energy
-    ctx.meta["distance"] = distance
+    ctx.meta["n_iterations"] = n_iter
+    ctx.meta["converged"] = converged
+    ctx.meta["structure_id"] = structure_id
 
 Each evaluation has its own ``meta`` dictionary, so there are no race
 conditions.
 
+In addition to values written during evaluation, quantity computers may
+also define *static meta data*. This is meta data attached to the
+computer itself (e.g. a tag or identifier), which is automatically merged
+into ``ctx.meta`` when the computer is evaluated.
+
+This is useful for recording information that is constant across all
+evaluations of a given computer, such as:
+
+- a label or tag identifying the term
+- the origin of the data
+- a fixed configuration identifier
+
+**Important:**
+    Quantities that are part of the computation should be returned from
+    ``_compute``, not written to ``ctx.meta``.
+
 **Rule of thumb:**
-    If something is specific to a single evaluation and should be
-    inspectable afterwards, put it in ``ctx.meta``.
+    If something is needed for the loss or further computation, return it.
+    If it is only useful for inspection, debugging, or bookkeeping, store
+    it in ``ctx.meta``.
 
 ====================
 ctx.config
@@ -193,9 +208,27 @@ Typical use cases include:
     if ctx.config.get("compute_forces", False):
         ...
 
+The main purpose of ``ctx.config`` is to allow behavior to vary **per
+evaluation**, without requiring reconstruction of the quantity computer
+or objective function.
+
+In particular, ``ctx.config`` is useful when different evaluations may
+run in different execution environments. For example, in distributed or
+parallel settings, different calls may:
+
+- run on different cluster nodes
+- use different numbers of cores or GPUs
+- access different scratch directories
+- use different execution backends
+
+.. code-block:: python
+
+    scratch_dir = ctx.config.get("scratch_dir", "/tmp")
+    n_cores = ctx.config.get("n_cores", 1)
+
 **Rule of thumb:**
-    Use ``ctx.config`` to *influence behavior*, but never modify it
-    inside ``_compute``.
+    Use ``ctx.config`` to *influence how the computation is carried out*,
+    but never modify it inside ``_compute``.
 
 ====================
 ctx.shared
@@ -234,14 +267,63 @@ Example (simple cache):
     Only use ``ctx.shared`` if you know exactly what you are doing.
     Prefer ``ctx.meta`` or returning values whenever possible.
 
+===================================
+External parameters vs ctx.config
+===================================
+
+Both external parameters (passed via ``bind`` or the constructor) and
+``ctx.config`` can influence the behavior of a quantity computer, but
+they serve different purposes.
+
+External parameters define *what* is being computed. They are part of
+the identity of the quantity computer or objective term.
+
+Typical examples include:
+
+- the system or structure being evaluated
+- a file path or dataset
+- physical constants or fixed model settings
+
+These values should usually be fixed when constructing or specializing
+the quantity computer.
+
+.. code-block:: python
+
+    computer.bind(atoms_factory=my_structure)
+    Computer(f=2.0)
+
+In contrast, ``ctx.config`` defines *how* a particular evaluation is
+carried out.
+
+Typical examples include:
+
+- enabling or disabling optional work
+- selecting approximate vs. exact evaluation modes
+- turning diagnostics on or off
+- passing execution-specific information (e.g. resources, paths)
+
+The main reason to use ``ctx.config`` is that it can vary **per
+evaluation** without requiring you to reconstruct the quantity computer
+or objective term.
+
+**Rule of thumb:**
+
+- Use external parameters if changing the value creates a *different
+  objective term*.
+- Use ``ctx.config`` if changing the value only affects *how the same
+  term is evaluated*.
+
+For example, changing the atomic structure of a system should be an
+external parameter, while enabling additional diagnostics or selecting a
+cheap evaluation mode should be handled through ``ctx.config``.
+
 ====================
 Summary
 ====================
 
-- ``ctx.meta``: write freely, per-evaluation data
-- ``ctx.config``: read-only configuration
+- ``ctx.meta``: write freely, per-evaluation diagnostic data (plus static meta data from the computer)
+- ``ctx.config``: read-only, per-evaluation control of execution
 - ``ctx.shared``: shared state, use with care
-
 
 ******************************************
 Calling computers from within computers
@@ -275,3 +357,117 @@ The benefit of this approach is two-fold
 
     For parallel evaluation with an executor, use the :py:func:`~chemfit.executor_utils.map_with_context` function.
     Differently from the regular executor ``map`` function, it correctly handles the ``ctx`` fields even if execution happens in different processes.
+
+=============================================================
+Child-parent relationships for the different context fields
+=============================================================
+
+When creating child contexts via
+:py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`,
+the different fields of the context behave differently.
+
+Understanding this behavior is important when composing quantity
+computers.
+
+--------------------
+ctx.meta
+--------------------
+
+Each child context receives its own independent ``meta`` dictionary.
+
+During evaluation, child computers write to their own ``ctx.meta``.
+After the ``child_contexts`` block exits, the parent context collects
+all child meta data under:
+
+.. code-block:: python
+
+    ctx.meta["children"]
+
+This is a list containing the meta data of each child evaluation, in
+order.
+
+This ensures full provenance: all information produced by child
+computations is preserved and accessible from the parent.
+
+--------------------
+ctx.config
+--------------------
+
+The ``config`` dictionary is passed from parent to child contexts as-is.
+
+All child contexts see the same configuration, allowing them to adapt
+their behavior consistently.
+
+.. code-block:: python
+
+    value = ctx.config.get("mode")
+
+Child contexts should treat ``config`` as read-only.
+
+--------------------
+ctx.shared
+--------------------
+
+The ``shared`` dictionary is shared between parent and child contexts.
+
+This allows child computations to communicate and reuse data, for
+example through caching.
+
+.. code-block:: python
+
+    cache = ctx.shared.setdefault("cache", {})
+
+Because ``ctx.shared`` may be accessed concurrently, all access must be
+thread-safe.
+
+===================================
+Configuring child contexts
+===================================
+
+Besides the number of children,
+:py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`
+accepts an optional argument of type
+:py:class:`~chemfit.abstract_objective_function.ChildContextConfigurator`.
+
+A child context configurator allows you to customize how child contexts
+are created.
+
+This can be useful when:
+
+- distributing work across resources
+- assigning identifiers or indices to child evaluations
+- modifying configuration for individual children
+- implementing custom execution strategies
+
+The configurator is called once per child context and can modify the
+child context before it is used.
+
+Conceptually, it allows you to control:
+
+.. code-block:: python
+
+    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
+        ...
+
+For example, you may want to assign each child a unique identifier:
+
+.. code-block:: python
+
+    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
+        child_ctx.meta["child_index"] = idx_child_ctx
+
+Or adjust configuration per child:
+
+.. code-block:: python
+
+    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
+        child_ctx.config["worker_id"] = idx_child_ctx
+
+This mechanism is particularly useful when writing execution wrappers
+(e.g. MPI or executor-based parallelization), where different children
+may correspond to different processes or resources.
+
+**Rule of thumb:**
+    Use a child context configurator when child evaluations need
+    systematic differences in their context. Otherwise, the default
+    behavior is sufficient.
