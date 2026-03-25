@@ -197,6 +197,7 @@ Contents
    src/usage/concepts.rst
    src/usage/writing_quantity_computers.rst
    src/usage/fitter.rst
+   src/usage/parallel_execution.rst
    src/usage/ase_objective_function_api.rst
    src/usage/text_file_based_computer.rst
    src/usage/combined_objective_function.rst
