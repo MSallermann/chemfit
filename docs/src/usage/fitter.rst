@@ -283,6 +283,49 @@ When using parallel execution, objective functions must avoid modifying
 shared state outside of the evaluation context.
 
 ----------------------------------
+Configuring the contexts
+----------------------------------
+
+In some cases you may wish to configure or persist the contexts.
+This can, for example, be necessary if terms require special fields in the
+``ctx.config``.
+
+For this reason both, :py:meth:`~chemfit.fitter.Fitter.fit_scipy` and
+:py:meth:`~chemfit.fitter.Fitter.fit_nevergrad` support passing in
+external contexts as an argument.
+
+For example:
+
+.. code-block:: python
+
+    from chemfit.fitter import Fitter, FitterEvaluateContext
+
+    fitter = Fitter(...)
+
+    ctxs = [FitterEvaluateContext() for _ in range(NUM_WORKERS)]
+
+    for ctx in ctxs:
+        ctx.config.gandalf = "the white" # <-- make sure it's not the grey
+
+    fitter.fit_nevergrad(..., ctxs)
+
+.. important::
+
+    Make sure to pass instances of :py:class:`~chemfit.fitter.Fitter.FitterEvaluateContext` and **not** the base class
+    :py:class:`~chemfit.abstract_objective_function.EvaluateContext`!
+
+.. warning::
+
+    Beware of the **anti**- pattern:
+
+    .. code-block:: python
+
+        ctxs = [FitterEvaluateContext()] * NUM_WORKERS # <-- bad
+
+    This will create a list with ``NUM_WORKERS`` references to the **same** ``ctx``. Very bad!
+
+
+----------------------------------
 Initial observations
 ----------------------------------
 
