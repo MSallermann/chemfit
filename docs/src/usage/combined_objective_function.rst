@@ -1,94 +1,453 @@
 .. _combined_objective_functions:
 
 Combined Objective Functions
-=============================
+============================
 
-The :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-class represents a **weighted sum of multiple objective functions**.
+A :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
+evaluates several objective terms for the same parameter set and then reduces
+the resulting term values to a single scalar loss.
 
-It allows several independent objectives (each mapping ``params: dict -> float``)
-to be combined into a single callable that can be minimized by a
-:py:class:`~chemfit.fitter.Fitter`.
+This is the standard way to combine several fitting contributions into one
+objective. Typical examples are fitting against several datasets, several
+configurations, or several physical properties at once.
 
-This is useful when fitting against multiple datasets, configurations, or loss
-metrics simultaneously.
+Basic idea
+----------
 
-Basic concept
-----------------------------------
+A combined objective is built from a sequence of objective functions and a
+reduction step.
 
-Each objective function is paired with a non-negative weight.
-When the combined objective is called, all sub-objectives are evaluated using
-the same parameter dictionary, multiplied by their weights, and summed.
+Each term is evaluated with the same ``parameters`` dictionary. Before the
+reduction is applied, each term value is multiplied by its corresponding weight.
+
+In other words, the weighted term values are what enter the reduction.
+
+With the default reduction this gives a weighted sum,
 
 .. math::
 
-    \text{combined_loss}(\text{params}) = \sum_i w_i \cdot ob_i(\text{params})
+   L(\mathrm{params}) = \sum_i w_i L_i(\mathrm{params})
 
+but the reduction does not have to be a sum. It can be any callable with the
+appropriate signature, as shown below.
 
-Example
-----------------------------------
-
-.. code-block:: python
-
-    from chemfit.combined_objective_function import CombinedObjectiveFunction
-
-    # Define two simple objectives
-    def ob1(params):
-        return (params["x"] - 1.0)**2
-
-    def ob2(params):
-        return (params["x"] - 3.0)**2
-
-    combined = CombinedObjectiveFunction(
-        objective_functions=[ob1, ob2],
-        weights=[0.5, 1.0],
-    )
-
-    loss = combined({"x": 2.0})
-    print(loss)  # 0.5*(1.0)^2 + 1.0*(1.0)^2 = 1.5
-
-
-Practical use with Fitter
-----------------------------------
-
-The combined objective can be minimized directly using a Fitter:
+A minimal example
+-----------------
 
 .. code-block:: python
 
-    from chemfit import Fitter
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-    fitter = Fitter(objective_function=combined, initial_params={"x": 0.0})
-    opt_params = fitter.fit_scipy()
+   def term1(params):
+       return (params["x"] - 1.0) ** 2
 
-    print(opt_params)
+   def term2(params):
+       return (params["x"] - 3.0) ** 2
 
-This pattern allows you to easily combine multiple
-:py:class:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction`
-terms, each corresponding to a different dataset, configuration, or physical property.
+   objective = CombinedObjectiveFunction(
+       objective_functions=[term1, term2],
+       weights=[0.5, 1.0],
+   )
 
-Example (sketch):
+   loss = objective({"x": 2.0})
+   print(loss)
+
+This evaluates both terms for ``{"x": 2.0}``, multiplies them by the supplied
+weights, and then sums the weighted values.
+
+The terms do not need to be plain functions. Generic callables are accepted and
+wrapped internally. In practice many terms are instances of
+:py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`, for example
+objectives constructed from quantity computers.
+
+What actually happens during evaluation
+---------------------------------------
+
+Calling a combined objective does three things.
+
+First, it spawns one child :py:class:`~chemfit.abstract_objective_function.EvaluateContext`
+per term.
+
+Second, it evaluates every term in its own child context. The per-term method
+that does this is
+:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.evaluate_term`.
+
+Third, it filters skipped terms and applies the configured reduction. The final
+result is stored in ``ctx.loss``.
+
+If you pass an explicit context, the parent context ends up containing a record
+of the child evaluations in ``ctx.meta["children"]``. That makes combined
+objectives useful not just for optimization but also for inspection and
+debugging.
 
 .. code-block:: python
 
-    combined = CombinedObjectiveFunction(
-        [
-            energy_objective,     # e.g., fit energies
-            force_objective,      # e.g., fit forces
-            dipole_objective,     # e.g., fit dipole moments
-        ],
-        weights=[1.0, 0.2, 0.5],
-    )
+   from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-    fitter = Fitter(combined, initial_params=params)
-    fitter.fit_nevergrad(budget=200)
+   def term1(params):
+       return (params["x"] - 1.0) ** 2
 
+   def term2(params):
+       return (params["x"] - 3.0) ** 2
 
-Summary
+   objective = CombinedObjectiveFunction([term1, term2], weights=[0.5, 1.0])
+
+   ctx = EvaluateContext()
+   loss = objective({"x": 2.0}, ctx)
+
+   print(loss)
+   print(ctx.loss)
+   print(ctx.meta["children"])
+
+Writing a custom reducer
+------------------------
+
+The simplest customization point is the reduction function.
+
+A simple reducer receives the list of weighted term values and returns a scalar:
+
+.. code-block:: python
+
+   def my_reducer(terms):
+       return max(terms)
+
+   objective = CombinedObjectiveFunction(
+       [term1, term2],
+       weights=[1.0, 1.0],
+       reduction=my_reducer,
+   )
+
+The library already provides a few simple reducers in
+:py:mod:`chemfit.combined_objective_function`:
+
+.. code-block:: python
+
+   from chemfit.combined_objective_function import (
+       CombinedObjectiveFunction,
+       sum_reducer,
+       mean_reducer,
+       root_mean_reducer,
+   )
+
+   objective = CombinedObjectiveFunction(
+       [term1, term2, term3],
+       reduction=root_mean_reducer,
+   )
+
+The important detail is that the reducer sees the weighted term values, not the
+raw term outputs.
+
+That means these two are equivalent:
+
+.. code-block:: python
+
+   objective = CombinedObjectiveFunction(
+       [term1, term2],
+       weights=[0.5, 2.0],
+       reduction=sum_reducer,
+   )
+
+.. code-block:: python
+
+   def manual_sum(terms):
+       return sum(terms)
+
+   objective = CombinedObjectiveFunction(
+       [term1, term2],
+       weights=[0.5, 2.0],
+       reduction=manual_sum,
+   )
+
+Reducer vs aggregator
+---------------------
+
+There are two supported reduction interfaces.
+
+A simple reducer has the signature
+
+.. code-block:: python
+
+   def reducer(terms: list[float]) -> float:
+       ...
+
+An aggregator has the richer signature
+
+.. code-block:: python
+
+   def aggregator(
+       terms: list[float],
+       quantities: list[dict[str, object]],
+       ctx,
+   ) -> float:
+       ...
+
+If ChemFit sees that the reduction callable takes only one argument, it treats it
+as a simple reducer. If it takes three arguments, it treats it as an aggregator.
+
+The difference is that an aggregator can inspect both the term values and the
+child quantities, and it can write additional information into the parent context.
+
+This is the right tool when the final loss should depend on more than the term
+values alone.
+
+Writing an aggregator
+---------------------
+
+Aggregators become useful when the terms are built from quantity computers.
+
+In that case each child context may contain quantities produced during the term
+evaluation, and the aggregator can use them.
+
+The following example is based on the actual test setup.
+
+.. code-block:: python
+
+   from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
+   from chemfit.wrap_funcs import to_quantity_computer
+
+   def custom_aggregator(terms, quantities, ctx):
+       ctx.meta["foo"] = "bar"
+       return sum(q["test"] for q in quantities)
+
+   @to_quantity_computer()
+   def q1(parameters, f):
+       return {"test": f * parameters["x"] + parameters["y"]}
+
+   objective = CombinedObjectiveFunction(
+       [
+           q1.bind(f=1).with_loss(lambda q: 0.0),
+           q1.bind(f=2).with_loss(lambda q: 0.0),
+       ],
+       reduction=custom_aggregator,
+   )
+
+   ctx = EvaluateContext()
+   loss = objective({"x": 2.0, "y": 1.0}, ctx)
+
+   print(loss)            # 3.0 + 5.0 = 8.0
+   print(ctx.meta["foo"]) # "bar"
+
+This example is worth looking at carefully.
+
+The two terms contribute zero loss individually, since both use
+``with_loss(lambda q: 0.0)``. The final loss is therefore not coming from the
+terms at all. Instead, the aggregator computes the loss from the collected
+quantities.
+
+That is exactly the difference between a reducer and an aggregator. A reducer
+only sees the weighted term values. An aggregator sees the weighted term values,
+the child quantities, and the parent context.
+
+Exception handling
+------------------
+
+Combined objectives also let you control what happens when one of the terms
+raises an exception.
+
+The ``exception_handler`` is called with
+
+.. code-block:: python
+
+   exception_handler(exception, ctx, idx)
+
+where ``idx`` is the term index and ``ctx`` is the child context for that term.
+
+Three useful handlers are provided in
+:py:mod:`chemfit.combined_objective_function`.
+
+The default handler simply re-raises the exception:
+
+.. code-block:: python
+
+   from chemfit.combined_objective_function import (
+       CombinedObjectiveFunction,
+       raising_exception_handler,
+   )
+
+   objective = CombinedObjectiveFunction([term1, term2])
+   objective.exception_handler = raising_exception_handler
+
+Returning ``math.nan`` marks the whole reduction as invalid in the usual way:
+
+.. code-block:: python
+
+   import math
+
+   from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.combined_objective_function import (
+       CombinedObjectiveFunction,
+       nan_exception_handler,
+   )
+
+   def ok(params):
+       return 1.0
+
+   def broken(params):
+       raise RuntimeError("Whoops")
+
+   objective = CombinedObjectiveFunction([ok, broken])
+   objective.exception_handler = nan_exception_handler
+
+   ctx = EvaluateContext()
+   loss = objective({}, ctx)
+
+   print(math.isnan(loss))     # True
+   print(math.isnan(ctx.loss)) # True
+
+Returning ``None`` skips the failed term entirely:
+
+.. code-block:: python
+
+   from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.combined_objective_function import (
+       CombinedObjectiveFunction,
+       skip_exception_handler,
+   )
+
+   def ok(params):
+       return 1.0
+
+   def broken(params):
+       raise RuntimeError("Whoops")
+
+   objective = CombinedObjectiveFunction([ok, broken])
+   objective.exception_handler = skip_exception_handler
+
+   ctx = EvaluateContext()
+   loss = objective({}, ctx)
+
+   print(loss)                       # 1.0
+   print(ctx.meta["skipped_indices"])  # [1]
+
+This skip behavior is implemented through
+:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.filter_terms`.
+Terms for which the exception handler returns ``None`` are removed before the
+reduction is applied.
+
+Writing your own exception handler is straightforward:
+
+.. code-block:: python
+
+   def my_exception_handler(exception, ctx, idx):
+       ctx.meta["last_failure"] = {
+           "idx": idx,
+           "message": str(exception),
+       }
+       return None
+
+   objective = CombinedObjectiveFunction(
+       [term1, term2, term3],
+       exception_handler=my_exception_handler,
+   )
+
+Using a child context configurator
 ----------------------------------
 
-- Combines multiple objective functions into a single weighted sum.
-- Supports arbitrary callables that accept ``params: dict[str, float]``.
-- Weights can be adjusted, extended, or merged at runtime.
-- Compatible with :py:class:`~chemfit.fitter.Fitter`.
-- Useful for multi-objective fitting (energies, forces, properties, etc.).
-- Provides metadata aggregation for downstream analysis.
+Each term gets its own child context. Sometimes those child contexts need to be
+configured before evaluation starts.
+
+That is what ``child_context_configurator`` is for.
+
+The configurator has the signature
+
+.. code-block:: python
+
+   def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
+       ...
+
+A small example:
+
+.. code-block:: python
+
+   from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
+
+   def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
+       child_ctx.meta["configurator_number"] = idx_child_ctx + num_children
+
+   objective = CombinedObjectiveFunction(
+       [term1, term2, term3],
+       child_context_configurator=configurator,
+   )
+
+   ctx = EvaluateContext()
+   objective({"x": 2.0}, ctx)
+
+   print([child["meta"]["configurator_number"] for child in ctx.meta["children"]])
+
+This is mostly useful when the terms need slightly different evaluation setup.
+
+For example, the configurator can assign different metadata, attach child-local
+configuration in ``child_ctx.config``, or prepare term-specific execution state.
+The parent context is also available, so the configurator can derive the
+child-specific setup from information stored at the parent level.
+
+Adding terms after construction
+-------------------------------
+
+Combined objectives can be extended in place with
+:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.add`.
+
+.. code-block:: python
+
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
+
+   objective = CombinedObjectiveFunction([term1], weights=[1.0])
+
+   objective.add(term2, weights=0.5)
+   objective.add([term3, term4], weights=[2.0, 3.0])
+
+This mutates the existing combined objective and returns it again.
+
+The same weight rules apply as in the constructor. A single weight is broadcast
+to all added terms, while a sequence of weights must match the number of added
+terms.
+
+Flattening several combined objectives
+--------------------------------------
+
+If you already have several combined objectives and want to combine them into
+one flat object, use
+:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.add_flat`.
+
+.. code-block:: python
+
+   from chemfit.combined_objective_function import CombinedObjectiveFunction
+
+   cob1 = CombinedObjectiveFunction([term1, term2], weights=[1.0, 2.0])
+   cob2 = CombinedObjectiveFunction([term3], weights=[0.5])
+
+   flat = CombinedObjectiveFunction.add_flat(
+       [cob1, cob2],
+       weights=[1.0, 10.0],
+   )
+
+In this example, the terms of ``cob2`` are included with their internal weights
+scaled by ``10.0``.
+
+One detail matters here: ``add_flat`` only flattens terms and weights. It does
+not preserve the execution policy or other custom behavior of the input objects.
+The returned object is a fresh combined objective using the class defaults unless
+you reconfigure it afterward.
+
+Parallel execution
+------------------
+
+Combined objectives are the main place where term-level parallelism makes sense.
+
+Serial evaluation calls
+:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.evaluate_term`
+for each term in turn.
+
+Parallel execution uses the same per-term interface but schedules the term
+evaluations differently. See :ref:`parallel_execution`.
+
+In practice this means the same combined objective can be used
+
+- serially
+- with :py:class:`~chemfit.executor_wrapper_cob.ExecutorWrapperCOB`
+- with :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB`
+
+without changing the terms themselves.
