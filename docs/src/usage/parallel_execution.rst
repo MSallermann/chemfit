@@ -17,7 +17,7 @@ This page is meant to showcase example code, making use of these forms of parall
 1. Evaluate parameter sets in parallel
 ---------------------------------------
 
-The main contribution ChemFit makes to enabling this form of parallelism is the context system (see :ref:`concepts_parallel_eval` and the following).
+The main contribution ChemFit makes to enabling this form of parallelism is the context system (see :ref:`concepts_parallel_eval`).
 
 In practice, if you use the :py:class:`~chemfit.fitter.Fitter` class you won't have to explicitly interact with these nitty gritty details
 (simply supply ``num_workers`` to :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`).
@@ -53,22 +53,26 @@ If you, nonetheless, find yourself in the situation of wanting to evaluate on ob
     (With a ``ThreadPoolExecutor`` this distinction is meaningless, but for example a ``ProcessPoolExecutor``
     will only pickle the **result** of the function and send it back the main process).
     The little :py:func:`~chemfit.executor_utils.map_with_context` function helps us circumvent this little problem.
-    It works by intermediately making the context a part of the result.
+    It works by intermittently making the context a part of the result.
 
 .. note::
 
-    **Compute bound** pure python code in non free-threading builds will not be sped-up by using ``ThreadPoolExecutor``.
+    **Compute bound** pure python code (in non free-threading builds) will not be sped-up by using ``ThreadPoolExecutor``.
     The reason is the global interpreter lock (GIL).
-    To speed up compute-bound python code you have to use a process pool, e.g. :py:class:`concurrent.futures.ProcessPoolExecutor`.
+    Generally it is recommended to avoids compute-heavy workloads in python...
+
+    But if you really have to, you can speed up compute-bound python code by using a process pool.
+    For example :py:class:`concurrent.futures.ProcessPoolExecutor` from the standard library.
     Be warned though that the required serialization can mean a significant overhead (always measure!).
-    Furhtermore, pickling certain functions can be not straight-forward.
+    Furthermore, pickling certain functions can be tricky.
 
 .. tip::
 
     The ``loky`` package provides a drop-in replacement for :py:class:`concurrent.futures.ProcessPoolExecutor`, which is able
     to pickle many more functions than the standard library version.
 
-Parallelizing a combined objective
+
+1. Parallelizing a combined objective
 ---------------------------------
 
 If your objective is a combination of multiple terms, you can evaluate
