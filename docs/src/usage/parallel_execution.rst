@@ -1,243 +1,258 @@
 .. _parallel_execution:
 
-#####################################
-Parallel and Distributed Execution
-#####################################
+Parallel Execution
+==================
 
-Once you have defined an objective in ChemFit, you have several ways to
-run it in parallel.
+There are two ways in which parallel execution enters the picture while dealing with
+a ChemFit objective function:
 
-This page shows common patterns you can copy and adapt.
+1. Evaluating the same objective function for different parameters in parallel.
 
---------------------------------------------------------------------
-Recipe: parallelize a multi-term objective (executor)
---------------------------------------------------------------------
+2. Evaluating the terms of a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` in parallel.
 
-Use this when your objective consists of independent terms and you want
-to evaluate them in parallel on a single machine.
 
-.. code-block:: python
+This page is meant to showcase example code, making use of these forms of parallelism.
 
-    from concurrent.futures import ThreadPoolExecutor
 
-    from chemfit.abstract_objective_function import EvaluateContext
-    from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
-    from chemfit.wrap_funcs import to_objective_functor
+1. Evaluate parameter sets in parallel
+---------------------------------------
 
-    @to_objective_functor()
-    def term1(params):
-        return (params["x"] - 1.0) ** 2
+The main contribution ChemFit makes to enabling this form of parallelism is the context system (see :ref:`concepts_parallel_eval` and the following).
 
-    @to_objective_functor()
-    def term2(params):
-        return (params["x"] - 2.0) ** 2
+In practice, if you use the :py:class:`~chemfit.fitter.Fitter` class you won't have to explicitly interact with these nitty gritty details
+(simply supply ``num_workers`` to :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`).
 
-    @to_objective_functor()
-    def term3(params):
-        return (params["x"] - 3.0) ** 2
-
-    objective = CombinedObjectiveFunction([term1, term2, term3])
-    wrapped = ExecutorWrapperCOB(objective)
-
-    ctx = EvaluateContext(executor=ThreadPoolExecutor(3))
-    value = wrapped({"x": 0.0}, ctx)
-
-----------------------------------
-Recipe: parallelize a multi-term objective (MPI)
-----------------------------------
-
-Use this when your objective has many small terms and communication
-overhead matters.
+If you, nonetheless, find yourself in the situation of wanting to evaluate on objective function for multiple parameters in parallel, this will work:
 
 .. code-block:: python
 
-    from chemfit.abstract_objective_function import EvaluateContext
-    from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.mpi_wrapper_cob import MPIWrapperCOB
-    from chemfit.wrap_funcs import to_objective_functor
+   from concurrent.futures import ThreadPoolExecutor
 
-    @to_objective_functor()
-    def term(params):
-        return (params["x"] - 1.0) ** 2
+   from chemfit.executor_utils import map_with_context
+   from chemfit.abstract_objective_function import EvaluateContext
 
-    objective = CombinedObjectiveFunction([term] * 100)
+   executor = ThreadPoolExecutor(max_workers=4)
 
-    with MPIWrapperCOB(objective) as mpi:
-        if mpi.rank == 0:
-            ctx = EvaluateContext()
-            value = mpi({"x": 0.0}, ctx)
-        else:
-            mpi.worker_loop()
+   params_list = [...]
+   ctxs = [EvaluateContext() for _ in params_list]
 
-This distributes terms across MPI ranks with very low communication
-overhead.
-
---------------------------------------------------------------------
-Recipe: evaluate objectives in parallel (no fitter)
---------------------------------------------------------------------
-
-Use this when you want to evaluate a ChemFit-compatible callable yourself.
-
-.. code-block:: python
-
-    from concurrent.futures import ThreadPoolExecutor
-
-    from chemfit.abstract_objective_function import EvaluateContext
-    from chemfit.executor_utils import map_with_context
-    from chemfit.wrap_funcs import to_objective_functor
-
-    @to_objective_functor()
-    def objective(params):
-        return (params["x"] - 2.0) ** 2
-
-    params_list = [{"x": i} for i in range(4)]
-    ctxs = [EvaluateContext() for _ in params_list]
-
-    with ThreadPoolExecutor(4) as executor:
-        values = map_with_context(
-            executor,
-            objective,
-            params_list,
-            ctxs=ctxs,
-        )
+   results = map_with_context(
+       executor,
+       objective,
+       params_list,
+       ctxs=ctxs,
+   )
 
 .. note::
 
-    The :class:`~chemfit.fitter.Fitter` uses this same pattern internally
-    when evaluating multiple parameter sets in parallel.
+    Why do we need :py:func:`~chemfit.executor_utils.map_with_context`?
 
---------------------------------------------------------------------
-Recipe: parallel optimization (Fitter)
---------------------------------------------------------------------
+    Yes, we would get the same results with the built-in ``map`` function of the ``executor``.
+    The difference is that :py:func:`~chemfit.executor_utils.map_with_context` correctly propagates the side-effects
+    of the function evaluation on the context.
+    (With a ``ThreadPoolExecutor`` this distinction is meaningless, but for example a ``ProcessPoolExecutor``
+    will only pickle the **result** of the function and send it back the main process).
+    The little :py:func:`~chemfit.executor_utils.map_with_context` function helps us circumvent this little problem.
+    It works by intermediately making the context a part of the result.
 
-Use this when you want the optimizer to explore multiple parameter sets
-concurrently.
+.. note::
+
+    **Compute bound** pure python code in non free-threading builds will not be sped-up by using ``ThreadPoolExecutor``.
+    The reason is the global interpreter lock (GIL).
+    To speed up compute-bound python code you have to use a process pool, e.g. :py:class:`concurrent.futures.ProcessPoolExecutor`.
+    Be warned though that the required serialization can mean a significant overhead (always measure!).
+    Furhtermore, pickling certain functions can be not straight-forward.
+
+.. tip::
+
+    The ``loky`` package provides a drop-in replacement for :py:class:`concurrent.futures.ProcessPoolExecutor`, which is able
+    to pickle many more functions than the standard library version.
+
+Parallelizing a combined objective
+---------------------------------
+
+If your objective is a combination of multiple terms, you can evaluate
+those terms in parallel.
 
 .. code-block:: python
 
-    from concurrent.futures import ThreadPoolExecutor
+   from concurrent.futures import ThreadPoolExecutor
 
-    from chemfit.fitter import Fitter
-    from chemfit.wrap_funcs import to_objective_functor
+   from chemfit.parallel_execution import ExecutorWrapperCOB
 
-    @to_quantity_computer()
-    def objective(params):
-        return (params["x"] - 2.0) ** 2
+   executor = ThreadPoolExecutor(max_workers=4)
+   objective = ExecutorWrapperCOB(objective, executor=executor)
 
-    fitter = Fitter(objective, {"x": 0.0})
+   value = objective(params, ctx)
 
-    opt_params = fitter.fit_nevergrad(
-        budget=100,
-        num_workers=4,
-        executor=ThreadPoolExecutor(4),
-    )
+This only makes sense if:
 
---------------------------------------------------------------------
-Recipe: run external simulations with Slurm (srun)
---------------------------------------------------------------------
+- the objective is a CombinedObjectiveFunction
+- each term actually does non-trivial work
 
-Use this when ChemFit runs inside a Slurm allocation and each evaluation
-launches an external program.
+If your terms are cheap, this will slow you down.
 
-Minimal ``sbatch`` script:
+---
+
+MPI: many small terms
+---------------------
+
+If you are already running under MPI and have many small terms, use the MPI wrapper.
+
+.. code-block:: python
+
+   from chemfit.parallel_execution import MPIWrapperCOB
+   from chemfit.abstract_objective_function import EvaluateContext
+
+   with MPIWrapperCOB(objective) as mpi:
+       if mpi.rank == 0:
+           value = mpi(params, EvaluateContext())
+       else:
+           mpi.worker_loop()
+
+This is not just “another executor”.
+
+MPI has a different execution model:
+
+- one process drives the evaluation
+- others wait for work in a loop
+- communication cost is lower than Python executor overhead
+
+Use this when:
+
+- you already have MPI
+- executor-based parallelism becomes the bottleneck
+
+---
+
+Running external programs (Slurm / srun)
+----------------------------------------
+
+This is where ChemFit is actually different from most libraries.
+
+You do **not** parallelize inside Python.
+You launch external jobs, and ChemFit keeps them organized.
+
+The key abstraction is:
+
+:class:`chemfit.file_based_computer.FileBasedQuantityComputer`
+
+Each evaluation gets:
+
+- its own working directory
+- its own input/output files
+- no shared state with other evaluations
+
+That is what makes parallel execution safe.
+
+---
+
+Minimal srun integration
+------------------------
+
+You typically inject ``srun`` at command construction:
+
+.. code-block:: python
+
+   from chemfit.file_based_computer import FileBasedQuantityComputer
+
+   class SrunComputer(FileBasedQuantityComputer):
+       def build_cmd(self, parameters, ctx):
+           srun = ctx.config.srun_spec.to_str()
+           base_cmd = super().build_cmd(parameters, ctx)
+           return [*srun, *base_cmd]
+
+Then run as usual:
+
+.. code-block:: python
+
+   from chemfit.abstract_objective_function import EvaluateContext
+
+   ctx = EvaluateContext()
+   ctx.config.srun_spec = SrunSpec(...)
+
+   value = objective(parameters, ctx)
+
+Nothing special happens here. It is just a normal evaluation.
+
+---
+
+Parallel Slurm jobs
+-------------------
+
+This is where people usually get it wrong.
+
+**Slurm does not give you parallelism here.**
+
+This does *not* run things in parallel:
 
 .. code-block:: bash
 
-    #!/bin/bash
-    #SBATCH --job-name=chemfit
-    #SBATCH --nodes=1
-    #SBATCH --ntasks=4
-    #SBATCH --time=01:00:00
+   srun simulation
 
-    module load python
-    python run_fit.py
+It runs one job step.
 
-Example computer:
+If you want multiple jobs, you need multiple calls to ``srun``.
+
+That is where the executor comes in:
 
 .. code-block:: python
 
-    import subprocess
-    from pathlib import Path
+   from concurrent.futures import ThreadPoolExecutor
 
-    from chemfit.abstract_objective_function import QuantityComputer
+   from chemfit.executor_utils import map_with_context
+   from chemfit.abstract_objective_function import EvaluateContext
 
+   executor = ThreadPoolExecutor(max_workers=4)
 
-    class SlurmComputer(QuantityComputer):
-        def __init__(self, workdir: str):
-            super().__init__()
-            self.workdir = Path(workdir)
+   params_list = [...]
+   ctxs = [EvaluateContext() for _ in params_list]
 
-        def _compute(self, params, ctx):
-            input_file = self.workdir / "input.txt"
-            output_file = self.workdir / "output.txt"
+   for ctx in ctxs:
+       ctx.config.srun_spec = my_srun_spec
 
-            with input_file.open("w") as f:
-                f.write(f"x = {params['x']}\n")
+   results = map_with_context(
+       executor,
+       objective,
+       params_list,
+       ctxs=ctxs,
+   )
 
-            subprocess.run(
-                ["srun", "my_simulation_code", str(input_file), str(output_file)],
-                check=True,
-            )
+What happens:
 
-            with output_file.open() as f:
-                value = float(f.read().strip())
+- Python launches multiple ``srun`` commands
+- Slurm schedules them
+- each evaluation runs in its own working directory
 
-            return {"value": value}
+No file collisions. No shared state. No hacks.
 
-Run multiple evaluations in parallel:
+---
 
-.. code-block:: python
+Choosing what to do
+------------------
 
-    from concurrent.futures import ThreadPoolExecutor
+If you are unsure:
 
-    from chemfit.abstract_objective_function import EvaluateContext
-    from chemfit.executor_utils import map_with_context
+- many parameter sets → use ``map_with_context``
+- expensive objective terms → use executor wrapper
+- many small terms + MPI → use MPI wrapper
+- external simulations → use file-based computers + executor
 
-    computer = SlurmComputer("run")
-    objective = computer.with_loss(lambda q: q["value"] ** 2)
+That’s it.
 
-    params_list = [{"x": i} for i in range(4)]
-    ctxs = [EvaluateContext() for _ in params_list]
+There is no hidden layer beyond this.
 
-    with ThreadPoolExecutor(4) as executor:
-        values = map_with_context(
-            executor,
-            objective,
-            params_list,
-            ctxs=ctxs,
-        )
+---
 
-The executor controls how many ``srun`` calls are launched concurrently.
+Summary
+-------
 
---------------------------------------------------------------------
-Which parallelization strategy should I use?
---------------------------------------------------------------------
+ChemFit does not implement parallelism.
 
-**ExecutorWrapperCOB**
-    Good default for parallelizing combined objectives on a single machine.
+It gives you a clean way to **run the same computation under different execution models**:
 
-**MPIWrapperCOB**
-    Preferred for many small objective terms where communication overhead
-    matters.
+- local threads or processes
+- MPI
+- Slurm / external programs
 
-**map_with_context**
-    Use when you want to evaluate objectives in parallel yourself.
-
-**Fitter (num_workers)**
-    Use when running optimization and you want parallel parameter exploration.
-
-**ThreadPoolExecutor**
-    Good default for external codes, NumPy, and compiled workloads.
-
-**ProcessPoolExecutor / loky**
-    Better for CPU-heavy Python code.
-
-**Dask**
-    Use for distributed Python workloads (via ``client.get_executor()``).
-
-**mpi4py.futures.MPIPoolExecutor**
-    Use in MPI environments with an executor-style interface.
-
-**Slurm + srun**
-    Use when launching external simulations inside an HPC allocation.
+The objective stays the same. Only the execution changes.
