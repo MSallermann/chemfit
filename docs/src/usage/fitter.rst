@@ -311,7 +311,7 @@ For example:
 
 .. important::
 
-    Make sure to pass instances of :py:class:`~chemfit.fitter.Fitter.FitterEvaluateContext` and **not** the base class
+    Make sure to pass instances of :py:class:`~chemfit.fitter.FitterEvaluateContext` and **not** the base class
     :py:class:`~chemfit.abstract_objective_function.EvaluateContext`!
 
 .. warning::
