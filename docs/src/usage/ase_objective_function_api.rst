@@ -1,140 +1,177 @@
 .. _ase_objective_function_api:
 
-=====================================
 ASE-Based Quantity Computers
-=====================================
+============================
 
-The :mod:`chemfit.ase_objective_function` module integrates the
-**Atomic Simulation Environment (ASE)** into the generic fitting
-framework defined in :mod:`chemfit.abstract_objective_function`.
+The :mod:`chemfit.ase_objective_function` module provides quantity computers built
+around ASE.
 
-These classes allow you to use ASE calculators directly as
-:class:`QuantityComputer` instances, producing structured
-dictionaries of results (energy, forces, stress, etc.) that
-can be fed into loss functions and optimizers.
+The basic pattern is simple. You provide four pieces:
 
-The design is modular — all steps of the computation pipeline
-(calculator creation, parameter updates, atom loading, and result
-processing) are fully configurable.
+- something that creates an ``ase.Atoms`` object
+- something that attaches a calculator to it
+- something that applies fitting parameters to that calculator
+- one or more quantity processors that turn the finished ASE calculation into a
+  quantity dictionary
 
+ChemFit takes care of the rest.
 
-Overview
-=========
+This is useful when you want to fit ASE calculators directly, either on fixed
+structures or on relaxed ones.
 
-An ASE-based computer in this framework typically performs these steps:
+The main classes are:
 
-1. Create or load an :class:`ase.Atoms` object.
-2. Optionally modify it (constraints, reorientation, scaling, etc.).
-3. Attach an ASE :class:`Calculator` to the atoms.
-4. Apply a dictionary of parameters to the calculator.
-5. Run the calculation with ``atoms.calc.calculate(atoms)``.
-6. Collect quantities (e.g., energy, forces) into a result dictionary.
+- :py:class:`~chemfit.ase_objective_function.SinglePointASEComputer`
+- :py:class:`~chemfit.ase_objective_function.MinimizationASEComputer`
 
-This design makes it easy to couple ASE with gradient-free
-optimizers, or to fit interatomic potentials, empirical
-force fields, and machine-learned energy models.
+PathAtomsFactory
+----------------
 
+The simplest atoms factory shipped with ChemFit is
+:py:class:`~chemfit.ase_objective_function.PathAtomsFactory`.
 
-Protocols
-=========
-
-Several lightweight **protocols** define the expected behavior of
-components you can plug into a computer.
-
-Each protocol is just a callable interface that defines one clear responsibility:
-
-- **CalculatorFactory**
-  Creates or attaches an ASE calculator to an :class:`ase.Atoms` object.
-  It must set ``atoms.calc`` in place.
-
-- **ParameterApplier**
-  Applies a dictionary of fitting parameters (``dict[str, Any]``)
-  to the calculator currently attached to ``atoms.calc``.
-
-- **AtomsFactory**
-  Creates a new :class:`ase.Atoms` object, e.g. by reading a structure file
-  or generating atoms programmatically.
-
-- **AtomsPostProcessor**
-  Optionally modifies an :class:`ase.Atoms` object after it is created
-  and before the calculator is attached — for example, to set constraints
-  or adjust periodic boundary conditions.
-
-- **QuantityProcessor**
-  Extracts data from the finished ASE calculation and returns
-  a dictionary of computed quantities.
-
-Each protocol is checked at runtime via ``check_protocol()`` to ensure
-objects passed into the computers conform to the expected interface.
-
-
-Atoms Factory Example
----------------------
-
-A concrete helper, :class:`PathAtomsFactory`, is provided to read atoms from a file:
+It reads a single structure from disk using ASE.
 
 .. code-block:: python
 
    from chemfit.ase_objective_function import PathAtomsFactory
 
-   atoms_factory = PathAtomsFactory("geometry.traj", index=0)
-   atoms = atoms_factory()   # returns an ase.Atoms object
+   atoms_factory = PathAtomsFactory("geometry.traj")
+   atoms = atoms_factory()
 
-
-SinglePointASEComputer
-======================
-
-A **single-point** computer is the simplest kind of ASE-based
-quantity computer. It builds an Atoms object, attaches a calculator,
-applies parameters, and performs one calculation without geometry optimization.
-
-**Key arguments:**
-
-- ``calc_factory`` - a function attaching a calculator to ``atoms``.
-- ``param_applier`` - a function that applies a parameter dictionary.
-- ``atoms_factory`` - a factory producing an ``ase.Atoms`` object.
-- ``atoms_post_processor`` - optional modifier applied before calculation.
-- ``quantity_processors`` - list of callables that extract results.
-- ``tag`` - optional label for metadata.
-
-The result of ``__call__(parameters)`` is a dictionary of quantities,
-typically including at least ``"energy"`` and possibly ``"forces"`` or
-``"stress"``.
-
-Internally, the base class calls all registered quantity processors
-to build the final result dictionary. The default processor simply
-returns all entries from ``calc.results`` plus the number of atoms.
-
-**Metadata**
-
-``get_meta_data()`` returns a dictionary with:
-
-- ``tag`` - user-defined label.
-- ``n_atoms`` - number of atoms in the system.
-- ``type`` - the class name of the computer.
-- ``last`` - most recent computed quantities.
-
-Example: Lennard-Jones Objective Term
--------------------------------------
-
-The Lennard-Jones (LJ) unit test demonstrates how to build a full
-objective from ASE-based computers.
+You can also pass an ASE index:
 
 .. code-block:: python
 
-   import functools
-   from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
+   atoms_factory = PathAtomsFactory("trajectory.xyz", index=0)
+
+The important detail is that the factory must return exactly one
+:py:class:`ase.Atoms` object. If the index selects multiple images,
+:py:class:`~chemfit.ase_objective_function.PathAtomsFactory` raises an exception.
+
+How a SinglePointASEComputer works
+----------------------------------
+
+:py:class:`~chemfit.ase_objective_function.SinglePointASEComputer` is the basic
+ASE quantity computer.
+
+A single evaluation does the following:
+
+1. create the base atoms object once, using ``atoms_factory``
+2. optionally modify it once, using ``atoms_post_processor``
+3. copy that cached atoms object into the evaluation context
+4. attach a fresh calculator
+5. apply the current parameter dictionary
+6. call ``atoms.calc.calculate(atoms)``
+7. run all quantity processors and merge their outputs
+
+The important consequence is that the reference structure is cached on the
+computer instance, but each evaluation still uses a fresh copy of the atoms and
+a fresh calculator.
+
+That means the calculator can mutate internal state without corrupting later
+evaluations.
+
+A minimal example
+-----------------
+
+Here is the smallest realistic pattern.
+
+.. code-block:: python
+
+   from ase.calculators.lj import LennardJones
+
+   from chemfit.ase_objective_function import SinglePointASEComputer, PathAtomsFactory
+
+   def construct_lj(atoms):
+       atoms.calc = LennardJones()
+
+   def apply_params_lj(atoms, params):
+       atoms.calc.parameters.epsilon = params["epsilon"]
+       atoms.calc.parameters.sigma = params["sigma"]
+
+   computer = SinglePointASEComputer(
+       calc_factory=construct_lj,
+       param_applier=apply_params_lj,
+       atoms_factory=PathAtomsFactory("dimer.xyz"),
+   )
+
+   quants = computer({"epsilon": 1.0, "sigma": 1.0})
+   print(quants["energy"])
+
+This returns a quantity dictionary, not a loss.
+
+To turn it into an objective term, wrap it in a
+:py:class:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction`.
+
+Turning an ASE computer into an objective term
+----------------------------------------------
+
+In practice, ASE computers are almost always turned into objective terms
+using :py:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`.
+
+.. code-block:: python
+
+   from chemfit.ase_objective_function import SinglePointASEComputer, PathAtomsFactory
+
+   def construct_lj(atoms):
+       atoms.calc = LennardJones()
+
+   def apply_params_lj(atoms, params):
+       atoms.calc.parameters.epsilon = params["epsilon"]
+       atoms.calc.parameters.sigma = params["sigma"]
+
+   def loss_function(quants, e_ref):
+       return (quants["energy"] - e_ref) ** 2
+
+   computer = SinglePointASEComputer(
+       calc_factory=construct_lj,
+       param_applier=apply_params_lj,
+       atoms_factory=PathAtomsFactory("dimer.xyz"),
+   )
+
+   objective_term = computer.with_loss(
+       loss_function,
+       e_ref=-0.1,
+   )
+
+   loss = objective_term({"epsilon": 1.0, "sigma": 1.0})
+
+.. note::
+
+   :py:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
+   automatically binds additional keyword arguments to the loss function.
+
+   This means you can pass parameters such as ``e_ref`` directly, without
+   using :py:mod:`functools.partial`.
+
+
+A real Lennard-Jones example
+----------------------------
+
+The following example fits a Lennard-Jones potential.
+
+For several interatomic distances, one objective term is created per
+configuration. Each term evaluates the energy with ASE and compares it to a
+reference value.
+
+All terms are combined into a single objective and optimized to recover the
+correct parameters.
+
+.. code-block:: python
+
+   import numpy as np
+
    from chemfit.ase_objective_function import SinglePointASEComputer
    from chemfit.combined_objective_function import CombinedObjectiveFunction
    from chemfit.fitter import Fitter
 
-   # Custom user-defined ASE adapters
    from conftest import LJAtomsFactory, apply_params_lj, construct_lj, e_lj
 
-   def loss_function(quants: dict, e_ref: float):
+   def loss_function(quants, e_ref):
        return (quants["energy"] - e_ref) ** 2
 
-   def lj_ob_term(r: float, eps: float, sigma: float):
+   def lj_ob_term(r, eps, sigma):
        computer = SinglePointASEComputer(
            calc_factory=construct_lj,
            param_applier=apply_params_lj,
@@ -142,194 +179,220 @@ objective from ASE-based computers.
            tag=f"lj_{r}",
        )
 
-       return QuantityComputerObjectiveFunction(
-           loss_function=functools.partial(loss_function, e_ref=e_lj(r, eps, sigma)),
-           quantity_computer=computer,
+       return computer.with_loss(
+           loss_function,
+           e_ref=e_lj(r, eps, sigma),
        )
 
-   # Combine many LJ distances into one global objective
-   r_list = [2.5, 3.0, 3.5]
-   objective = CombinedObjectiveFunction(
-       objective_functions=[lj_ob_term(r, 1.0, 1.0) for r in r_list]
+   def get_objective(eps, sigma):
+       r_min = 2.0 ** (1 / 6) * sigma
+       r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
+
+       return CombinedObjectiveFunction(
+           objective_functions=[lj_ob_term(r, eps, sigma) for r in r_list]
+       )
+
+   objective = get_objective(1.0, 1.0)
+
+   fitter = Fitter(
+       objective,
+       initial_params={"epsilon": 2.0, "sigma": 1.5},
    )
 
-   fitter = Fitter(objective, initial_params={"epsilon": 2.0, "sigma": 1.5})
-   optimized_params = fitter.fit_scipy()
+   optimal_params = fitter.fit_scipy()
 
-   print(optimized_params)
-   # {'epsilon': ~1.0, 'sigma': ~1.0}
+Quantity processors
+-------------------
 
-This pattern generalizes to any ASE-compatible calculator.
-
-
-MinimizationASEComputer
-=======================
-
-A subclass of ``SinglePointASEComputer`` that performs a **geometry relaxation**
-to the nearest local minimum before running the final single-point calculation.
-
-It uses ASE's :class:`ase.optimize.BFGS` optimizer internally.
-
-**Initialization parameters:**
-
-- ``dt`` - timestep for the optimizer (default: 1e-2).
-- ``fmax`` - convergence threshold on maximum force (default: 1e-5).
-- ``max_steps`` - maximum number of relaxation steps (default: 2000).
-
-All other arguments are the same as for ``SinglePointASEComputer``.
-
-**Workflow**
-
-1. The structure is reset to its reference positions.
-2. Velocities are zeroed.
-3. Calculator parameters are applied.
-4. A BFGS optimization is run until convergence or max steps reached.
-5. The relaxed structure is used for a single-point evaluation.
-
-This class is useful for fitting potentials to equilibrium geometries,
-or for objectives that depend on relaxed energies rather than fixed configurations.
-
-
-Quantity Processors
-===================
-
-After the ASE calculation, one or more **quantity processors** are called.
-Each processor receives the calculator and atoms, and returns a dictionary
-of key-value pairs, which are merged into the final result.
-
-The default processor is:
+A quantity processor is a callable with signature
 
 .. code-block:: python
 
-   def default_quantity_processor(calc, atoms):
-       return {**calc.results, "n_atoms": len(atoms)}
+   def processor(calc, atoms) -> dict[str, object]:
+       ...
 
-You can define additional processors to add, e.g., stress tensors,
-force norms, or derived physical quantities.
+It receives the evaluated calculator and atoms object and returns a dictionary.
+The outputs of all quantity processors are merged into the final quantity
+dictionary.
 
-The Default Processor
----------------------
+The default quantity processor is
+:py:class:`~chemfit.ase_objective_function.DefaultQuantityProcessor`.
 
-Every ASE-based computer automatically prepends the built-in
-``default_quantity_processor`` to its list of quantity processors.
+It returns:
 
-This ensures that the calculator's raw results (e.g. ``energy``, ``forces``,
-and other keys in ``calc.results``) are always included in the output
-dictionary, even if you supply your own custom processors.
+- everything in ``calc.results``
+- ``"n_atoms"``
 
-Your processors are executed *after* the default one, allowing you to
-extend or post-process those quantities without needing to repeat the
-basic extraction logic.
+A small example:
 
 .. code-block:: python
 
-   def my_processor(calc, atoms):
-       # calc.results already present thanks to the default processor
-       quants = {"force_norm": (calc.results["forces"] ** 2).sum() ** 0.5}
-       return quants
-
-   computer = SinglePointASEComputer(
-       calc_factory=construct_calc,
-       param_applier=apply_params,
-       atoms_factory=MyAtomsFactory(),
-       quantity_processors=[my_processor],  # default comes first automatically
+   from chemfit.ase_objective_function import (
+       DefaultQuantityProcessor,
+       SinglePointASEComputer,
    )
-
-   result = computer({"epsilon": 1.0, "sigma": 1.0})
-   # result contains energy, forces, and force_norm
-
-
-Extending and Customizing
-=========================
-
-The ASE computers are designed to be **composed**, not subclassed.
-
-Whenever possible, prefer *composition* — supplying your own
-factories, processors, and parameter appliers — rather than
-inheriting from the base classes. This keeps behavior explicit,
-reduces hidden state, and makes components easy to test and reuse
-across projects.
-
-**Recommended approach: compose behavior via constructor arguments.**
-
-For example, to add an extra computed property without subclassing:
-
-.. code-block:: python
-
-   import numpy as np
-   from chemfit.ase_objective_function import SinglePointASEComputer
-
-   def rms_force_processor(calc, atoms):
-       f = calc.results.get("forces")
-       if f is None:
-           return {}
-       return {"rms_force": np.sqrt((f**2).mean())}
 
    computer = SinglePointASEComputer(
        calc_factory=construct_lj,
        param_applier=apply_params_lj,
-       atoms_factory=LJAtomsFactory(2.5),
-       quantity_processors=[rms_force_processor],
+       atoms_factory=PathAtomsFactory("dimer.xyz"),
+       quantity_processors=[DefaultQuantityProcessor()],
    )
 
-   results = computer({"epsilon": 1.0, "sigma": 1.0})
-   print(results["energy"], results["rms_force"])
+   quants = computer({"epsilon": 1.0, "sigma": 1.0})
+   print(quants.keys())
 
-**When to subclass**
+One detail matters here: if you pass ``quantity_processors=None``, ChemFit uses
+``[DefaultQuantityProcessor()]``.
 
-Subclass only when you need to **extend lifecycle behavior** that cannot
-be expressed through composition — for example, adding an additional
-relaxation step (as in :class:`MinimizationASEComputer`) or modifying
-metadata structure.
+If you pass your own list, ChemFit uses exactly that list. The default processor
+is **not** prepended automatically.
 
-Typical extension points:
+So if you want both the raw calculator results and your own derived quantities,
+include :py:class:`~chemfit.ase_objective_function.DefaultQuantityProcessor`
+explicitly.
 
-- ``_compute()`` — to customize how results are produced.
-- ``create_atoms_object()`` — to alter how Atoms are built or validated.
-- ``get_meta_data()`` — to expose custom metadata or diagnostic info.
+For example:
 
-**Rule of thumb:**
-Start with composition. Reach for subclassing only if you truly need to
-change the flow of computation itself.
+.. code-block:: python
 
+   import numpy as np
 
-Case Studies: Custom Quantities via Processors
-==============================================
+   from chemfit.ase_objective_function import (
+       DefaultQuantityProcessor,
+       SinglePointASEComputer,
+   )
 
-These examples highlight how to express flexible objectives by *composing*
-a ``QuantityComputer`` with lightweight **quantity processors**—no subclassing required.
+   def rms_force_processor(calc, atoms):
+       forces = calc.results.get("forces")
+       if forces is None:
+           return {}
+       return {"rms_force": np.sqrt((forces**2).mean())}
 
-Assumptions (pseudo-helpers)
-----------------------------
+   computer = SinglePointASEComputer(
+       calc_factory=construct_lj,
+       param_applier=apply_params_lj,
+       atoms_factory=PathAtomsFactory("dimer.xyz"),
+       quantity_processors=[
+           DefaultQuantityProcessor(),
+           rms_force_processor,
+       ],
+   )
 
-For illustration, assume the following small adapters exist:
+   quants = computer({"epsilon": 1.0, "sigma": 1.0})
+   print(quants["energy"])
+   print(quants["rms_force"])
 
-- ``construct_calc(atoms)`` — attaches an ASE calculator to ``atoms.calc``.
-- ``apply_params(atoms, params)`` — updates parameters on ``atoms.calc``.
-- ``MyAtomsFactory(arg)`` — creates an ``ase.Atoms`` object for the given argument.
+.. warning::
 
-(You can think of these as the Lennard–Jones helpers used in the unit tests.)
+    Because quantity processor outputs are merged with ``dict.update()``, later
+    processors can overwrite keys returned by earlier ones.
 
-Dimer Distance Target (with Relaxation)
----------------------------------------
+.. note::
 
-A simple case is to relax a geometry and match an inter-fragment distance
-to a reference. The processor augments ``calc.results`` with a custom metric
-(``dimer_distance``), and the loss depends only on that quantity.
+   Quantity processors should follow the same basic rule as quantity computers:
+   avoid mutating global state or instance state during evaluation.
+
+   In practice, a quantity processor should behave like a pure function of
+   ``calc`` and ``atoms``, returning a dictionary of derived quantities.
+
+   This matters especially when evaluations may run in parallel.
+
+Atoms post-processing
+---------------------
+
+Sometimes the structure should be modified once before any evaluations happen.
+
+That is what ``atoms_post_processor`` is for.
+
+It is applied to the base atoms object before that object is cached.
+
+.. code-block:: python
+
+   def freeze_first_atom(atoms):
+       from ase.constraints import FixAtoms
+       atoms.set_constraint(FixAtoms(indices=[0]))
+
+   computer = SinglePointASEComputer(
+       calc_factory=construct_lj,
+       param_applier=apply_params_lj,
+       atoms_factory=PathAtomsFactory("geometry.xyz"),
+       atoms_post_processor=freeze_first_atom,
+   )
+
+Since the processed atoms object is cached, this is the right place for
+structure-level setup that should be shared across all evaluations of the same
+computer instance.
+
+MinimizationASEComputer
+-----------------------
+
+:py:class:`~chemfit.ase_objective_function.MinimizationASEComputer` is a
+subclass of :py:class:`~chemfit.ase_objective_function.SinglePointASEComputer`
+that performs a local geometry optimization before extracting quantities.
+
+Internally it uses ASE's :py:class:`ase.optimize.BFGS`.
+
+The workflow is almost the same as for the single-point computer, except that
+after ``prepare_ctx(...)`` it runs
+
+.. code-block:: python
+
+   optimizer = BFGS(ctx.temp.atoms, logfile=None)
+   optimizer.run(fmax=self.fmax, steps=self.max_steps)
+
+and only then calls the quantity processors.
+
+A minimal example:
+
+.. code-block:: python
+
+   from chemfit.ase_objective_function import MinimizationASEComputer
+
+   computer = MinimizationASEComputer(
+       calc_factory=construct_lj,
+       param_applier=apply_params_lj,
+       atoms_factory=PathAtomsFactory("geometry.xyz"),
+       fmax=1e-4,
+       max_steps=500,
+   )
+
+   quants = computer({"epsilon": 1.0, "sigma": 1.0})
+
+The constructor adds three parameters:
+
+.. code-block:: python
+
+   MinimizationASEComputer(
+       ...,
+       dt=1e-2,
+       fmax=1e-5,
+       max_steps=2000,
+   )
+
+In the current implementation, ``fmax`` and ``max_steps`` are used by BFGS.
+``dt`` is stored for compatibility with older code but is currently unused.
+
+A distance-based example after relaxation
+-----------------------------------------
+
+Here is a realistic example from the test suite. The relaxation is handled by
+:py:class:`~chemfit.ase_objective_function.MinimizationASEComputer`; the custom
+quantity processor adds a derived geometric quantity.
 
 .. code-block:: python
 
    from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
    from chemfit.ase_objective_function import MinimizationASEComputer, PathAtomsFactory
-   from chemfit.fitter import Fitter
 
    REF_DISTANCE = 3.2
 
    def compute_dimer_distance(calc, atoms):
-       return {"dimer_distance" : atoms.get_distance(0, 3)}
+       quants = calc.results
+       quants["dimer_distance"] = atoms.get_distance(0, 3)
+       return quants
 
    objective = QuantityComputerObjectiveFunction(
-       loss_function=lambda q: (q["dimer_distance"] - REF_DISTANCE) ** 2,
        quantity_computer=MinimizationASEComputer(
            calc_factory=construct_calc,
            param_applier=apply_params,
@@ -337,70 +400,135 @@ to a reference. The processor augments ``calc.results`` with a custom metric
            quantity_processors=[compute_dimer_distance],
            tag="dimer_distance",
        ),
+       loss_function=lambda quants: (quants["dimer_distance"] - REF_DISTANCE) ** 2,
    )
 
-   fitter = Fitter(objective_function=objective, initial_params={"epsilon": 1.5, "sigma": 1.2})
-   optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
+The important part here is that the quantity processor runs on the relaxed
+structure, not on the original one.
 
-This pattern demonstrates how specialized geometric quantities can be integrated
-without modifying the computer class itself. The ``MinimizationASEComputer``
-handles relaxation automatically before the measurement.
+A more advanced processor: Kabsch RMSD
+--------------------------------------
 
-Kabsch RMSD Objective
----------------------
+Quantity processors do not have to be plain functions. They can also be objects.
 
-Another example aligns a relaxed structure to a reference configuration using
-the Kabsch algorithm and minimizes the resulting RMSD. A custom processor caches
-the reference positions and returns the rotation, translation, and RMSD as new
-quantities.
+If a processor needs fixed reference data, the right place to acquire that state
+is ``__init__``. It should not be acquired lazily during ``__call__``.
+
+This follows the same rule as in :ref:`writing_quantity_computers`: evaluation
+should not mutate hidden instance state.
+
+An example using the Kabsch RMSD against the reference configuration looks like this:
 
 .. code-block:: python
 
-   from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
-   from chemfit.ase_objective_function import MinimizationASEComputer, PathAtomsFactory, AtomsFactory
-   from chemfit.fitter import Fitter
+   from typing import Any
+
+   import numpy as np
+   from ase import Atoms
+   from ase.calculators.calculator import Calculator
 
    import chemfit.kabsch as kb
+   from chemfit.ase_objective_function import AtomsFactory
 
    class KabschDistance:
        def __init__(self, atoms_factory: AtomsFactory):
-           self.atoms_factory = atoms_factory
-           self._positions_ref = None
+           self._positions_ref = np.array(atoms_factory().positions, copy=True)
 
-       def __call__(self, calc, atoms):
-           if self._positions_ref is None:
-               self._positions_ref = self.atoms_factory().positions
+       def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:
+           kabsch_r, kabsch_t = kb.kabsch(atoms.positions, self._positions_ref)
+           positions_aligned = kb.apply_transform(atoms.positions, kabsch_r, kabsch_t)
+           kabsch_rmsd = kb.rmsd(positions_aligned, self._positions_ref)
 
-           R, t = kb.kabsch(atoms.positions, self._positions_ref)
-           pos_aligned = kb.apply_transform(atoms.positions, R, t)
-           rmsd = kb.rmsd(pos_aligned, self._positions_ref)
+           return {
+               "kabsch_t": kabsch_t,
+               "kabsch_r": kabsch_r,
+               "kabsch_rmsd": kabsch_rmsd,
+           }
 
-           return {"kabsch_r": R, "kabsch_t": t, "kabsch_rmsd": rmsd}
+Used in a minimization-based objective:
 
-   objective = QuantityComputerObjectiveFunction(
-       loss_function=lambda q: q["kabsch_rmsd"],
-       quantity_computer=MinimizationASEComputer(
-           calc_factory=construct_calc,
-           param_applier=apply_params,
-           atoms_factory=PathAtomsFactory("ref.traj"),
-           quantity_processors=[KabschDistance(PathAtomsFactory("ref.traj"))],
-           tag="kabsch",
-       ),
-   )
+.. code-block:: python
 
-   fitter = Fitter(objective_function=objective, initial_params={"epsilon": 1.5, "sigma": 1.2})
-   optimal_params = fitter.fit_scipy(tol=1e-4, options={"maxiter": 50})
+   objective = MinimizationASEComputer(
+                calc_factory=construct_calc,
+                param_applier=apply_params,
+                atoms_factory=PathAtomsFactory("ref.traj"),
+                quantity_processors=[
+                    KabschDistance(PathAtomsFactory("ref.traj"))
+                ],
+                tag="kabsch",
+            ).with_loss(lambda quants: quants["kabsch_rmsd"])
+
+.. note::
+
+   If a quantity processor needs persistent reference data, acquire it in
+   ``__init__`` and treat it as fixed thereafter.
+
+   Do not lazily initialize or mutate processor state inside ``__call__``.
+   That makes evaluation harder to reason about and can become problematic
+   under parallel execution.
 
 
-Design Notes
-============
+What gets stored in the context
+-------------------------------
 
-- **Composable:** all behavior is supplied via small protocol objects.
-- **Transparent:** metadata always includes the most recent quantities.
-- **Reproducible:** atoms are lazily created and cached per instance.
-- **ASE-native:** works directly with ASE calculators and optimizers.
-- **Debug-friendly:** loggers and metadata help inspect intermediate steps.
+Like any quantity computer, ASE-based computers write their results into the
+evaluation context.
 
-These abstractions allow the fitting layer (e.g. :class:`chemfit.fitter.Fitter`)
-to remain independent of the simulation backend while still exposing
-all relevant physical data through the quantity dictionaries.
+That means you can inspect quantities after evaluation:
+
+.. code-block:: python
+
+   from chemfit.abstract_objective_function import EvaluateContext
+
+   ctx = EvaluateContext()
+   quants = computer({"epsilon": 1.0, "sigma": 1.0}, ctx)
+
+   print(ctx.quantities)
+   print(ctx.to_meta_data())
+
+The ASE computer also uses ``ctx.temp.atoms`` internally during evaluation.
+That is an implementation detail, but it is useful to know when debugging.
+
+Composition vs subclassing
+--------------------------
+
+For these ASE computers, composition is usually enough.
+
+Most customization should happen through:
+
+- ``calc_factory``
+- ``param_applier``
+- ``atoms_factory``
+- ``atoms_post_processor``
+- ``quantity_processors``
+
+That already covers most use cases.
+
+Subclassing only becomes necessary when the evaluation flow itself changes. The
+main built-in example is
+:py:class:`~chemfit.ase_objective_function.MinimizationASEComputer`, which keeps
+the single-point setup but inserts an optimization step before the quantity
+processors run.
+
+Remarks
+-------
+
+The most important practical points are these.
+
+If you provide your own ``quantity_processors``, include
+:py:class:`~chemfit.ase_objective_function.DefaultQuantityProcessor`
+yourself if you still want ``calc.results`` in the output.
+
+If you need a fixed structure plus a custom derived quantity,
+:py:class:`~chemfit.ase_objective_function.SinglePointASEComputer` is usually the
+right tool.
+
+If the quantity should be measured after local relaxation, use
+:py:class:`~chemfit.ase_objective_function.MinimizationASEComputer` instead.
+
+Once wrapped in a
+:py:class:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction`,
+ASE-based computers integrate with
+:py:class:`~chemfit.fitter.Fitter`,
+:ref:`combined_objective_functions`, and :ref:`parallel_execution`.
