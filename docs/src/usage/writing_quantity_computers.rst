@@ -357,6 +357,7 @@ The benefit of this approach is two-fold
 
     For parallel evaluation with an executor, use the :py:func:`~chemfit.executor_utils.map_with_context` function.
     Differently from the regular executor ``map`` function, it correctly handles the ``ctx`` fields even if execution happens in different processes.
+    See also :ref:`parallel_execution`.
 
 =============================================================
 Child-parent relationships for the different context fields
