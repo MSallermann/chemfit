@@ -6,7 +6,30 @@ ASE-Based Quantity Computers
 The :mod:`chemfit.ase_objective_function` module provides quantity computers built
 around ASE.
 
-The basic pattern is simple. You provide four pieces:
+Minimal example
+---------------
+
+.. code-block:: python
+
+   from chemfit.ase_objective_function import SinglePointASEComputer, PathAtomsFactory
+
+   def construct_calc(atoms):
+       atoms.calc = MyCalculator()
+
+   def apply_params(atoms, params):
+       atoms.calc.parameters.update(params)
+
+   computer = SinglePointASEComputer(
+       calc_factory=construct_calc,
+       param_applier=apply_params,
+       atoms_factory=PathAtomsFactory("geometry.xyz"),
+   )
+
+   quants = computer({"param": 1.0})  # returns dict with energy, forces, ...
+   print(quants["energy"])
+
+The example above follows the standard pattern.
+You provide four pieces:
 
 - something that creates an ``ase.Atoms`` object
 - something that attaches a calculator to it
@@ -24,30 +47,142 @@ The main classes are:
 - :py:class:`~chemfit.ase_objective_function.SinglePointASEComputer`
 - :py:class:`~chemfit.ase_objective_function.MinimizationASEComputer`
 
-PathAtomsFactory
-----------------
+Implementing the customization points
+-------------------------------------
 
-The simplest atoms factory shipped with ChemFit is
-:py:class:`~chemfit.ase_objective_function.PathAtomsFactory`.
+The arguments passed to :py:class:`~chemfit.ase_objective_function.SinglePointASEComputer`
+are just small callables with well-defined responsibilities.
 
-It reads a single structure from disk using ASE.
+In most cases, you do not need to subclass anything. You only need to provide
+functions (or callable objects) with the expected behavior.
+
+Each component does one thing.
+
+
+Calculator factory
+^^^^^^^^^^^^^^^^^^
+
+A calculator factory receives an :py:class:`ase.Atoms` object and attaches a
+calculator to it.
 
 .. code-block:: python
 
-   from chemfit.ase_objective_function import PathAtomsFactory
+   from ase.calculators.lj import LennardJones
 
-   atoms_factory = PathAtomsFactory("geometry.traj")
-   atoms = atoms_factory()
+   def construct_lj(atoms):
+       atoms.calc = LennardJones()
 
-You can also pass an ASE index:
+The factory should not run the calculation. It should only attach the calculator.
+
+
+Parameter applier
+^^^^^^^^^^^^^^^^^
+
+A parameter applier receives the atoms object and the current parameter
+dictionary. Its job is to transfer fitting parameters into the attached
+calculator.
 
 .. code-block:: python
 
-   atoms_factory = PathAtomsFactory("trajectory.xyz", index=0)
+   def apply_params_lj(atoms, params):
+       atoms.calc.parameters.epsilon = params["epsilon"]
+       atoms.calc.parameters.sigma = params["sigma"]
 
-The important detail is that the factory must return exactly one
-:py:class:`ase.Atoms` object. If the index selects multiple images,
-:py:class:`~chemfit.ase_objective_function.PathAtomsFactory` raises an exception.
+This function is called for every evaluation. It should not rely on cached state.
+
+
+Atoms factory
+^^^^^^^^^^^^^
+
+An atoms factory takes no arguments and returns a single
+:py:class:`ase.Atoms` object.
+
+.. code-block:: python
+
+   from ase import Atoms
+
+   def make_dimer():
+       return Atoms("Ar2", positions=[[0, 0, 0], [3.5, 0, 0]])
+
+You can also implement factories as callable objects with internal state
+(this applies to all factories not just the atoms factory):
+
+.. code-block:: python
+
+   from ase.io import read
+
+   class MyAtomsFactory:
+       def __init__(self, path, index=0):
+           self.path = path
+           self.index = index
+
+       def __call__(self):
+           return read(self.path, index=self.index)
+
+:py:class:`~chemfit.ase_objective_function.PathAtomsFactory` is a built-in
+implementation of this pattern.
+
+.. note::
+
+    The simplest atoms factory shipped with ChemFit is
+    :py:class:`~chemfit.ase_objective_function.PathAtomsFactory`.
+
+    It reads a single structure from disk using ASE (:py:func:`ase.io.read`).
+
+    .. code-block:: python
+
+        from chemfit.ase_objective_function import PathAtomsFactory
+
+        atoms_factory = PathAtomsFactory("geometry.traj")
+        atoms = atoms_factory()
+
+    You can also pass an ASE index:
+
+    .. code-block:: python
+
+        atoms_factory = PathAtomsFactory("trajectory.xyz", index=0)
+
+    The important detail is that the factory must return exactly one
+    :py:class:`ase.Atoms` object. If the index selects multiple images,
+    :py:class:`~chemfit.ase_objective_function.PathAtomsFactory` raises an exception.
+
+Atoms post-processor
+^^^^^^^^^^^^^^^^^^^^
+
+An atoms post-processor receives the atoms object once, before it is cached by
+the computer instance.
+
+Use it for structure-level setup that should be shared across evaluations.
+
+.. code-block:: python
+
+   from ase.constraints import FixAtoms
+
+   def freeze_first_atom(atoms):
+       atoms.set_constraint(FixAtoms(indices=[0]))
+
+This function runs once during setup, not once per evaluation.
+
+
+Remarks
+^^^^^^^
+
+Each customization point has a single responsibility:
+
+- the atoms factory creates atoms
+- the calculator factory attaches a calculator
+- the parameter applier updates calculator parameters
+- the quantity processor extracts quantities
+
+All of these can be implemented either as plain functions or as callable
+objects (classes implementing ``__call__``).
+
+Using callable objects allows you to store configuration or reference data in
+``__init__`` while keeping evaluation itself stateless.
+
+Keeping these responsibilities separate makes the resulting computer easier to
+test and reuse.
+
 
 How a SinglePointASEComputer works
 ----------------------------------
@@ -59,50 +194,19 @@ A single evaluation does the following:
 
 1. create the base atoms object once, using ``atoms_factory``
 2. optionally modify it once, using ``atoms_post_processor``
-3. copy that cached atoms object into the evaluation context
+3. copy the cached atoms object into ``ctx.temp.atoms``
 4. attach a fresh calculator
 5. apply the current parameter dictionary
 6. call ``atoms.calc.calculate(atoms)``
 7. run all quantity processors and merge their outputs
 
 The important consequence is that the reference structure is cached on the
-computer instance, but each evaluation still uses a fresh copy of the atoms and
-a fresh calculator.
+computer instance, while each evaluation still uses a fresh copy of the atoms
+and a fresh calculator.
 
 That means the calculator can mutate internal state without corrupting later
 evaluations.
 
-A minimal example
------------------
-
-Here is the smallest realistic pattern.
-
-.. code-block:: python
-
-   from ase.calculators.lj import LennardJones
-
-   from chemfit.ase_objective_function import SinglePointASEComputer, PathAtomsFactory
-
-   def construct_lj(atoms):
-       atoms.calc = LennardJones()
-
-   def apply_params_lj(atoms, params):
-       atoms.calc.parameters.epsilon = params["epsilon"]
-       atoms.calc.parameters.sigma = params["sigma"]
-
-   computer = SinglePointASEComputer(
-       calc_factory=construct_lj,
-       param_applier=apply_params_lj,
-       atoms_factory=PathAtomsFactory("dimer.xyz"),
-   )
-
-   quants = computer({"epsilon": 1.0, "sigma": 1.0})
-   print(quants["energy"])
-
-This returns a quantity dictionary, not a loss.
-
-To turn it into an objective term, wrap it in a
-:py:class:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction`.
 
 Turning an ASE computer into an objective term
 ----------------------------------------------
@@ -149,7 +253,7 @@ using :py:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
 A real Lennard-Jones example
 ----------------------------
 
-The following example fits a Lennard-Jones potential.
+The following example fits a Lennard–Jones potential.
 
 For several interatomic distances, one objective term is created per
 configuration. Each term evaluates the energy with ASE and compares it to a
@@ -166,7 +270,10 @@ correct parameters.
    from chemfit.combined_objective_function import CombinedObjectiveFunction
    from chemfit.fitter import Fitter
 
-   from conftest import LJAtomsFactory, apply_params_lj, construct_lj, e_lj
+   from conftest import LJAtomsFactory, apply_params_lj, construct_lj
+
+   def e_lj(r, eps, sigma):
+       return 4 * eps * ((sigma / r)**12 - (sigma / r)**6)
 
    def loss_function(quants, e_ref):
        return (quants["energy"] - e_ref) ** 2
@@ -450,14 +557,14 @@ Used in a minimization-based objective:
 .. code-block:: python
 
    objective = MinimizationASEComputer(
-                calc_factory=construct_calc,
-                param_applier=apply_params,
-                atoms_factory=PathAtomsFactory("ref.traj"),
-                quantity_processors=[
-                    KabschDistance(PathAtomsFactory("ref.traj"))
-                ],
-                tag="kabsch",
-            ).with_loss(lambda quants: quants["kabsch_rmsd"])
+       calc_factory=construct_calc,
+       param_applier=apply_params,
+       atoms_factory=PathAtomsFactory("ref.traj"),
+       quantity_processors=[
+           KabschDistance(PathAtomsFactory("ref.traj"))
+       ],
+       tag="kabsch",
+   ).with_loss(lambda quants: quants["kabsch_rmsd"])
 
 .. note::
 
