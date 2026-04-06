@@ -444,7 +444,7 @@ class QuantityComputer:
         raise NotImplementedError
 
     def with_loss(
-        self, loss_function: Callable[..., float], *args, **kwargs
+        self, loss_function: Callable[..., float], /, **kwargs: Any
     ) -> QuantityComputerObjectiveFunction:
         """
         Create a new QuantityComputerObjectiveFunction from this QuantityComputer.
@@ -457,7 +457,7 @@ class QuantityComputer:
 
         """
         return QuantityComputerObjectiveFunction(
-            loss_function=partial(loss_function, *args, **kwargs),
+            loss_function=partial(loss_function, **kwargs),
             quantity_computer=self,
         )
 
