@@ -7,7 +7,9 @@ import subprocess
 import threading
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Protocol, Self, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, cast, runtime_checkable
+
+from typing_extensions import Self
 
 from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
 from chemfit.utils import check_protocol

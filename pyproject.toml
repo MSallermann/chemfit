@@ -9,6 +9,7 @@ dependencies = [
     "pandas",
     "matplotlib",
     "pydictnest",
+    "typing_extensions"
 ]
 requires-python = ">= 3.9"
 authors = [{ name = "Moritz Sallermann", email = "mos19@hi.is" }]
