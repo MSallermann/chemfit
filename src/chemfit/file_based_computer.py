@@ -62,9 +62,9 @@ CommandType = Callable[[dict[str, Any], Path], list[str]]
 class FileBasedQuantityComputer(QuantityComputer):
     def __init__(
         self,
-        output_files: list[Path],
+        output_files: list[Path | str],
         output_parsers: list[OutputParser] | OutputParser,
-        base_working_directory: Path,
+        base_working_directory: Path | str,
         executable_cmd: CommandType | None = None,
         presubmit_hook: PreSubmitHook | None = None,
         wait_timeout: float | None = 500.0,
@@ -130,8 +130,8 @@ class FileBasedQuantityComputer(QuantityComputer):
 
         super().__init__()
 
-        self.output_files = output_files
-        self.base_working_directory = base_working_directory
+        self.output_files = [Path(f) for f in output_files]
+        self.base_working_directory = Path(base_working_directory)
         self.write_dump_file_after_crash = write_dump_file_after_crash
         self.keep_temp_workdir_after_crash = keep_temp_workdir_after_crash
 

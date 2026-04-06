@@ -6,7 +6,6 @@ import numpy as np
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
-    QuantityComputerObjectiveFunction,
 )
 from chemfit.file_based_computer import FileBasedQuantityComputer
 from chemfit.fitter import Fitter
@@ -51,24 +50,24 @@ def test_squares_file_based():
     def callable_cmd(
         parameters: dict[str, float],
         workdir: Path,
+        script_file: Path,
+        output_file: Path,
     ) -> list[str]:
         return f"python {script_file} {parameters['prefactor']} {workdir / output_file}".split()
 
     output_parser = MyOutputParser()
 
-    file_based_computer = FileBasedQuantityComputer(
-        output_files=[output_file],
-        executable_cmd=callable_cmd,
-        output_parsers=output_parser,
-        poll_interval=0.5,
-        base_working_directory=test_dir / ".filebased_workdir",
-        subprocess_run_args={"capture_output": True},
-        delete_temp_workdirs=True,
-    )
-
-    ob_func = QuantityComputerObjectiveFunction(
-        loss_function=lambda q: loss_function(q, ref_y=ref_quantities["y"]),
-        quantity_computer=file_based_computer,
+    ob_func = (
+        FileBasedQuantityComputer(
+            output_files=[output_file],
+            output_parsers=output_parser,
+            poll_interval=0.5,
+            base_working_directory=test_dir / ".filebased_workdir",
+            subprocess_run_args={"capture_output": True},
+            delete_temp_workdirs=True,
+        )
+        .with_cmd(callable_cmd, script_file=script_file, output_file=output_file)
+        .with_loss(loss_function, ref_y=ref_quantities["y"])
     )
 
     ctx = EvaluateContext()
