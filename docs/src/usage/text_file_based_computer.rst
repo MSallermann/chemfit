@@ -73,7 +73,7 @@ For our example, we could define such a parser like so:
 .. note::
 
     As you can see :py:func:`my_output_parser` *has* to accept a list of output files.
-    In this simple example, we do not have to worry about this, since we know there will only every be one output file.
+    In this simple example, we do not have to worry about this, since we know there will only ever be one output file.
 
     The reason for the list is that the :py:class:`~chemfit.file_based_computer.FileBasedQuantityComputer` may specify multiple output files and, in fact, multiple parsers.
     All output files are passed to all parsers, and their outputs are merged.
@@ -94,7 +94,7 @@ Now we're ready to wire everything up:
     ob = (
         FileBasedQuantityComputer(
             output_files=["output.txt"],
-            output_parsers=my_output_parser,
+            output_parsers=[my_output_parser],
             base_working_directory=".",
             delete_temp_workdirs=True,
         )
