@@ -1,20 +1,22 @@
 from __future__ import annotations
 
+import copy
+import functools
 import shutil
 import subprocess
 import threading
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Protocol, Self, cast, runtime_checkable
 
 from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
 from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from pathlib import Path
 
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -54,29 +56,16 @@ class PreSubmitHook(Protocol):
         """
 
 
-@runtime_checkable
-class PostSubmitHook(Protocol):
-    """Protocol for running things after the command has run."""
-
-    def __call__(self, parameters: dict[str, Any], workdir: Path) -> None:
-        """
-        Protocol for running things after the command has run.
-
-        Args:
-            parameters (dict[str, Any]): Parameter dictionary for the evaluation.
-            workdir (Path): Temporary working directory for this evaluation.
-
-        """
-        ...
+CommandType = Callable[[dict[str, Any], Path], list[str]]
 
 
 class FileBasedQuantityComputer(QuantityComputer):
     def __init__(
         self,
         output_files: list[Path],
-        executable_cmd: Callable[[dict[str, Any], Path], list[str]],
         output_parsers: list[OutputParser] | OutputParser,
         base_working_directory: Path,
+        executable_cmd: CommandType | None = None,
         presubmit_hook: PreSubmitHook | None = None,
         wait_timeout: float | None = 500.0,
         poll_interval: float = 1,
@@ -159,9 +148,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         else:
             self.subprocess_run_args = subprocess_run_args
 
-        self.executable_cmd: Callable[[dict[str, Any], Path], list[str]] = (
-            executable_cmd
-        )
+        self.executable_cmd: CommandType | None = executable_cmd
 
         # Make sure that, if a single OutputParser has been passed, we turn it into a list with on element
         if isinstance(output_parsers, OutputParser):
@@ -194,6 +181,84 @@ class FileBasedQuantityComputer(QuantityComputer):
         temp_workdir.mkdir(exist_ok=False, parents=True)
         return temp_workdir
 
+    def with_presubmit(self, presubmit: Callable[..., None], /, **kwargs: Any) -> Self:
+        """
+        Return a copy of this computer with a bound presubmit hook.
+
+        The provided ``presubmit`` callable may accept additional keyword arguments
+        beyond ``(parameters, workdir)``. These are bound via ``kwargs`` and the
+        resulting callable is stored as the presubmit hook.
+
+        This is a convenience wrapper around ``functools.partial`` that avoids
+        requiring users to manually construct partial functions.
+
+        Args:
+            presubmit: Callable executed before the command is run. Must accept
+                ``(parameters: dict[str, Any], workdir: Path, ...)`` where any
+                additional arguments are keyword-only.
+            **kwargs: Keyword arguments to bind to ``presubmit``.
+
+        Returns:
+            A new ``FileBasedQuantityComputer`` instance with the updated
+            presubmit hook.
+
+        Example:
+            >>> def write_input(parameters, workdir, *, template_path):
+            ...     ...
+            >>> computer2 = computer.with_presubmit(
+            ...     write_input,
+            ...     template_path="INCAR.template",
+            ... )
+
+        Note:
+            Additional arguments must be keyword-only in ``presubmit``.
+
+        """
+
+        new = copy.copy(self)
+        new.presubmit_hook = functools.partial(presubmit, **kwargs)
+        return new
+
+    def with_cmd(
+        self,
+        executable_cmd: Callable[..., list[str]],
+        /,
+        **kwargs: Any,
+    ) -> Self:
+        """
+        Return a copy of this computer with a bound command function.
+
+        The provided ``executable_cmd`` may accept additional keyword arguments
+        beyond ``(parameters, workdir)``. These are bound via ``kwargs`` and the
+        resulting callable is stored as the command builder.
+
+        This is a convenience wrapper around ``functools.partial`` that avoids
+        requiring users to manually construct partial functions.
+
+        Args:
+            executable_cmd: Callable used to construct the command. Must accept
+                ``(parameters: dict[str, Any], workdir: Path, ...)`` where any
+                additional arguments are keyword-only.
+            **kwargs: Keyword arguments to bind to ``executable_cmd``.
+
+        Returns:
+            A new ``FileBasedQuantityComputer`` instance with the updated
+            command function.
+
+        Example:
+            >>> def cmd(parameters, workdir, *, executable):
+            ...     return [executable, str(parameters["x"])]
+            >>> computer2 = computer.with_cmd(cmd, executable="my_program")
+
+        Note:
+            Additional arguments must be keyword-only in ``executable_cmd``.
+
+        """
+
+        new = copy.copy(self)
+        new.executable_cmd = functools.partial(executable_cmd, **kwargs)
+        return new
+
     def build_cmd(self, parameters: dict[str, Any], ctx: EvaluateContext) -> list[str]:
         """
         Build the external command for the current evaluation.
@@ -207,6 +272,7 @@ class FileBasedQuantityComputer(QuantityComputer):
             Command to execute, formatted for ``subprocess.run``.
 
         """
+        self.executable_cmd = cast("CommandType", self.executable_cmd)
         return self.executable_cmd(parameters, ctx.temp.workdir)
 
     def _compute(  # noqa: PLR0912, PLR0915
@@ -338,6 +404,10 @@ class FileBasedQuantityComputer(QuantityComputer):
         easier to reproduce and debug failed evaluations.
 
         """
+
+        if self.executable_cmd is None:
+            msg = "No executable command has been attached. Supply it either in the constructor or use the `with_cmd` method."
+            raise Exception(msg)
 
         # Create a temporary working directory
         ctx.temp.workdir = self.create_temp_workdir()

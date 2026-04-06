@@ -57,9 +57,9 @@ def test_squares_file_based():
     output_parser = MyOutputParser()
 
     file_based_computer = FileBasedQuantityComputer(
-        [output_file],
-        callable_cmd,
-        output_parser,
+        output_files=[output_file],
+        executable_cmd=callable_cmd,
+        output_parsers=output_parser,
         poll_interval=0.5,
         base_working_directory=test_dir / ".filebased_workdir",
         subprocess_run_args={"capture_output": True},
