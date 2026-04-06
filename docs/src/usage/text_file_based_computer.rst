@@ -184,6 +184,53 @@ If input files need to be written before execution, use ``presubmit_hook``:
 
 This runs inside the working directory before the command is executed.
 
+Example: generating an input file
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+A common use of ``presubmit_hook`` is to generate input files from a template.
+
+.. code-block:: python
+
+   def write_input(
+       parameters: dict[str, Any],
+       workdir: Path,
+       *,
+       template_path: Path,
+       output_name: str,
+   ):
+       template = template_path.read_text()
+
+       content = template.replace("{{A}}", str(parameters["prefactor"]))
+
+       output_path = workdir / output_name
+       output_path.write_text(content)
+
+This can then be attached to the computer:
+
+.. code-block:: python
+
+   computer = (
+       FileBasedQuantityComputer(
+           output_files=[Path("output.txt")],
+           output_parsers=[my_output_parser],
+       )
+       .with_presubmit(
+           write_input,
+           template_path=Path("template.in"),
+           output_name="input.in",
+       )
+       .with_cmd(callable_cmd, script_file="square.py", output_file="output.txt")
+   )
+
+The presubmit hook runs inside the working directory before the command
+is executed. This makes it the right place to prepare all input files
+needed by the external program.
+
+.. hint::
+
+    Using a template engine such as ``Jinja`` to generate input files can be
+    a very powerful option in the ``presubmit_hook``, especially when many
+    files need to be configured or share common structure.
 
 Important rules
 ---------------
