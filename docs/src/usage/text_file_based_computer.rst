@@ -91,12 +91,16 @@ Now we're ready to wire everything up:
 
 .. code-block:: python
 
-    computer = FileBasedQuantityComputer(
-        output_files = [Path("output.txt")],
-        output_parsers = [my_output_parser]
-    ).with_cmd(callable_cmd, script_file="square.py", output_file="output.txt")
-
-    ob = computer.with_loss(loss_function, ref_y=ref_quantities["y"])
+    ob = (
+        FileBasedQuantityComputer(
+            output_files=["output.txt"],
+            output_parsers=my_output_parser,
+            base_working_directory=".",
+            delete_temp_workdirs=True,
+        )
+        .with_cmd(callable_cmd, script_file=script_file, output_file="output.txt")
+        .with_loss(loss_function, ref_y=ref_quantities["y"])
+    )
 
     initial_guess = {"prefactor": 0.01}
     fitter = Fitter(ob, initial_params=initial_guess)
