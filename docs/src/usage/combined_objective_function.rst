@@ -221,7 +221,7 @@ An aggregator has the richer signature
    def aggregator(
        terms: list[float],
        quantities: list[dict[str, object]],
-       ctx,
+       ctx : EvaluateContext,
    ) -> float:
        ...
 
