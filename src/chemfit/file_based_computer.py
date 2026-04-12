@@ -205,6 +205,12 @@ class FileBasedQuantityComputer(QuantityComputer):
             presubmit hook.
 
         Example:
+            >>> from chemfit.file_based_computer import FileBasedQuantityComputer
+            >>> computer = FileBasedQuantityComputer(
+            ...    output_files=["out.txt"],
+            ...    output_parsers=[],
+            ...    base_working_directory="workdir"
+            ... )
             >>> def write_input(parameters, workdir, *, template_path):
             ...     ...
             >>> computer2 = computer.with_presubmit(
@@ -248,9 +254,18 @@ class FileBasedQuantityComputer(QuantityComputer):
             command function.
 
         Example:
-            >>> def cmd(parameters, workdir, *, executable):
-            ...     return [executable, str(parameters["x"])]
-            >>> computer2 = computer.with_cmd(cmd, executable="my_program")
+            >>> from chemfit.file_based_computer import FileBasedQuantityComputer
+            >>> computer = FileBasedQuantityComputer(
+            ...    output_files=["out.txt"],
+            ...    output_parsers=[],
+            ...    base_working_directory="workdir"
+            ... )
+            >>> def write_input(parameters, workdir, *, template_path):
+            ...     ...
+            >>> computer2 = computer.with_presubmit(
+            ...     write_input,
+            ...     template_path="INCAR.template",
+            ... )
 
         Note:
             Additional arguments must be keyword-only in ``executable_cmd``.
