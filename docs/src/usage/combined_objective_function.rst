@@ -34,7 +34,7 @@ appropriate signature, as shown below.
 A minimal example
 -----------------
 
-.. code-block:: python
+.. testcode::
 
    from chemfit.combined_objective_function import CombinedObjectiveFunction
 
@@ -50,7 +50,12 @@ A minimal example
    )
 
    loss = objective({"x": 2.0})
-   print(loss)
+   print(loss) # 1.5
+
+.. testoutput::
+    :hide:
+
+    1.5
 
 This evaluates both terms for ``{"x": 2.0}``, multiplies them by the supplied
 weights, and then sums the weighted values.
@@ -80,25 +85,34 @@ of the child evaluations in ``ctx.meta["children"]``. That makes combined
 objectives useful not just for optimization but also for inspection and
 debugging.
 
-.. code-block:: python
+.. testcode::
 
-   from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.combined_objective_function import CombinedObjectiveFunction
+    from chemfit.abstract_objective_function import EvaluateContext
+    from chemfit.combined_objective_function import CombinedObjectiveFunction
+    from chemfit.wrap_funcs import to_objective_functor
 
-   def term1(params):
-       return (params["x"] - 1.0) ** 2
+    @to_objective_functor()
+    def term(params, a):
+        return (params["x"] - a) ** 2
 
-   def term2(params):
-       return (params["x"] - 3.0) ** 2
+    term1 = term.bind(a=1)
+    term2 = term.bind(a=3)
 
-   objective = CombinedObjectiveFunction([term1, term2], weights=[0.5, 1.0])
+    objective = CombinedObjectiveFunction([term1, term2], weights=[0.5, 1.0])
 
-   ctx = EvaluateContext()
-   loss = objective({"x": 2.0}, ctx)
+    ctx = EvaluateContext()
+    loss = objective({"x": 2.0}, ctx)
 
-   print(loss)
-   print(ctx.loss)
-   print(ctx.meta["children"])
+    print(loss) # 1.5
+    print(ctx.loss) # 1.5
+    print(ctx.meta["children"]) # child meta data
+
+.. testoutput::
+    :hide:
+
+    1.5
+    1.5
+    [{'quantities': None, 'parameters': {'x': 2.0}, 'loss': 1.0, 'meta': {}}, {'quantities': None, 'parameters': {'x': 2.0}, 'loss': 1.0, 'meta': {}}]
 
 Writing a custom reducer
 ------------------------
@@ -107,57 +121,86 @@ The simplest customization point is the reduction function.
 
 A simple reducer receives the list of weighted term values and returns a scalar:
 
-.. code-block:: python
+.. testcode::
 
-   def my_reducer(terms):
-       return max(terms)
+    def my_reducer(terms):
+        return max(terms)
 
-   objective = CombinedObjectiveFunction(
-       [term1, term2],
-       weights=[1.0, 1.0],
-       reduction=my_reducer,
-   )
+    objective = CombinedObjectiveFunction(
+        [term1, term2],
+        weights=[1.0, 1.0],
+        reduction=my_reducer,
+    )
+
+    print(objective({"x": 2.0})) # 1.0
+
+.. testoutput::
+    :hide:
+
+    1.0
 
 The library already provides a few simple reducers in
 :py:mod:`chemfit.combined_objective_function`:
 
 .. code-block:: python
 
-   from chemfit.combined_objective_function import (
-       CombinedObjectiveFunction,
-       sum_reducer,
-       mean_reducer,
-       root_mean_reducer,
-   )
+    from chemfit.combined_objective_function import (
+        CombinedObjectiveFunction,
+        sum_reducer,
+        mean_reducer,
+        root_mean_reducer,
+    )
 
-   objective = CombinedObjectiveFunction(
-       [term1, term2, term3],
-       reduction=root_mean_reducer,
-   )
+    objective = CombinedObjectiveFunction(
+        [term1, term2, term3],
+        reduction=root_mean_reducer,
+    )
+
+    print(objective({"x" : 2.0})) # 1.0
+
+.. testoutput::
+    :hide:
+
+    1.0
 
 The important detail is that the reducer sees the weighted term values, not the
 raw term outputs.
 
 That means these two are equivalent:
 
-.. code-block:: python
+.. testcode::
 
-   objective = CombinedObjectiveFunction(
-       [term1, term2],
-       weights=[0.5, 2.0],
-       reduction=sum_reducer,
-   )
+    from chemfit.combined_objective_function import sum_reducer
 
-.. code-block:: python
+    objective = CombinedObjectiveFunction(
+        [term1, term2],
+        weights=[0.5, 2.0],
+        reduction=sum_reducer,
+    )
+
+    print(objective({"x" : 2.0})) # 2.5
+
+.. testoutput::
+    :hide:
+
+    2.5
+
+.. testcode::
 
    def manual_sum(terms):
-       return sum(terms)
+       return 0.5*terms[0] + 2.0*terms[1] + sum(terms[2:])
 
    objective = CombinedObjectiveFunction(
        [term1, term2],
-       weights=[0.5, 2.0],
        reduction=manual_sum,
    )
+
+   print(objective({"x" : 2.0})) # 2.5
+
+.. testoutput::
+    :hide:
+
+    2.5
 
 Reducer vs aggregator
 ---------------------
@@ -201,7 +244,7 @@ evaluation, and the aggregator can use them.
 
 The following example is based on the actual test setup.
 
-.. code-block:: python
+.. testcode::
 
    from chemfit.abstract_objective_function import EvaluateContext
    from chemfit.combined_objective_function import CombinedObjectiveFunction
@@ -228,6 +271,12 @@ The following example is based on the actual test setup.
 
    print(loss)            # 3.0 + 5.0 = 8.0
    print(ctx.meta["foo"]) # "bar"
+
+.. testoutput::
+    :hide:
+
+    8.0
+    bar
 
 This example is worth looking at carefully.
 
@@ -271,7 +320,7 @@ The default handler simply re-raises the exception:
 
 Returning ``math.nan`` marks the whole reduction as invalid in the usual way:
 
-.. code-block:: python
+.. testcode::
 
    import math
 
@@ -296,9 +345,15 @@ Returning ``math.nan`` marks the whole reduction as invalid in the usual way:
    print(math.isnan(loss))     # True
    print(math.isnan(ctx.loss)) # True
 
+.. testoutput::
+    :hide:
+
+    True
+    True
+
 Returning ``None`` skips the failed term entirely:
 
-.. code-block:: python
+.. testcode::
 
    from chemfit.abstract_objective_function import EvaluateContext
    from chemfit.combined_objective_function import (
@@ -321,6 +376,12 @@ Returning ``None`` skips the failed term entirely:
    print(loss)                       # 1.0
    print(ctx.meta["skipped_indices"])  # [1]
 
+.. testoutput::
+    :hide:
+
+    1.0
+    [1]
+
 This skip behavior is implemented through
 :py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.filter_terms`.
 Terms for which the exception handler returns ``None`` are removed before the
@@ -328,19 +389,33 @@ reduction is applied.
 
 Writing your own exception handler is straightforward:
 
-.. code-block:: python
+.. testcode::
 
-   def my_exception_handler(exception, ctx, idx):
-       ctx.meta["last_failure"] = {
-           "idx": idx,
-           "message": str(exception),
-       }
-       return None
+    def my_exception_handler(exception, ctx, idx):
+        ctx.meta["last_failure"] = {
+            "idx": idx,
+            "message": str(exception),
+        }
+        return None
 
-   objective = CombinedObjectiveFunction(
-       [term1, term2, term3],
-       exception_handler=my_exception_handler,
-   )
+    objective = CombinedObjectiveFunction(
+        [term1, broken],
+        exception_handler=my_exception_handler,
+    )
+
+    ctx = EvaluateContext()
+    print(objective({"x" : 2.0}, ctx))
+    print(ctx.meta["children"][1]["meta"]["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
+
+.. testoutput::
+    :hide:
+
+    1.0
+    {'idx': 1, 'message': 'Whoops'}
+
+.. note::
+
+    The exception handler sees *only* the child context.
 
 Using a child context configurator
 ----------------------------------
@@ -359,23 +434,27 @@ The configurator has the signature
 
 A small example:
 
-.. code-block:: python
+.. testcode::
 
-   from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.combined_objective_function import CombinedObjectiveFunction
+    from chemfit.abstract_objective_function import EvaluateContext
+    from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-   def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
-       child_ctx.meta["configurator_number"] = idx_child_ctx + num_children
+    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
+        child_ctx.meta["configurator_number"] = idx_child_ctx + num_children
 
-   objective = CombinedObjectiveFunction(
-       [term1, term2, term3],
-       child_context_configurator=configurator,
-   )
+    objective = CombinedObjectiveFunction(
+        [term1, term2],
+        child_context_configurator=configurator,
+    )
 
-   ctx = EvaluateContext()
-   objective({"x": 2.0}, ctx)
+    ctx = EvaluateContext()
+    objective({"x": 2.0}, ctx)
 
-   print([child["meta"]["configurator_number"] for child in ctx.meta["children"]])
+    print([child["meta"]["configurator_number"] for child in ctx.meta["children"]])
+
+.. testoutput::
+
+    [2, 3]
 
 This is mostly useful when the terms need slightly different evaluation setup.
 
@@ -427,10 +506,12 @@ one flat object, use
 In this example, the terms of ``cob2`` are included with their internal weights
 scaled by ``10.0``.
 
-One detail matters here: ``add_flat`` only flattens terms and weights. It does
-not preserve the execution policy or other custom behavior of the input objects.
-The returned object is a fresh combined objective using the class defaults unless
-you reconfigure it afterward.
+.. warning::
+
+    One detail matters here: ``add_flat`` only flattens terms and weights. It does
+    not preserve the execution policy or other custom behavior of the input objects.
+    The returned object is a fresh combined objective using the class defaults unless
+    you reconfigure it afterward.
 
 Parallel execution
 ------------------

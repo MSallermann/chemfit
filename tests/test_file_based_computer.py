@@ -83,6 +83,6 @@ def test_squares_file_based():
 if __name__ == "__main__":
     import logging
 
-    logging.basicConfig(filename="test_lj.log")
+    logging.basicConfig(filename="test_file_based.log")
 
     test_squares_file_based()
