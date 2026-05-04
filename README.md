@@ -1,5 +1,48 @@
-# ChemFit
+<p align="center">
+    <img src="https://github.com/msallermann/chemfit/blob/next/logo/chemfit_logo.svg?raw=true" width="400"/>
+</p>
 
-Python package to support fitting the free parameters of potentials described by an ASE calculator.
+# About
 
-Please, find the **documentation** (which is a work in progress) [here](https://chemfit.readthedocs.io/en/latest/).
+ChemFit is a Python package for concurrent force-field parameter optimization. It can be used with ASE calculators and external executables.
+
+# Installation
+
+From PyPi:
+
+```bash
+pip install chemfit
+```
+
+Or, locally:
+
+```bash
+git clone git@github.com:MSallermann/chemfit.git
+pip install chemfit
+```
+
+# Documentation
+
+Please check the **documentation** for details [here](https://chemfit.readthedocs.io/en/latest/).
+
+# Citation
+
+If you find ChemFit useful and happen to use it in any academic context, please use this reference to cite it:
+
+```
+@misc{sallermann2026chemfitconcurrentframeworkmodel,
+      title={ChemFit: A concurrent framework for model parametrization},
+      author={Moritz Sallermann and Amrita Goswami and Hannes Jónsson and Elvar Ö. Jónsson and Jorge R. Espinosa},
+      year={2026},
+      eprint={2603.11769},
+      archivePrefix={arXiv},
+      primaryClass={physics.chem-ph},
+      url={https://arxiv.org/abs/2603.11769},
+}
+```
+
+Thanks!
+
+# Problems?
+
+Please open an issue [here](https://github.com/MSallermann/chemfit/issues).
