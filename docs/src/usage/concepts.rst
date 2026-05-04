@@ -54,6 +54,7 @@ independent contributions.
 -------------------------
 
 .. _concepts_parallel_eval:
+
 Independent terms and parallelism
 ==================================
 
