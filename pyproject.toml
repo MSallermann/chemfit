@@ -1,7 +1,7 @@
 [project]
 name = "chemfit"
 description = "A package to support fitting the parameters potentials described by an ASE calculator."
-version = "3.0.0"
+version = "3.1.0"
 dependencies = [
     "numpy < 2.4.0", # Nevergrad is not compatible with the newest numpy deprecations (see https://github.com/facebookresearch/nevergrad/issues/1707)
     "ase",
