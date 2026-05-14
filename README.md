@@ -30,9 +30,9 @@ Please check the **documentation** for details [here](https://chemfit.readthedoc
 If you find ChemFit useful and happen to use it in any academic context, please use this reference to cite it:
 
 ```
-@misc{sallermann2026chemfitconcurrentframeworkmodel,
-      title={ChemFit: A concurrent framework for model parametrization},
-      author={Moritz Sallermann and Amrita Goswami and Hannes Jónsson and Elvar Ö. Jónsson and Jorge R. Espinosa},
+@misc{sallermann2026chemfitframeworkautomatedhighdimensional,
+      title={ChemFit: A framework for automated high-dimensional model parameter optimization},
+      author={Moritz Sallermann and Amrita Goswami and Rosana Collepardo-Guevara and Alberto Ocana and Hannes Jónsson and Elvar Ö. Jónsson and Jorge R. Espinosa},
       year={2026},
       eprint={2603.11769},
       archivePrefix={arXiv},
