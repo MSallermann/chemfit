@@ -75,6 +75,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         delete_temp_workdirs: bool = True,
         write_dump_file_after_crash: bool = True,
         keep_temp_workdir_after_crash: bool = True,
+        try_parsing_after_exception: bool = False,
     ):
         """
         Initialize a file-based quantity computer.
@@ -122,7 +123,9 @@ class FileBasedQuantityComputer(QuantityComputer):
                 subprocess output when command execution fails.
             keep_temp_workdir_after_crash: Whether to keep the temporary
                 working directory for inspection after a failed evaluation.
-
+            try_parsing_after_exception: Whether to still try to continue the run by
+                parsing the output files if an exception has ocurred during subprocess.run.
+                Defaults to False.
 
         Raises:
             Exception: If any path in `output_files` is absolute rather
@@ -136,6 +139,7 @@ class FileBasedQuantityComputer(QuantityComputer):
         self.base_working_directory = Path(base_working_directory)
         self.write_dump_file_after_crash = write_dump_file_after_crash
         self.keep_temp_workdir_after_crash = keep_temp_workdir_after_crash
+        self.try_parsing_after_exception = try_parsing_after_exception
 
         # We need to make sure none of the output files is absolute.
         # The reason for this is that, to facilitate multiple concurrent evaluations,
@@ -484,7 +488,14 @@ class FileBasedQuantityComputer(QuantityComputer):
                         msg += f"\nWrote dump file to `{dump_path}`."
                     except Exception as exc_dump:
                         msg += f"\nCould not write dump file to `{dump_path}`, because of {exc_dump}."
-                raise Exception(msg) from e
+
+                msg += f"\n`{self.try_parsing_after_exception = }`."
+
+                if self.try_parsing_after_exception:
+                    msg += "\nWill attempt to parse output files."
+                    logger.warning(msg)
+                else:
+                    raise Exception(msg) from e
 
             # Block here until file appears (or timeout)
             # The main reason to implement this extra check is to eventually support remote execution, e.g. on clusters
