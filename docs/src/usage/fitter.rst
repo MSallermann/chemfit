@@ -29,6 +29,9 @@ ChemFit currently supports two optimization backends:
 1. :py:meth:`~chemfit.fitter.Fitter.fit_scipy`
 2. :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`
 
+Custom optimizers can be connected through the user-driven
+``init``/``ask``/``tell`` interface.
+
 Both operate on the same parameter-dictionary interface.
 
 ----------------------------------
@@ -252,6 +255,108 @@ ask/tell interface.
     )
 
 ----------------------------------
+User-supplied ask/tell interface
+----------------------------------
+
+An optimizer can be integrated without a dedicated backend. The user owns the
+loop while ChemFit evaluates parameter dictionaries, maintains contexts and
+dispatches its callbacks.
+
+.. code-block:: python
+
+    optimizer = MyOptimizer(initial_params, bounds)
+    fitter.init()
+
+    for _ in range(100):
+        params = optimizer.ask()
+        loss = fitter.ask(params)
+        optimizer.tell(params, loss)
+        fitter.tell()  # dispatch registered progress callbacks
+
+    opt_params = fitter.finish(optimizer.recommendation())
+
+``fitter.ask`` also accepts a list of candidates and evaluates it in parallel
+when ``fitter.init`` is configured with ``num_workers`` and an executor. If no
+recommendation is passed to ``finish``, ChemFit returns the best parameters it
+actually evaluated.
+
+A complete custom-loop example
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The optimizer only needs to propose parameter dictionaries and accept their
+losses. For example, this small optimizer searches a predefined set of points:
+
+.. code-block:: python
+
+    class CandidateSearch:
+        def __init__(self, candidates):
+            self.candidates = iter(candidates)
+            self.observations = []
+
+        def ask(self):
+            return next(self.candidates)
+
+        def tell(self, params, loss):
+            self.observations.append((loss, params))
+
+        def recommendation(self):
+            return min(self.observations, key=lambda item: item[0])[1]
+
+
+    def objective(params):
+        return (params["x"] - 2.0) ** 2
+
+
+    fitter = Fitter(objective, initial_params={"x": 0.0})
+    optimizer = CandidateSearch([{"x": 0.0}, {"x": 2.0}, {"x": 4.0}])
+
+    fitter.register_callback(print_progress, n_steps=1)
+    fitter.init()
+
+    for _ in range(3):
+        params = optimizer.ask()
+        loss = fitter.ask(params)
+        optimizer.tell(params, loss)
+        fitter.tell()
+
+    opt_params = fitter.finish(optimizer.recommendation())
+
+Calling ``fitter.ask`` applies the same objective wrapping, invalid-value
+handling and context bookkeeping as the built-in SciPy and Nevergrad fitting
+methods. Calling ``fitter.tell`` marks the end of an optimizer step and invokes
+callbacks registered for that step. ``fitter.finish`` runs the usual post-fit
+checks.
+
+User-driven parallel batches
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Candidates can also be evaluated in batches while the user retains control of
+the optimizer loop:
+
+.. code-block:: python
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(4) as executor:
+        fitter.init(num_workers=4, executor=executor)
+
+        for _ in range(25):
+            candidates = [optimizer.ask() for _ in range(4)]
+            losses = fitter.ask(candidates)
+
+            for params, loss in zip(candidates, losses):
+                optimizer.tell(params, loss)
+
+            fitter.tell()
+
+        opt_params = fitter.finish(optimizer.recommendation())
+
+One :class:`~chemfit.fitter.FitterEvaluateContext` is maintained per worker.
+The losses returned by ``fitter.ask`` have the same order as the candidate
+list. If no executor is supplied, ``fitter.init(num_workers=...)`` creates and
+later shuts down a thread pool automatically.
+
+----------------------------------
 Parallel Nevergrad execution
 ----------------------------------
 
@@ -263,6 +368,10 @@ Parallel evaluation is supported via ``num_workers``:
         budget=100,
         num_workers=4,
     )
+
+The evaluation budget is exact. When it is not divisible by ``num_workers``,
+the final batch contains only the remaining candidates. For example,
+``budget=10`` with four workers evaluates batches of four, four and two.
 
 Each worker uses its own
 :py:class:`~chemfit.fitter.FitterEvaluateContext`.

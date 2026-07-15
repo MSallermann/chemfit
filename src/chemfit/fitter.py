@@ -301,7 +301,119 @@ class Fitter:
                         f"    parameter = {kp}, lower = {lower}, value = {vp}, upper = {upper}"
                     )
 
-    def fit_nevergrad(  # noqa: PLR0912, PLR0915
+    def init(
+        self,
+        num_workers: int = 1,
+        contexts: list[FitterEvaluateContext] | None = None,
+        executor: ExecutorLike | None = None,
+    ) -> None:
+        """
+        Initialize a user-driven optimization session.
+
+        After initialization the user owns the optimization loop: obtain
+        candidates from an optimizer, pass them to :meth:`ask`, feed the
+        returned losses back to the optimizer, and call :meth:`tell` once per
+        optimizer step. Call :meth:`finish` with the optimizer's final
+        recommendation when the loop is complete.
+        """
+
+        if num_workers < 1:
+            msg = "num_workers must be at least 1"
+            raise ValueError(msg)
+        if contexts is not None and len(contexts) != num_workers:
+            msg = "contexts must contain one context per worker"
+            raise ValueError(msg)
+
+        self._user_owns_executor = num_workers != 1 and executor is None
+        if self._user_owns_executor:
+            executor = ThreadPoolExecutor(num_workers)
+
+        self._hook_pre_fit()
+        self._user_executor = executor
+        self._user_num_workers = num_workers
+        self._user_step = 0
+        self.contexts = (
+            [FitterEvaluateContext() for _ in range(num_workers)]
+            if contexts is None
+            else contexts
+        )
+
+    def ask(
+        self,
+        parameters: dict[str, Any] | list[dict[str, Any]],
+        context_index: int = 0,
+    ) -> float | list[float]:
+        """
+        Evaluate one candidate or a parallel batch proposed by the user.
+
+        A dictionary produces one loss. A list produces a list of losses in
+        input order and may contain at most ``num_workers`` candidates.
+        """
+
+        if not hasattr(self, "_user_num_workers"):
+            msg = "call fitter.init() before fitter.ask()"
+            raise RuntimeError(msg)
+
+        if isinstance(parameters, dict):
+            return self.objective_function(parameters, self.contexts[context_index])
+
+        if len(parameters) > self._user_num_workers:
+            msg = "a batch cannot contain more candidates than workers"
+            raise ValueError(msg)
+        if len(parameters) == 0:
+            return []
+        if len(parameters) == 1:
+            return [self.objective_function(parameters[0], self.contexts[0])]
+
+        if self._user_executor is None:
+            msg = "parallel evaluation requires an executor"
+            raise RuntimeError(msg)
+        return map_with_context(
+            self._user_executor,
+            self.objective_function,
+            parameters,
+            ctxs=self.contexts[: len(parameters)],
+        )
+
+    def tell(self, step: int | None = None) -> None:
+        """
+        Notify ChemFit that the user completed an optimizer step.
+
+        This dispatches registered fitter callbacks. If ``step`` is omitted,
+        an internal zero-based step counter is used and advanced automatically.
+        """
+
+        if not hasattr(self, "_user_step"):
+            msg = "call fitter.init() before fitter.tell()"
+            raise RuntimeError(msg)
+        current_step = self._user_step if step is None else step
+        callback, n_steps = self._unify_callbacks()
+        if callback is not None and current_step % n_steps == 0:
+            callback(current_step, self.contexts)
+        self._user_step = current_step + 1
+
+    def finish(self, opt_params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """
+        Finalize a user-driven session and return its chosen parameters.
+
+        When no recommendation is supplied, the best candidate evaluated by
+        ChemFit is used.
+        """
+
+        if opt_params is None:
+            evaluated = [ctx for ctx in self.contexts if ctx.opt_loss is not None]
+            if not evaluated:
+                msg = "cannot finish before evaluating a candidate"
+                raise RuntimeError(msg)
+            best_context = min(evaluated, key=lambda ctx: cast("float", ctx.opt_loss))
+            assert best_context.opt_params is not None
+            opt_params = dict(best_context.opt_params)
+        self._hook_post_fit(opt_params)
+        if self._user_owns_executor:
+            cast("ThreadPoolExecutor", self._user_executor).shutdown()
+        return opt_params
+
+    def fit_nevergrad(
         self,
         budget: int,
         optimizer_str: str = "NgIohTuned",
@@ -348,7 +460,7 @@ class Fitter:
         Raises:
             KeyError: If ``optimizer_str`` is not found in the nevergrad
                 optimizer registry.
-            AssertionError: If ``contexts`` is provided and its length does
+            ValueError: If ``contexts`` is provided and its length does
                 not equal ``num_workers``.
 
         Side Effects:
@@ -358,11 +470,6 @@ class Fitter:
             - Runs post-fit checks via ``_hook_post_fit()``.
 
         """
-
-        if num_workers != 1 and executor is None:
-            executor = ThreadPoolExecutor(num_workers)
-
-        self._hook_pre_fit()
 
         flat_bounds = flatten_dict(self.bounds)
         flat_initial_params = flatten_dict(self.initial_parameters)
@@ -378,28 +485,18 @@ class Fitter:
         try:
             OptimizerCls = ng.optimizers.registry[optimizer_str]
         except KeyError as e:
-            e.add_note(f"Available solvers: {list(ng.optimizers.registry.keys())}")
-            raise e
+            available_solvers = list(ng.optimizers.registry.keys())
+            msg = (
+                f"Unknown nevergrad optimizer {optimizer_str!r}. "
+                f"Available solvers: {available_solvers}"
+            )
+            raise KeyError(msg) from e
 
         optimizer = OptimizerCls(
             parametrization=instru, budget=budget, num_workers=num_workers
         )
 
-        def f_ng(parameters: dict[str, Any], ctx: FitterEvaluateContext) -> float:
-            params = unflatten_dict(parameters, dict_factory=dict)
-            return self.objective_function(params, ctx)
-
-        callback, n_steps = self._unify_callbacks()
-
-        # We need one context per worker
-        if contexts is None:
-            self.contexts = [FitterEvaluateContext() for _ in range(num_workers)]
-        else:
-            assert len(contexts) == num_workers
-            self.contexts = contexts
-
-        # After the if statements we know that we have a list of FitterEvaluateContexts and not None
-        self.contexts = cast("list[FitterEvaluateContext]", self.contexts)
+        self.init(num_workers=num_workers, contexts=contexts, executor=executor)
 
         # This applies restart parameters, **if** they are within the bounds
         if initial_observations is not None:
@@ -430,31 +527,31 @@ class Fitter:
                 )
                 optimizer.tell(asked_params, post_processed_loss_value)
 
-        for step in range(budget // num_workers):
+        for step, batch_start in enumerate(range(0, budget, num_workers)):
+            batch_size = min(num_workers, budget - batch_start)
+
             # On the first evaluation we ensure that the optimizer suggests the initial params
             if step == 0:
                 optimizer.suggest(flat_initial_params)
 
-            # Ask for num_workers parameters to evaluate in parallel
-            asked_params = [optimizer.ask() for _ in range(num_workers)]
+            # The final batch may be smaller than num_workers when the budget
+            # is not evenly divisible by the worker count.
+            asked_params = [optimizer.ask() for _ in range(batch_size)]
             flat_params = [p.value[0][0] for p in asked_params]
-
-            if num_workers == 1:
-                losses = [f_ng(flat_params[0], self.contexts[0])]
-            else:
-                assert executor is not None
-                assert self.contexts is not None
-                losses = map_with_context(
-                    executor, f_ng, flat_params, ctxs=self.contexts
-                )
+            nested_params = [
+                unflatten_dict(params, dict_factory=dict[str, Any])
+                for params in flat_params
+            ]
+            asked_losses = self.ask(nested_params)
+            assert isinstance(asked_losses, list)
+            losses = asked_losses
 
             [
                 optimizer.tell(params, loss)
                 for params, loss in zip(asked_params, losses, strict=True)
             ]
 
-            if callback is not None and step % n_steps == 0:
-                callback(step, self.contexts)
+            self.tell(step)
 
         recommendation = optimizer.provide_recommendation()
 
@@ -464,9 +561,7 @@ class Fitter:
 
         opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
 
-        self._hook_post_fit(opt_params)
-
-        return opt_params
+        return self.finish(opt_params)
 
     def fit_scipy(
         self,
@@ -504,8 +599,6 @@ class Fitter:
 
         """
 
-        self._hook_pre_fit()
-
         # Scipy expects a function with n real-valued parameters f(x)
         # but our objective function takes a dictionary of parameters.
         # Moreover, the dictionary might not be flat but nested.
@@ -526,10 +619,7 @@ class Fitter:
             bounds = np.array([flat_bounds.get(k, (None, None)) for k in self._keys])
 
         # Since we know that scipy.optimize works synchronously, we create a single context, which we'll keep alive.
-        if ctx is None:
-            self.contexts = [FitterEvaluateContext()]
-        else:
-            self.contexts = [ctx]
+        self.init(contexts=None if ctx is None else [ctx])
 
         # The local objective function first creates a flat dictionary from the `x` array
         # by zipping it with the captured flattened keys and then unflattens the dictionary
@@ -537,11 +627,9 @@ class Fitter:
         def f_scipy(x: npt.NDArray) -> float:
             p = unflatten_dict(dict(zip(self._keys, x)), dict_factory=dict[str, Any])
             cast("dict[str, Any]", p)
-            assert self.contexts is not None
-            return self.objective_function(p, ctx=self.contexts[0])
-
-        # First concatenate the list of callbacks into a single function
-        callback, n_steps = self._unify_callbacks()
+            loss = self.ask(p)
+            assert isinstance(loss, float)
+            return loss
 
         def callback_scipy(intermediate_result: OptimizeResult):
             if "nit" in intermediate_result:
@@ -549,8 +637,7 @@ class Fitter:
             else:
                 step = self.contexts[0].n_evals
 
-            if callback is not None and step % n_steps == 0:
-                callback(step, self.contexts)
+            self.tell(step)
 
         res = minimize(
             f_scipy, x0, method=method, bounds=bounds, **kwargs, callback=callback_scipy
@@ -563,6 +650,4 @@ class Fitter:
 
         opt_params = unflatten_dict(opt_params)
 
-        self._hook_post_fit(opt_params)
-
-        return opt_params
+        return self.finish(opt_params)
