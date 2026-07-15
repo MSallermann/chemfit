@@ -331,5 +331,56 @@ def test_seed_observations():
     assert 0.0 <= opt_params["x"] <= 5.0
 
 
+def test_nevergrad_evaluates_partial_final_batch():
+    n_calls = 0
+
+    def objective(params: dict[str, float]) -> float:
+        nonlocal n_calls
+        n_calls += 1
+        return params["x"] ** 2
+
+    fitter = Fitter(objective, initial_params={"x": 1.0})
+    fitter.fit_nevergrad(budget=3, num_workers=2)
+
+    assert n_calls == 3
+
+
+def test_user_supplied_ask_tell_interface():
+    candidates = iter([{"x": 0.0}, {"x": 2.0}, {"x": 4.0}])
+    observations = []
+
+    fitter = Fitter(lambda params: (params["x"] - 2.0) ** 2, {"x": 0.0})
+    fitter.init()
+    for params in candidates:
+        loss = fitter.ask(params)
+        observations.append((params, loss))
+        fitter.tell()
+    result = fitter.finish()
+
+    assert result == {"x": 2.0}
+    assert observations == [
+        ({"x": 0.0}, 4.0),
+        ({"x": 2.0}, 0.0),
+        ({"x": 4.0}, 4.0),
+    ]
+    assert fitter.contexts[0].n_evals == 3
+
+
+def test_user_supplied_ask_tell_recommendation_and_partial_batch():
+    fitter = Fitter(lambda params: params["x"] ** 2, {"x": 0.0})
+
+    with ThreadPoolExecutor(2) as executor:
+        fitter.init(num_workers=2, executor=executor)
+        losses = fitter.ask([{"x": 0.0}, {"x": 1.0}])
+        fitter.tell()
+        final_loss = fitter.ask([{"x": 2.0}])
+        fitter.tell()
+        result = fitter.finish({"x": 0.5})
+
+    assert losses == [0.0, 1.0]
+    assert final_loss == [4.0]
+    assert result == {"x": 0.5}
+
+
 if __name__ == "__main__":
     test_with_square_func()
