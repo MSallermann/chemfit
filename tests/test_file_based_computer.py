@@ -1,14 +1,22 @@
-from collections.abc import Iterable
+from __future__ import annotations
+
+import logging
+import subprocess
+import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import numpy as np
+import pytest
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
 )
 from chemfit.file_based_computer import FileBasedQuantityComputer
 from chemfit.fitter import Fitter
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 class MyOutputParser:
@@ -53,7 +61,12 @@ def test_squares_file_based():
         script_file: Path,
         output_file: Path,
     ) -> list[str]:
-        return f"python {script_file} {parameters['prefactor']} {workdir / output_file}".split()
+        return [
+            sys.executable,
+            str(script_file),
+            str(parameters["prefactor"]),
+            str(workdir / output_file),
+        ]
 
     output_parser = MyOutputParser()
 
@@ -80,9 +93,91 @@ def test_squares_file_based():
     assert np.isclose(opt_params["prefactor"], 2.0)
 
 
-if __name__ == "__main__":
-    import logging
+def test_try_parsing_after_subprocess_exception(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    output_file = Path("result.txt")
 
+    def failing_run(
+        cmd: list[str], *, check: bool, cwd: Path | str, **_kwargs: Any
+    ) -> NoReturn:
+        assert check
+        (Path(cwd) / output_file).write_text("42", encoding="utf-8")
+        raise subprocess.CalledProcessError(
+            returncode=1,
+            cmd=cmd,
+            output="partial output",
+            stderr="expected failure",
+        )
+
+    def parse_output(output_files: list[Path]) -> dict[str, int]:
+        return {"result": int(output_files[0].read_text(encoding="utf-8"))}
+
+    monkeypatch.setattr(subprocess, "run", failing_run)
+    computer = FileBasedQuantityComputer(
+        output_files=[output_file],
+        output_parsers=parse_output,
+        base_working_directory=tmp_path,
+        subprocess_run_args={},
+        try_parsing_after_exception=True,
+    ).with_cmd(lambda _parameters, _workdir: ["failing-command"])
+    ctx = EvaluateContext()
+
+    with caplog.at_level(logging.WARNING):
+        result = computer({}, ctx)
+
+    assert result == {"result": 42}
+    assert not ctx.temp.workdir.exists()
+    assert "Will attempt to parse output files." in caplog.text
+    dump_files = list(tmp_path.glob("*.dump"))
+    assert len(dump_files) == 1
+    assert "expected failure" in dump_files[0].read_text(encoding="utf-8")
+
+
+def test_subprocess_exception_does_not_parse_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    output_file = Path("result.txt")
+    parser_called = False
+
+    def failing_run(
+        cmd: list[str], *, check: bool, cwd: Path | str, **_kwargs: Any
+    ) -> NoReturn:
+        assert check
+        (Path(cwd) / output_file).write_text("42", encoding="utf-8")
+        raise subprocess.CalledProcessError(returncode=1, cmd=cmd)
+
+    def parse_output(output_files: list[Path]) -> dict[str, int]:
+        nonlocal parser_called
+        assert output_files
+        parser_called = True
+        return {"result": 42}
+
+    monkeypatch.setattr(subprocess, "run", failing_run)
+    computer = FileBasedQuantityComputer(
+        output_files=[output_file],
+        output_parsers=parse_output,
+        base_working_directory=tmp_path,
+        subprocess_run_args={},
+        delete_temp_workdirs=True,
+        keep_temp_workdir_after_crash=False,
+        write_dump_file_after_crash=False,
+    ).with_cmd(lambda _parameters, _workdir: ["failing-command"])
+    ctx = EvaluateContext()
+
+    with pytest.raises(Exception, match="Exception in `_compute`") as exc_info:
+        computer({}, ctx)
+
+    subprocess_exception = exc_info.value.__cause__.__cause__
+    assert isinstance(subprocess_exception, subprocess.CalledProcessError)
+    assert not parser_called
+    assert not ctx.temp.workdir.exists()
+
+
+if __name__ == "__main__":
     logging.basicConfig(filename="test_file_based.log")
 
     test_squares_file_based()
