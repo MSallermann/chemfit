@@ -23,6 +23,12 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def _subprocess_output_to_text(output: bytes | str) -> str:
+    if isinstance(output, bytes):
+        return output.decode("utf-8", errors="replace")
+    return output
+
+
 @runtime_checkable
 class OutputParser(Protocol):
     """Protocol for parsing output files into a quantity dictionary."""
@@ -123,9 +129,9 @@ class FileBasedQuantityComputer(QuantityComputer):
                 subprocess output when command execution fails.
             keep_temp_workdir_after_crash: Whether to keep the temporary
                 working directory for inspection after a failed evaluation.
-            try_parsing_after_exception: Whether to still try to continue the run by
-                parsing the output files if an exception has ocurred during subprocess.run.
-                Defaults to False.
+            try_parsing_after_exception: Whether to continue waiting for and parsing
+                output files when ``subprocess.run`` raises
+                ``subprocess.CalledProcessError``. Defaults to False.
 
         Raises:
             Exception: If any path in `output_files` is absolute rather
@@ -468,7 +474,8 @@ class FileBasedQuantityComputer(QuantityComputer):
                 )
 
                 if e.stderr is not None:
-                    msg += f"  stderr (if captured) = {e.stderr.decode('utf-8')}\n"
+                    stderr = _subprocess_output_to_text(e.stderr)
+                    msg += f"  stderr (if captured) = {stderr}\n"
 
                 # Try to write a dump file
                 if self.write_dump_file_after_crash:
@@ -479,10 +486,10 @@ class FileBasedQuantityComputer(QuantityComputer):
                         with dump_path.open("w") as f:
                             if e.stderr is not None:
                                 f.write("Stderr:\n")
-                                f.write(e.stderr.decode("utf-8"))
+                                f.write(_subprocess_output_to_text(e.stderr))
                             if e.stdout is not None:
                                 f.write("Stdout:\n")
-                                f.write(e.stdout.decode("utf-8"))
+                                f.write(_subprocess_output_to_text(e.stdout))
                             f.write("ctx.temp:\n")
                             f.write(f"{ctx.temp}")
                         msg += f"\nWrote dump file to `{dump_path}`."
@@ -495,6 +502,8 @@ class FileBasedQuantityComputer(QuantityComputer):
                     msg += "\nWill attempt to parse output files."
                     logger.warning(msg)
                 else:
+                    stop.set()
+                    watcher.join(timeout=1)
                     raise Exception(msg) from e
 
             # Block here until file appears (or timeout)
