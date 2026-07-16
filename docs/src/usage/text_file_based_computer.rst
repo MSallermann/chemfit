@@ -290,6 +290,32 @@ To inspect failures, you can also enable dump files:
        write_dump_file_after_crash=True,
    )
 
+Parsing output from a failed command
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Some external programs return a non-zero exit status after writing usable
+output files. Set ``try_parsing_after_exception=True`` to let the computer
+continue waiting for its configured output files and run the output parsers
+after :py:func:`subprocess.run` raises
+:py:class:`subprocess.CalledProcessError`:
+
+.. code-block:: python
+
+   computer = FileBasedQuantityComputer(
+       ...,
+       try_parsing_after_exception=True,
+   )
+
+The default is ``False``, so a non-zero exit status normally fails the
+evaluation without parsing. When enabled, the evaluation succeeds only if all
+configured output files appear within ``wait_timeout`` and every parser
+succeeds. The subprocess failure is logged as a warning, and dump-file settings
+still apply.
+
+Enable this only when a non-zero exit status is known to leave complete,
+trustworthy output. It can otherwise turn a failed calculation into an
+apparently successful result based on partial files.
+
 During execution, useful information is stored in the context, including:
 
 - the working directory
@@ -307,6 +333,9 @@ The constructor exposes additional options:
 - ``poll_interval`` - how often file existence is checked
 - ``subprocess_run_args`` - arguments passed to ``subprocess.run``
 - ``delete_temp_workdirs`` - whether to remove directories after success
+- ``write_dump_file_after_crash`` - whether to write subprocess diagnostics
+- ``keep_temp_workdir_after_crash`` - whether to retain failed work directories
+- ``try_parsing_after_exception`` - whether to parse output after a non-zero exit
 
 
 Subclassing
