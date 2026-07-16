@@ -262,6 +262,13 @@ An optimizer can be integrated without a dedicated backend. The user owns the
 loop while ChemFit evaluates parameter dictionaries, maintains contexts and
 dispatches its callbacks.
 
+.. warning::
+
+    The ``initial_params`` and ``bounds`` passed to :class:`~chemfit.fitter.Fitter`
+    are not used to initialize or constrain a user-supplied optimizer. Configure
+    them directly on the optimizer; ``fitter.ask`` evaluates any parameter
+    dictionary it receives, including candidates outside those bounds.
+
 .. code-block:: python
 
     optimizer = MyOptimizer(initial_params, bounds)
