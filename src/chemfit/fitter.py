@@ -46,6 +46,7 @@ class FitterEvaluateContext(EvaluateContext):
         self.opt_loss: float | None = None
         self.opt_params: dict[str, Any] | None = None
         self.opt_meta: dict[str, Any] | None = None
+        self.opt_quantities: dict[str, Any] | None = None
 
     def __getstate__(self) -> dict[str, Any]:
         state = super().__getstate__()
@@ -53,6 +54,7 @@ class FitterEvaluateContext(EvaluateContext):
         state["opt_loss"] = self.opt_loss
         state["opt_params"] = self.opt_params
         state["opt_meta"] = self.opt_meta
+        state["opt_quantities"] = self.opt_quantities
         return state
 
     def __setstate__(self, state: dict[str, Any]):
@@ -61,6 +63,7 @@ class FitterEvaluateContext(EvaluateContext):
         self.opt_loss = state["opt_loss"]
         self.opt_params = state["opt_params"]
         self.opt_meta = state["opt_meta"]
+        self.opt_quantities = state["opt_quantities"]
 
 
 class FitterObjectiveFunctor(ObjectiveFunctor):
@@ -128,6 +131,9 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
             ctx.opt_loss = loss
             ctx.opt_params = dict(parameters)
             ctx.opt_meta = dict(ctx.meta)
+
+            if ctx.quantities is not None:
+                ctx.opt_quantities = ctx.quantities
 
         return loss
 
@@ -420,8 +426,9 @@ class Fitter:
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
         executor: ExecutorLike | None = None,
-        initial_observations: Iterable[tuple[dict[str, Any], float | None]]
-        | None = None,
+        initial_observations: (
+            Iterable[tuple[dict[str, Any], float | None]] | None
+        ) = None,
     ) -> dict[str, Any]:
         """
         Optimize parameters using a nevergrad optimizer.

@@ -105,7 +105,10 @@ class CheckpointBestParameters:
     Whenever a new best loss is detected across the provided
     ``FitterEvaluateContext`` instances, the corresponding parameters and
     metadata are written to disk. The file is overwritten whenever a
-    better solution is found.
+    better solution is found (except if `dont_overwrite` is set to True).
+
+    If `dont_overwrite` is set to True a number a new file is created by
+    inserting a counting suffix to `path`.
 
     This callback is useful for long-running optimizations, as it allows
     recovery of the best solution even if the optimization process
@@ -113,7 +116,7 @@ class CheckpointBestParameters:
 
     """
 
-    def __init__(self, path: Path | str):
+    def __init__(self, path: Path | str, dont_overwrite: bool = False):
         """
         Initialize the checkpoint callback.
 
@@ -124,6 +127,8 @@ class CheckpointBestParameters:
         """
         self.path = Path(path)
         self.best_loss = None
+        self.dont_overwrite = dont_overwrite
+        self.counter = -1
 
     def __call__(self, step: int, ctxs: list[FitterEvaluateContext]):
         for ctx in ctxs:
@@ -132,15 +137,25 @@ class CheckpointBestParameters:
 
             if self.best_loss is None or ctx.opt_loss < self.best_loss:
                 self.best_loss = ctx.opt_loss
+                self.counter += 1
 
                 data = {
                     "step": step,
                     "loss": ctx.opt_loss,
                     "parameters": ctx.opt_params,
                     "meta": ctx.opt_meta,
+                    "quantities": ctx.opt_quantities,
                 }
 
-                with self.path.open("w") as f:
-                    json.dump(data, f, indent=4)
+                write_out_path = self.path
+                if self.dont_overwrite:
+                    suffix = self.path.suffix
+                    name = self.path.with_suffix("").name
+                    write_out_path = self.path.with_name(
+                        name + f"_{self.counter}"
+                    ).with_suffix(suffix)
+
+                with write_out_path.open("w") as f:
+                    json.dump(data, f, indent=4, cls=NumpyEncoder)
 
                 logger.info(f"New best loss {ctx.opt_loss} written to {self.path}")
