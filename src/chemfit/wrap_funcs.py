@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, Generic, TypeVar
+
+from typing_extensions import Concatenate
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
@@ -8,18 +10,17 @@ from chemfit.abstract_objective_function import (
     QuantityComputer,
 )
 
-WrappableObjFunction = (
-    Callable[[dict[str, Any]], float]
-    | Callable[[dict[str, Any], EvaluateContext], float]
-)
+ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+
+WrappableObjFunction = Callable[Concatenate[ParametersT, ...], float]
 
 
-class WrappedObjectiveFunctor(ObjectiveFunctor):
+class WrappedObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
     def __init__(
         self,
-        func: WrappableObjFunction,
+        func: WrappableObjFunction[ParametersT],
         pass_ctx: bool = False,
-        func_args: tuple[Any] | None = None,
+        func_args: tuple[Any, ...] | None = None,
         func_kwargs: dict[str, Any] | None = None,
     ):
         """
@@ -47,7 +48,9 @@ class WrappedObjectiveFunctor(ObjectiveFunctor):
         else:
             self.func_kwargs = func_kwargs
 
-    def bind(self, /, *args: Any, **kwargs: Any) -> WrappedObjectiveFunctor:
+    def bind(
+        self, /, *args: Any, **kwargs: Any
+    ) -> WrappedObjectiveFunctor[ParametersT]:
         """
         Return a new quantity computer with extra arguments bound.
 
@@ -69,7 +72,7 @@ class WrappedObjectiveFunctor(ObjectiveFunctor):
         )
 
     def __call__(
-        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
+        self, parameters: ParametersT, ctx: EvaluateContext | None = None
     ) -> float:
         """
         Evaluate the wrapped callable as an objective functor.
@@ -98,16 +101,19 @@ class WrappedObjectiveFunctor(ObjectiveFunctor):
         ctx.parameters = parameters
 
         if self.pass_ctx:
-            ctx.loss = self.func(
-                parameters, *self.func_args, **self.func_kwargs, ctx=ctx
-            )
+            loss = self.func(parameters, *self.func_args, **self.func_kwargs, ctx=ctx)
         else:
-            ctx.loss = self.func(parameters, *self.func_args, **self.func_kwargs)
+            loss = self.func(parameters, *self.func_args, **self.func_kwargs)
 
-        return ctx.loss
+        ctx.loss = loss
+        return loss
 
 
-def to_objective_functor(pass_ctx: bool = False):
+def to_objective_functor(
+    pass_ctx: bool = False,
+) -> Callable[
+    [WrappableObjFunction[ParametersT]], WrappedObjectiveFunctor[ParametersT]
+]:
     """
     Create a decorator that wraps a callable as an objective functor.
 
@@ -122,7 +128,9 @@ def to_objective_functor(pass_ctx: bool = False):
 
     """
 
-    def wrap(func: WrappableObjFunction):
+    def wrap(
+        func: WrappableObjFunction[ParametersT],
+    ) -> WrappedObjectiveFunctor[ParametersT]:
         return WrappedObjectiveFunctor(func, pass_ctx=pass_ctx)
 
     return wrap

@@ -339,9 +339,16 @@ class EvaluateContext:
         self.meta = state["meta"]
 
 
-class ObjectiveFunctor:
+ObjectiveParametersT_contra = TypeVar(
+    "ObjectiveParametersT_contra", bound=dict[str, Any], contravariant=True
+)
+
+
+class ObjectiveFunctor(Generic[ObjectiveParametersT_contra]):
     def __call__(
-        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
+        self,
+        parameters: ObjectiveParametersT_contra,
+        ctx: EvaluateContext | None = None,
     ) -> float:
         """
         Evaluate the objective function.
