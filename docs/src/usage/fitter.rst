@@ -190,8 +190,9 @@ nested shape. They receive a string at ``params["model"]["kind"]``, a number at
 
 The parametrization may omit numeric scalar leaves, whose behavior can be
 inferred safely, but must specify every other leaf. An entry must have a
-matching path in ``initial_params``. Constraints for an explicitly configured
-leaf belong on its Nevergrad parameter; the separate ``bounds`` dictionary
+matching path in ``initial_params``.
+**IMPORTANT:** Constraints for an explicitly configured
+leaf belong on its Nevergrad parameter; the separate ``bounds`` dictionary **only**
 configures numeric leaves that use the automatic scalar behavior.
 
 ----------------------------------
@@ -336,7 +337,7 @@ dispatches its callbacks.
     fitter.init()
 
     for _ in range(100):
-        params = optimizer.ask()
+        params = optimizer.ask() # <-- or any other api that your optimizer might have
         loss = fitter.ask(params)
         optimizer.tell(params, loss)
         fitter.tell()  # dispatch registered progress callbacks
