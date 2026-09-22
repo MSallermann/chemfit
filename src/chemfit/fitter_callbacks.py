@@ -149,13 +149,19 @@ class CheckpointBestParameters:
 
                 write_out_path = self.path
                 if self.dont_overwrite:
-                    suffix = self.path.suffix
-                    name = self.path.with_suffix("").name
-                    write_out_path = self.path.with_name(
-                        name + f"_{self.counter}"
-                    ).with_suffix(suffix)
+                    while True:
+                        write_out_path = self.path.with_name(
+                            f"{self.path.stem}_{self.counter}{self.path.suffix}"
+                        )
+                        try:
+                            output_file = write_out_path.open("x")
+                            break
+                        except FileExistsError:
+                            self.counter += 1
+                else:
+                    output_file = write_out_path.open("w")
 
-                with write_out_path.open("w") as f:
+                with output_file as f:
                     json.dump(data, f, indent=4, cls=NumpyEncoder)
 
-                logger.info(f"New best loss {ctx.opt_loss} written to {self.path}")
+                logger.info(f"New best loss {ctx.opt_loss} written to {write_out_path}")

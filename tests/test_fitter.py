@@ -1,18 +1,29 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
 import numpy as np
 import pytest
 from pydictnest import get_nested, has_nested, items_nested
 
+from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.utils import check_params_near_bounds
+from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
 NG_ATOL = 1e-1
 NSTEPS_CB = 100
 NG_BUDGET = 500
+
+
+def square_x(params: dict[str, float]) -> float:
+    return params["x"] ** 2
+
+
+def square_x_with_quantities(params: dict[str, float], ctx: EvaluateContext) -> float:
+    ctx.quantities = {"evaluated_x": params["x"]}
+    return square_x(params)
 
 
 def collect_progress(
@@ -380,6 +391,42 @@ def test_user_supplied_ask_tell_recommendation_and_partial_batch():
     assert losses == [0.0, 1.0]
     assert final_loss == [4.0]
     assert result == {"x": 0.5}
+
+
+def test_process_pool_preserves_fitter_context_state():
+    objective = WrappedObjectiveFunctor(square_x_with_quantities, pass_ctx=True)
+    fitter = Fitter(objective, {"x": 0.0})
+
+    with ProcessPoolExecutor(2) as executor:
+        fitter.init(num_workers=2, executor=executor)
+
+        assert fitter.ask([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
+        assert fitter.ask([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
+
+    first, second = fitter.contexts
+    assert first.n_evals == 2
+    assert first.opt_loss == 1.0
+    assert first.opt_params == {"x": 1.0}
+    assert first.opt_quantities == {"evaluated_x": 1.0}
+    assert second.n_evals == 2
+    assert second.opt_loss == 9.0
+    assert second.opt_params == {"x": 3.0}
+    assert second.opt_quantities == {"evaluated_x": 3.0}
+
+
+def test_new_best_without_quantities_clears_previous_best_quantities():
+    fitter = Fitter(square_x, {"x": 0.0})
+    ctx = FitterEvaluateContext()
+
+    ctx.quantities = {"source": "previous best"}
+    fitter.objective_function.post_process_return_value({"x": 2.0}, 4.0, ctx)
+
+    ctx.quantities = None
+    fitter.objective_function.post_process_return_value({"x": 1.0}, 1.0, ctx)
+
+    assert ctx.opt_loss == 1.0
+    assert ctx.opt_params == {"x": 1.0}
+    assert ctx.opt_quantities is None
 
 
 if __name__ == "__main__":

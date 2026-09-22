@@ -65,6 +65,27 @@ class FitterEvaluateContext(EvaluateContext):
         self.opt_meta = state["opt_meta"]
         self.opt_quantities = state["opt_quantities"]
 
+    def to_result_state(self) -> dict[str, Any]:
+        state = super().to_result_state()
+        state.update(
+            {
+                "n_evals": self.n_evals,
+                "opt_loss": self.opt_loss,
+                "opt_params": self.opt_params,
+                "opt_meta": self.opt_meta,
+                "opt_quantities": self.opt_quantities,
+            }
+        )
+        return state
+
+    def apply_result_state(self, state: dict[str, Any]):
+        super().apply_result_state(state)
+        self.n_evals = state["n_evals"]
+        self.opt_loss = state["opt_loss"]
+        self.opt_params = state["opt_params"]
+        self.opt_meta = state["opt_meta"]
+        self.opt_quantities = state["opt_quantities"]
+
 
 class FitterObjectiveFunctor(ObjectiveFunctor):
     def __init__(
@@ -131,9 +152,7 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
             ctx.opt_loss = loss
             ctx.opt_params = dict(parameters)
             ctx.opt_meta = dict(ctx.meta)
-
-            if ctx.quantities is not None:
-                ctx.opt_quantities = ctx.quantities
+            ctx.opt_quantities = ctx.quantities
 
         return loss
 
