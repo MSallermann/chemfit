@@ -104,7 +104,11 @@ This is done by specifying a dictionary of initial parameters
 
 .. note::
 
-    Every ``(key,value)`` pair in the `initial_params` dictionary is subject to optimization by the ``Fitter`` starting from the initial value given in the dict.
+    In this example, every numeric leaf in ``initial_params`` is varied by the
+    fitter, starting from the value shown above. Parameters that appear only in
+    ``default_params`` remain fixed. More generally, leaf behavior depends on
+    the selected optimization backend and, for Nevergrad, may be customized
+    with a partial parametrization; see :ref:`fitter`.
 
 .. note::
 

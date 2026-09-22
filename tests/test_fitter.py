@@ -1,5 +1,6 @@
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 
+import nevergrad as ng
 import numpy as np
 import pytest
 from pydictnest import get_nested, has_nested, items_nested
@@ -427,6 +428,104 @@ def test_new_best_without_quantities_clears_previous_best_quantities():
     assert ctx.opt_loss == 1.0
     assert ctx.opt_params == {"x": 1.0}
     assert ctx.opt_quantities is None
+
+
+def test_initial_parameters_must_be_mapping():
+    with pytest.raises(TypeError, match="must be a mapping"):
+        Fitter(lambda _params: 0.0, [1.0, 2.0])
+
+
+def test_nevergrad_parameter_leaves():
+    evaluated = []
+
+    def objective(params: dict[str, object]) -> float:
+        evaluated.append(params)
+        model_loss = 0.0 if params["model"] == "quadratic" else 1.0
+        return (
+            model_loss
+            + params["core"]["x"] ** 2
+            + np.sum(params["core"]["weights"] ** 2)
+        )
+
+    fitter = Fitter(
+        objective,
+        initial_params={
+            "model": "quadratic",
+            "core": {
+                "x": 1.0,
+                "weights": np.array([1.0, 2.0]),
+            },
+            "metadata": "fixed",
+        },
+    )
+
+    assert fitter.initial_parameters["model"] == "quadratic"
+    assert fitter.initial_parameters["core"]["x"] == 1.0
+    assert np.array_equal(fitter.initial_parameters["core"]["weights"], [1.0, 2.0])
+
+    result = fitter.fit_nevergrad(
+        budget=3,
+        optimizer_str="OnePlusOne",
+        parametrization={
+            "model": ng.p.Choice(["quadratic", "absolute"]),
+            "core": {
+                "x": ng.p.Log(init=1.0, lower=0.1, upper=10.0),
+                "weights": ng.p.Array(init=[1.0, 2.0], lower=-3.0, upper=3.0),
+            },
+            "metadata": ng.p.Constant("fixed"),
+        },
+    )
+
+    assert result["model"] in {"quadratic", "absolute"}
+    assert 0.1 <= result["core"]["x"] <= 10.0
+    assert isinstance(result["core"]["weights"], np.ndarray)
+    assert result["core"]["weights"].shape == (2,)
+    assert result["metadata"] == "fixed"
+    assert evaluated
+    assert all(params["metadata"] == "fixed" for params in evaluated)
+
+
+def test_nevergrad_parametrization_can_be_partial():
+    choice = ng.p.Choice(["linear", "quadratic"])
+    fitter = Fitter(
+        lambda params: params["x"] ** 2,
+        initial_params={
+            "x": 1.0,
+            "model": {"kind": "linear"},
+            "label": "fixed",
+        },
+        bounds={"x": (0.0, 2.0)},
+    )
+
+    instrumentation = fitter._make_nevergrad_parameterization(  # noqa: SLF001
+        {
+            "model": {"kind": choice},
+            "label": ng.p.Constant("fixed"),
+        }
+    )
+    parameter_leaves = instrumentation[0][0]
+
+    assert isinstance(parameter_leaves["x"], ng.p.Scalar)
+    assert np.array_equal(parameter_leaves["x"].bounds[0], [0.0])
+    assert np.array_equal(parameter_leaves["x"].bounds[1], [2.0])
+    assert isinstance(parameter_leaves["model.kind"], ng.p.Choice)
+    assert parameter_leaves["model.kind"] is not choice
+    assert isinstance(parameter_leaves["label"], ng.p.Constant)
+    assert parameter_leaves["label"].value == "fixed"
+
+
+def test_nevergrad_requires_explicit_non_numeric_leaves():
+    fitter = Fitter(lambda _params: 0.0, {"model": "linear"})
+
+    with pytest.raises(TypeError, match=r"ng\.p\.Constant"):
+        fitter.fit_nevergrad(budget=1)
+
+
+def test_nevergrad_parametrization_requires_parameter_leaves():
+    fitter = Fitter(square_x, {"x": 1.0})
+
+    with pytest.raises(TypeError, match="Nevergrad parameters"):
+        fitter.fit_nevergrad(budget=1, parametrization={"x": 2.0})
 
 
 if __name__ == "__main__":

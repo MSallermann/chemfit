@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import time
+from collections.abc import MutableMapping
 from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
 from typing import TYPE_CHECKING, Any, Callable, cast
@@ -10,10 +12,7 @@ from typing import TYPE_CHECKING, Any, Callable, cast
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
-from pydictnest import (
-    flatten_dict,
-    unflatten_dict,
-)
+from pydictnest import flatten_dict, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 
 from chemfit.abstract_objective_function import (
@@ -150,7 +149,9 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
 
         if ctx.opt_loss is None or loss < ctx.opt_loss:
             ctx.opt_loss = loss
-            ctx.opt_params = dict(parameters)
+            # Some supported leaves (for example NumPy arrays) are mutable.
+            # Keep the incumbent as a true snapshot of the evaluated values.
+            ctx.opt_params = copy.deepcopy(dict(parameters))
             ctx.opt_meta = dict(ctx.meta)
             ctx.opt_quantities = ctx.quantities
 
@@ -185,7 +186,7 @@ class Fitter:
     def __init__(
         self,
         objective_function: Callable[[dict[str, Any]], float] | ObjectiveFunctor,
-        initial_params: dict[str, Any],
+        initial_params: MutableMapping[str, Any],
         bounds: dict[str, Any] | None = None,
         near_bound_tol: float | None = None,
         value_bad_params: float = 1e5,
@@ -205,7 +206,8 @@ class Fitter:
                 be minimized. If a plain callable is provided, it is
                 converted to an `ObjectiveFunctor` using
                 `to_objective_functor`.
-            initial_params (dict[str, Any]): Initial parameter values.
+            initial_params: Nested mapping of concrete initial parameter
+                values passed to the objective.
             bounds (dict[str, Any] | None, optional): Bounds for each
                 parameter. The structure must mirror ``initial_params``,
                 but may omit bounds for parameters.
@@ -220,6 +222,13 @@ class Fitter:
 
         """
 
+        if not isinstance(initial_params, MutableMapping):
+            msg = "initial_params must be a mapping"
+            raise TypeError(msg)
+
+        self.initial_parameters = copy.deepcopy(dict(initial_params))
+        self.bounds = {} if bounds is None else bounds
+
         # Make sure that we have an ObjectiveFunctor instance
         if not isinstance(objective_function, ObjectiveFunctor):
             objective_function = WrappedObjectiveFunctor(
@@ -232,13 +241,6 @@ class Fitter:
             log_exceptions=log_exceptions,
             value_bad_params=value_bad_params,
         )
-
-        self.initial_parameters = initial_params
-
-        if bounds is None:
-            self.bounds = {}
-        else:
-            self.bounds = bounds
 
         self.value_bad_params: float = value_bad_params
 
@@ -348,15 +350,14 @@ class Fitter:
         if contexts is not None and len(contexts) != num_workers:
             msg = "contexts must contain one context per worker"
             raise ValueError(msg)
-
-        self._user_owns_executor = num_workers != 1 and executor is None
-        if self._user_owns_executor:
+        self._owns_executor = num_workers != 1 and executor is None
+        if self._owns_executor:
             executor = ThreadPoolExecutor(num_workers)
 
         self._hook_pre_fit()
-        self._user_executor = executor
-        self._user_num_workers = num_workers
-        self._user_step = 0
+        self._session_executor = executor
+        self._session_num_workers = num_workers
+        self._session_step = 0
         self.contexts = (
             [FitterEvaluateContext() for _ in range(num_workers)]
             if contexts is None
@@ -375,14 +376,16 @@ class Fitter:
         input order and may contain at most ``num_workers`` candidates.
         """
 
-        if not hasattr(self, "_user_num_workers"):
+        if not hasattr(self, "_session_num_workers"):
             msg = "call fitter.init() before fitter.ask()"
             raise RuntimeError(msg)
 
-        if isinstance(parameters, dict):
-            return self.objective_function(parameters, self.contexts[context_index])
+        if isinstance(parameters, MutableMapping):
+            return self.objective_function(
+                dict(parameters), self.contexts[context_index]
+            )
 
-        if len(parameters) > self._user_num_workers:
+        if len(parameters) > self._session_num_workers:
             msg = "a batch cannot contain more candidates than workers"
             raise ValueError(msg)
         if len(parameters) == 0:
@@ -390,11 +393,12 @@ class Fitter:
         if len(parameters) == 1:
             return [self.objective_function(parameters[0], self.contexts[0])]
 
-        if self._user_executor is None:
+        if self._session_executor is None:
             msg = "parallel evaluation requires an executor"
             raise RuntimeError(msg)
+
         return map_with_context(
-            self._user_executor,
+            self._session_executor,
             self.objective_function,
             parameters,
             ctxs=self.contexts[: len(parameters)],
@@ -408,14 +412,17 @@ class Fitter:
         an internal zero-based step counter is used and advanced automatically.
         """
 
-        if not hasattr(self, "_user_step"):
+        if not hasattr(self, "_session_step"):
             msg = "call fitter.init() before fitter.tell()"
             raise RuntimeError(msg)
-        current_step = self._user_step if step is None else step
+
+        current_step = self._session_step if step is None else step
         callback, n_steps = self._unify_callbacks()
+
         if callback is not None and current_step % n_steps == 0:
             callback(current_step, self.contexts)
-        self._user_step = current_step + 1
+
+        self._session_step = current_step + 1
 
     def finish(self, opt_params: dict[str, Any] | None = None) -> dict[str, Any]:
         """
@@ -432,11 +439,62 @@ class Fitter:
                 raise RuntimeError(msg)
             best_context = min(evaluated, key=lambda ctx: cast("float", ctx.opt_loss))
             assert best_context.opt_params is not None
-            opt_params = dict(best_context.opt_params)
+            opt_params = copy.deepcopy(best_context.opt_params)
+
         self._hook_post_fit(opt_params)
-        if self._user_owns_executor:
-            cast("ThreadPoolExecutor", self._user_executor).shutdown()
+
+        if self._owns_executor:
+            cast("ThreadPoolExecutor", self._session_executor).shutdown()
+
         return opt_params
+
+    def _make_nevergrad_parameterization(
+        self, parametrization: MutableMapping[str, Any] | None
+    ) -> ng.p.Instrumentation:
+        """Build Nevergrad's representation from concrete parameter values."""
+        flat_initial_params = flatten_dict(self.initial_parameters)
+        flat_bounds = flatten_dict(self.bounds)
+
+        if parametrization is None:
+            flat_parametrization = {}
+        elif isinstance(parametrization, MutableMapping):
+            flat_parametrization = flatten_dict(parametrization)
+        else:
+            msg = "parametrization must be a mapping"
+            raise TypeError(msg)
+
+        unknown_keys = set(flat_parametrization) - set(flat_initial_params)
+        if unknown_keys:
+            names = ", ".join(repr(key) for key in sorted(unknown_keys))
+            msg = f"parametrization contains unknown parameter leaves: {names}"
+            raise ValueError(msg)
+
+        ng_params = ng.p.Dict()
+        for key, value in flat_initial_params.items():
+            if key in flat_parametrization:
+                parameter = flat_parametrization[key]
+                if not isinstance(parameter, ng.p.Parameter):
+                    msg = (
+                        "parametrization leaves must be Nevergrad parameters, "
+                        f"got {key!r}"
+                    )
+                    raise TypeError(msg)
+                ng_params[key] = parameter.copy()
+            elif isinstance(value, Real):
+                lower, upper = flat_bounds.get(key, (None, None))
+                ng_params[key] = ng.p.Scalar(
+                    init=float(value), lower=lower, upper=upper
+                )
+            else:
+                msg = (
+                    f"cannot infer a Nevergrad parameter for leaf {key!r} "
+                    f"with type {type(value).__name__}; provide one in "
+                    "parametrization (use ng.p.Constant(...) to keep the "
+                    "value fixed)"
+                )
+                raise TypeError(msg)
+
+        return ng.p.Instrumentation(ng_params)
 
     def fit_nevergrad(
         self,
@@ -445,6 +503,7 @@ class Fitter:
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
         executor: ExecutorLike | None = None,
+        parametrization: MutableMapping[str, Any] | None = None,
         initial_observations: (
             Iterable[tuple[dict[str, Any], float | None]] | None
         ) = None,
@@ -468,6 +527,10 @@ class Fitter:
             executor: Optional executor used for parallel evaluation when
                 ``num_workers > 1``. If ``None``, a ``ThreadPoolExecutor`` is
                 created.
+            parametrization: Optional nested mapping of Nevergrad parameter
+                leaves. It may override any leaf in ``initial_params``; other
+                real-valued scalar leaves use ``Scalar``. All other leaf types
+                must be specified explicitly.
             initial_observations:
                 Optional iterable of previously evaluated ``(parameters, loss)``
                 pairs used to seed the optimizer.
@@ -497,43 +560,36 @@ class Fitter:
 
         """
 
-        flat_bounds = flatten_dict(self.bounds)
         flat_initial_params = flatten_dict(self.initial_parameters)
-
-        ng_params = ng.p.Dict()
-        for k, v in flat_initial_params.items():
-            # If `k` is in bounds, fetch the lower and upper bound
-            # It `k` is not in bounds just put lower=None and upper=None
-            lower, upper = flat_bounds.get(k, (None, None))
-            ng_params[k] = ng.p.Scalar(init=v, lower=lower, upper=upper)
-        instru = ng.p.Instrumentation(ng_params)
+        flat_bounds = flatten_dict(self.bounds)
+        instru = self._make_nevergrad_parameterization(parametrization)
 
         try:
-            OptimizerCls = ng.optimizers.registry[optimizer_str]
-        except KeyError as e:
+            optimizer_cls = ng.optimizers.registry[optimizer_str]
+        except KeyError as exc:
             available_solvers = list(ng.optimizers.registry.keys())
             msg = (
                 f"Unknown nevergrad optimizer {optimizer_str!r}. "
                 f"Available solvers: {available_solvers}"
             )
-            raise KeyError(msg) from e
+            raise KeyError(msg) from exc
 
-        optimizer = OptimizerCls(
+        optimizer = optimizer_cls(
             parametrization=instru, budget=budget, num_workers=num_workers
         )
 
         self.init(num_workers=num_workers, contexts=contexts, executor=executor)
 
-        # This applies restart parameters, **if** they are within the bounds
         if initial_observations is not None:
             for restart_params, restart_loss_value in initial_observations:
                 skip = False
-
                 flat_params = flatten_dict(restart_params)
 
-                for k, (lower, upper) in flat_bounds.items():
-                    rp = flat_params.get(k, None)
-                    if rp is not None and (rp < lower or rp > upper):
+                for key, (lower, upper) in flat_bounds.items():
+                    restart_value = flat_params.get(key)
+                    if restart_value is not None and (
+                        restart_value < lower or restart_value > upper
+                    ):
                         skip = True
 
                 if skip:
@@ -556,35 +612,26 @@ class Fitter:
         for step, batch_start in enumerate(range(0, budget, num_workers)):
             batch_size = min(num_workers, budget - batch_start)
 
-            # On the first evaluation we ensure that the optimizer suggests the initial params
             if step == 0:
                 optimizer.suggest(flat_initial_params)
 
-            # The final batch may be smaller than num_workers when the budget
-            # is not evenly divisible by the worker count.
             asked_params = [optimizer.ask() for _ in range(batch_size)]
-            flat_params = [p.value[0][0] for p in asked_params]
+            flat_params = [candidate.value[0][0] for candidate in asked_params]
             nested_params = [
-                unflatten_dict(params, dict_factory=dict[str, Any])
-                for params in flat_params
+                unflatten_dict(parameters, dict_factory=dict[str, Any])
+                for parameters in flat_params
             ]
             asked_losses = self.ask(nested_params)
             assert isinstance(asked_losses, list)
-            losses = asked_losses
 
-            [
+            for params, loss in zip(asked_params, asked_losses, strict=True):
                 optimizer.tell(params, loss)
-                for params, loss in zip(asked_params, losses, strict=True)
-            ]
 
             self.tell(step)
 
         recommendation = optimizer.provide_recommendation()
-
         args, _ = recommendation.value
-        # Our optimal params are the first positional argument
         flat_opt_params = args[0]
-
         opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
 
         return self.finish(opt_params)
@@ -625,35 +672,34 @@ class Fitter:
 
         """
 
-        # Scipy expects a function with n real-valued parameters f(x)
-        # but our objective function takes a dictionary of parameters.
-        # Moreover, the dictionary might not be flat but nested.
-        # Therefore, as a first step, we flatten the bounds and
-        # initial parameter dicts
         flat_params = flatten_dict(self.initial_parameters)
+        non_scalar_leaves = [
+            key for key, value in flat_params.items() if not isinstance(value, Real)
+        ]
+        if non_scalar_leaves:
+            names = ", ".join(repr(key) for key in non_scalar_leaves)
+            msg = f"fit_scipy requires real-valued scalar leaves, got {names}"
+            raise TypeError(msg)
+
         flat_bounds = flatten_dict(self.bounds)
-
-        # We then capture the order of keys in the flattened dictionary
         self._keys = flat_params.keys()
-
-        # The initial value of x and of the bounds are derived from that order
-        x0 = np.array([flat_params[k] for k in self._keys])
+        x0 = np.array([flat_params[key] for key in self._keys])
 
         if len(flat_bounds) == 0:
             bounds = None
         else:
-            bounds = np.array([flat_bounds.get(k, (None, None)) for k in self._keys])
+            bounds = np.array(
+                [flat_bounds.get(key, (None, None)) for key in self._keys]
+            )
 
         # Since we know that scipy.optimize works synchronously, we create a single context, which we'll keep alive.
         self.init(contexts=None if ctx is None else [ctx])
 
-        # The local objective function first creates a flat dictionary from the `x` array
-        # by zipping it with the captured flattened keys and then unflattens the dictionary
-        # to pass it to the objective functions
         def f_scipy(x: npt.NDArray) -> float:
-            p = unflatten_dict(dict(zip(self._keys, x)), dict_factory=dict[str, Any])
-            cast("dict[str, Any]", p)
-            loss = self.ask(p)
+            parameters = unflatten_dict(
+                dict(zip(self._keys, x)), dict_factory=dict[str, Any]
+            )
+            loss = self.ask(parameters)
             assert isinstance(loss, float)
             return loss
 
@@ -672,8 +718,6 @@ class Fitter:
         if not res.success:
             logger.warning(f"Fit did not converge: {res.message}")
 
-        opt_params = dict(zip(self._keys, res.x))
-
-        opt_params = unflatten_dict(opt_params)
+        opt_params = unflatten_dict(dict(zip(self._keys, res.x)))
 
         return self.finish(opt_params)

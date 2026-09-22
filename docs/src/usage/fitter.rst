@@ -7,9 +7,10 @@ Fitter
 The :py:class:`~chemfit.fitter.Fitter` class drives optimization of
 objective functions defined on parameter dictionaries.
 
-The Fitter is responsible for driving the optimization process, but
-does not impose any structure on the objective beyond accepting
-parameter dictionaries.
+The Fitter is responsible for driving the optimization process. Its evaluation
+interface consistently passes parameter dictionaries to the objective, while
+the selected optimization backend determines how values in those dictionaries
+are varied.
 
 It provides a uniform interface to different optimization backends and
 adds fitter-specific functionality such as:
@@ -89,8 +90,9 @@ If no context is provided, ChemFit creates one automatically.
 Parameter dictionaries
 ----------------------------------
 
-The parameter dictionary may be nested to arbitrary depth, as long as
-all leaf values are numeric.
+The top-level parameter container must be a dictionary or another mutable
+mapping. It may contain nested mappings; non-mapping values are treated as
+leaves. The objective receives the same nested shape.
 
 .. code-block:: python
 
@@ -99,13 +101,22 @@ all leaf values are numeric.
             "epsilon": 1.0,
             "sigma": 2.0,
         },
-        "threebody": {
-            "lambda": 3.0,
-        },
+        "model": "Lennard-Jones",
     }
 
-Internally, the parameter dictionary is flattened before being passed
-to the optimizer and reconstructed on each evaluation.
+Leaf types are not restricted by the general evaluation interface. They only
+need to be understood by the code producing candidates and by the objective.
+In particular:
+
+- :meth:`~chemfit.fitter.Fitter.fit_scipy` works with real-valued scalar leaves.
+- :meth:`~chemfit.fitter.Fitter.fit_nevergrad` automatically varies numeric
+  leaves. Other leaf types require an explicit Nevergrad parameter because
+  their intended behavior cannot be inferred safely.
+- The user-supplied ask/tell interface accepts dictionaries directly and does
+  not interpret their leaves.
+
+The built-in backends flatten nested dictionaries while communicating with the
+optimizer and reconstruct them before each objective evaluation.
 
 ----------------------------------
 Bounds
@@ -125,6 +136,63 @@ tuple.
     }
 
 Bounds may be omitted for individual parameters.
+
+----------------------------------
+Rich Nevergrad leaves
+----------------------------------
+
+The optional ``parametrization`` passed to
+:meth:`~chemfit.fitter.Fitter.fit_nevergrad` is a nested mapping whose leaves
+may be native Nevergrad parameters. This supports choices, arrays, logarithmic
+parameters, and Nevergrad's other parameter types.
+
+.. code-block:: python
+
+    import nevergrad as ng
+
+    from chemfit.fitter import Fitter
+
+    fitter = Fitter(
+        objective,
+        initial_params={
+            "model": {
+                "kind": "linear",
+                "degree": 2,
+            },
+            "scale": 1.0,
+            "weights": [1.0, 1.0],
+            "label": "fixed metadata",
+        },
+        bounds={"model": {"degree": (1, 5)}},
+    )
+    result = fitter.fit_nevergrad(
+        budget=100,
+        parametrization={
+            "model": {
+                "kind": ng.p.Choice(["linear", "quadratic"]),
+            },
+            "scale": ng.p.Log(init=1.0, lower=0.01, upper=100.0),
+            "weights": ng.p.Array(init=[1.0, 1.0], lower=-5.0, upper=5.0),
+            "label": ng.p.Constant("fixed metadata"),
+        },
+    )
+
+The two dictionaries are matched by nested leaf path. In this example,
+``model.kind`` uses the explicit ``Choice``, while the omitted numeric leaf
+``model.degree`` becomes a bounded :class:`nevergrad.p.Scalar`. The ``label``
+leaf is held constant because that behavior is requested explicitly with
+``Constant``.
+
+The objective and returned result contain realized values in the original
+nested shape. They receive a string at ``params["model"]["kind"]``, a number at
+``params["model"]["degree"]``, a float for ``scale``, and an array for
+``weights``—never Nevergrad parameter objects.
+
+The parametrization may omit numeric scalar leaves, whose behavior can be
+inferred safely, but must specify every other leaf. An entry must have a
+matching path in ``initial_params``. Constraints for an explicitly configured
+leaf belong on its Nevergrad parameter; the separate ``bounds`` dictionary
+configures numeric leaves that use the automatic scalar behavior.
 
 ----------------------------------
 FitterEvaluateContext
@@ -492,6 +560,7 @@ Summary
 ----------------------------------
 
 - Works with parameter dictionaries (possibly nested)
+- Supports native Nevergrad parameter types in ``fit_nevergrad``
 - Supports SciPy and Nevergrad backends
 - Adds robustness and tracking via a wrapper objective
 - Uses ``FitterEvaluateContext`` for evaluation bookkeeping
