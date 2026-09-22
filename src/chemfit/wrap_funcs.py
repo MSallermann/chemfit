@@ -10,15 +10,20 @@ from chemfit.abstract_objective_function import (
     QuantityComputer,
 )
 
-ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+ParametersT_contra = TypeVar(
+    "ParametersT_contra", bound=dict[str, Any], contravariant=True
+)
+QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
 
-WrappableObjFunction = Callable[Concatenate[ParametersT, ...], float]
+WrappableObjFunction = Callable[Concatenate[ParametersT_contra, ...], float]
 
 
-class WrappedObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
+class WrappedObjectiveFunctor(
+    ObjectiveFunctor[ParametersT_contra], Generic[ParametersT_contra]
+):
     def __init__(
         self,
-        func: WrappableObjFunction[ParametersT],
+        func: WrappableObjFunction[ParametersT_contra],
         pass_ctx: bool = False,
         func_args: tuple[Any, ...] | None = None,
         func_kwargs: dict[str, Any] | None = None,
@@ -50,7 +55,7 @@ class WrappedObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT
 
     def bind(
         self, /, *args: Any, **kwargs: Any
-    ) -> WrappedObjectiveFunctor[ParametersT]:
+    ) -> WrappedObjectiveFunctor[ParametersT_contra]:
         """
         Return a new quantity computer with extra arguments bound.
 
@@ -72,7 +77,7 @@ class WrappedObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT
         )
 
     def __call__(
-        self, parameters: ParametersT, ctx: EvaluateContext | None = None
+        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
     ) -> float:
         """
         Evaluate the wrapped callable as an objective functor.
@@ -112,7 +117,8 @@ class WrappedObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT
 def to_objective_functor(
     pass_ctx: bool = False,
 ) -> Callable[
-    [WrappableObjFunction[ParametersT]], WrappedObjectiveFunctor[ParametersT]
+    [WrappableObjFunction[ParametersT_contra]],
+    WrappedObjectiveFunctor[ParametersT_contra],
 ]:
     """
     Create a decorator that wraps a callable as an objective functor.
@@ -129,22 +135,25 @@ def to_objective_functor(
     """
 
     def wrap(
-        func: WrappableObjFunction[ParametersT],
-    ) -> WrappedObjectiveFunctor[ParametersT]:
+        func: WrappableObjFunction[ParametersT_contra],
+    ) -> WrappedObjectiveFunctor[ParametersT_contra]:
         return WrappedObjectiveFunctor(func, pass_ctx=pass_ctx)
 
     return wrap
 
 
-WrappableQuantFunction = Callable[..., dict[str, Any]]
+WrappableQuantFunction = Callable[Concatenate[ParametersT_contra, ...], QuantitiesT_co]
 
 
-class WrappedQuantityComputer(QuantityComputer):
+class WrappedQuantityComputer(
+    QuantityComputer[ParametersT_contra, QuantitiesT_co],
+    Generic[ParametersT_contra, QuantitiesT_co],
+):
     def __init__(
         self,
-        func: WrappableQuantFunction,
+        func: WrappableQuantFunction[ParametersT_contra, QuantitiesT_co],
         pass_ctx: bool = False,
-        func_args: tuple[Any] | None = None,
+        func_args: tuple[Any, ...] | None = None,
         func_kwargs: dict[str, Any] | None = None,
     ):
         """
@@ -173,7 +182,9 @@ class WrappedQuantityComputer(QuantityComputer):
         else:
             self.func_kwargs = func_kwargs
 
-    def bind(self, /, *args: Any, **kwargs: Any) -> WrappedQuantityComputer:
+    def bind(
+        self, /, *args: Any, **kwargs: Any
+    ) -> WrappedQuantityComputer[ParametersT_contra, QuantitiesT_co]:
         """
         Return a new quantity computer with extra arguments bound.
 
@@ -196,9 +207,9 @@ class WrappedQuantityComputer(QuantityComputer):
 
     def _compute(
         self,
-        parameters: dict[str, Any],
+        parameters: ParametersT_contra,
         ctx: EvaluateContext,
-    ) -> dict[str, Any]:
+    ) -> QuantitiesT_co:
         """
         Compute quantities using the wrapped callable.
 
@@ -221,7 +232,12 @@ class WrappedQuantityComputer(QuantityComputer):
         return self.func(parameters, *self.func_args, **self.func_kwargs)
 
 
-def to_quantity_computer(pass_ctx: bool = False):
+def to_quantity_computer(
+    pass_ctx: bool = False,
+) -> Callable[
+    [WrappableQuantFunction[ParametersT_contra, QuantitiesT_co]],
+    WrappedQuantityComputer[ParametersT_contra, QuantitiesT_co],
+]:
     """
     Create a decorator that wraps a callable as a quantity computer.
 
@@ -236,7 +252,9 @@ def to_quantity_computer(pass_ctx: bool = False):
 
     """
 
-    def wrap(func: WrappableQuantFunction):
+    def wrap(
+        func: WrappableQuantFunction[ParametersT_contra, QuantitiesT_co],
+    ) -> WrappedQuantityComputer[ParametersT_contra, QuantitiesT_co]:
         return WrappedQuantityComputer(func, pass_ctx=pass_ctx)
 
     return wrap

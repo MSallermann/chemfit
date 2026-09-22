@@ -6,6 +6,8 @@ from functools import partial
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
 
+from typing_extensions import Concatenate
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -339,15 +341,17 @@ class EvaluateContext:
         self.meta = state["meta"]
 
 
-ObjectiveParametersT_contra = TypeVar(
-    "ObjectiveParametersT_contra", bound=dict[str, Any], contravariant=True
+ParametersT_contra = TypeVar(
+    "ParametersT_contra", bound=dict[str, Any], contravariant=True
 )
+QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
+LossQuantitiesT = TypeVar("LossQuantitiesT", bound=dict[str, Any])
 
 
-class ObjectiveFunctor(Generic[ObjectiveParametersT_contra]):
+class ObjectiveFunctor(Generic[ParametersT_contra]):
     def __call__(
         self,
-        parameters: ObjectiveParametersT_contra,
+        parameters: ParametersT_contra,
         ctx: EvaluateContext | None = None,
     ) -> float:
         """
@@ -379,19 +383,10 @@ class ObjectiveFunctor(Generic[ObjectiveParametersT_contra]):
         raise NotImplementedError
 
 
-# We need a forward declaration here, so that we can write the `QuantityComputer.with_loss` function,
-# which returns a QuantityComputerObjectiveFunction
-class QuantityComputerObjectiveFunction:  # type: ignore
-    ...
+LossFunction = Callable[Concatenate[LossQuantitiesT, ...], float]
 
 
-LossFunction = (
-    Callable[[dict[str, Any]], float]
-    | Callable[[dict[str, Any], dict[str, Any]], float]
-)
-
-
-class QuantityComputer:
+class QuantityComputer(Generic[ParametersT_contra, QuantitiesT_co]):
     def __init__(self):
         """
         Initialize a quantity computer.
@@ -410,8 +405,8 @@ class QuantityComputer:
         self.static_meta_data: dict[str, Any] = {}  # For static meta data
 
     def __call__(
-        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
-    ) -> dict[str, Any]:
+        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
+    ) -> QuantitiesT_co:
         """
         Compute quantities for the given parameters.
 
@@ -445,14 +440,14 @@ class QuantityComputer:
         return ctx.quantities
 
     def _compute(
-        self, parameters: dict[str, Any], ctx: EvaluateContext
-    ) -> dict[str, Any]:
+        self, parameters: ParametersT_contra, ctx: EvaluateContext
+    ) -> QuantitiesT_co:
         """Compute dictionary of quantities for a given set of parameters."""
         raise NotImplementedError
 
     def with_loss(
-        self, loss_function: Callable[..., float], /, **kwargs: Any
-    ) -> QuantityComputerObjectiveFunction:
+        self, loss_function: LossFunction[QuantitiesT_co], /, **kwargs: Any
+    ) -> QuantityComputerObjectiveFunction[ParametersT_contra, QuantitiesT_co]:
         """
         Create a new QuantityComputerObjectiveFunction from this QuantityComputer.
 
@@ -469,11 +464,14 @@ class QuantityComputer:
         )
 
 
-class QuantityComputerObjectiveFunction(ObjectiveFunctor):  # noqa: F811
+class QuantityComputerObjectiveFunction(
+    ObjectiveFunctor[ParametersT_contra],
+    Generic[ParametersT_contra, QuantitiesT_co],
+):
     def __init__(
         self,
-        loss_function: LossFunction,
-        quantity_computer: QuantityComputer,
+        loss_function: LossFunction[QuantitiesT_co],
+        quantity_computer: QuantityComputer[ParametersT_contra, QuantitiesT_co],
     ) -> None:
         """
         Objective function composed of a `QuantityComputer` and a loss function.
@@ -504,7 +502,7 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):  # noqa: F811
         self.loss_function = loss_function
 
     def __call__(
-        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
+        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
     ) -> float:
         """
         Compute the objective loss.
@@ -544,8 +542,9 @@ class QuantityComputerObjectiveFunction(ObjectiveFunctor):  # noqa: F811
         ctx.meta.update(self.static_meta_data)
 
         try:
-            ctx.loss = self.loss_function(quantities)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+            loss = self.loss_function(quantities)
         except TypeError:
-            ctx.loss = self.loss_function(quantities, parameters)  # pyright: ignore[reportCallIssue] # we actually handle this with the signature checking
+            loss = self.loss_function(quantities, parameters)
 
-        return ctx.loss
+        ctx.loss = loss
+        return loss
