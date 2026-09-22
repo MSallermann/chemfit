@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
@@ -11,10 +11,14 @@ from chemfit.abstract_objective_function import (
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_utils import map_with_context
 
+ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
 
-class ExecutorWrapperCOB(ObjectiveFunctor):
+
+class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
     def __init__(
-        self, cob: CombinedObjectiveFunction, executor: ExecutorLike | None = None
+        self,
+        cob: CombinedObjectiveFunction[ParametersT],
+        executor: ExecutorLike | None = None,
     ):
         """
         Initialize a concurrent wrapper for a combined objective.
@@ -60,7 +64,7 @@ class ExecutorWrapperCOB(ObjectiveFunctor):
     ): ...
 
     def __call__(
-        self, parameters: dict[str, Any], ctx: EvaluateContext | None = None
+        self, parameters: ParametersT, ctx: EvaluateContext | None = None
     ) -> float:
         """
         Evaluate the wrapped combined objective using an executor.
@@ -95,28 +99,32 @@ class ExecutorWrapperCOB(ObjectiveFunctor):
         if ctx is None:
             ctx = EvaluateContext()
 
-        ctx.parameters = parameters
-
-        executor = ctx.executor or self.executor or ThreadPoolExecutor()
-
-        assert executor is not None
+        executor = ctx.executor or self.executor
+        created_executor: ThreadPoolExecutor | None = None
+        if executor is None:
+            created_executor = ThreadPoolExecutor()
+            executor = created_executor
 
         ctx.parameters = parameters
         ctx.meta.update({"n_terms": self.cob.n_terms()})
 
-        with ctx.child_contexts(
-            self.cob.n_terms(), configurator=self.cob.child_context_configurator
-        ) as child_contexts:
-            terms = map_with_context(
-                executor,
-                self.cob.evaluate_term,
-                [parameters for _ in range(self.cob.n_terms())],
-                range(self.cob.n_terms()),
-                ctxs=child_contexts,
-            )
+        try:
+            with ctx.child_contexts(
+                self.cob.n_terms(), configurator=self.cob.child_context_configurator
+            ) as child_contexts:
+                terms = map_with_context(
+                    executor,
+                    self.cob.evaluate_term,
+                    [parameters for _ in range(self.cob.n_terms())],
+                    range(self.cob.n_terms()),
+                    ctxs=child_contexts,
+                )
 
-        filtered_terms = self.cob.filter_terms(terms, ctx)
+            filtered_terms = self.cob.filter_terms(terms, ctx)
 
-        ctx.loss = self.cob.apply_reduction(filtered_terms, ctx)
+            ctx.loss = self.cob.apply_reduction(filtered_terms, ctx)
 
-        return ctx.loss
+            return ctx.loss
+        finally:
+            if created_executor is not None:
+                created_executor.shutdown()

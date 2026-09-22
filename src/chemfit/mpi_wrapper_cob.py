@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import math
 from enum import Enum
-from typing import Any
+from typing import Any, Generic, TypeVar, cast
 
 from mpi4py import MPI
 
@@ -12,6 +12,9 @@ from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.debug_utils import log_all_methods
 
 logger = logging.getLogger(__name__)
+
+ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+TermResult = float | None | Exception
 
 
 def slice_up_range(n: int, n_ranks: int):
@@ -43,7 +46,7 @@ class Signal(Enum):
     ABORT = -1
 
 
-class MPIWrapperCOB(ObjectiveFunctor):
+class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
     """
     MPI-based wrapper for ``CombinedObjectiveFunction``.
 
@@ -61,7 +64,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
     def __init__(
         self,
-        cob: CombinedObjectiveFunction,
+        cob: CombinedObjectiveFunction[ParametersT],
         comm: Any | None = None,
         mpi_debug_log: bool = False,
     ) -> None:
@@ -140,12 +143,12 @@ class MPIWrapperCOB(ObjectiveFunctor):
             )
 
     def evaluate_slice(
-        self, params: dict[str, Any], ctx: EvaluateContext
-    ) -> list[float | None]:
+        self, params: ParametersT, ctx: EvaluateContext
+    ) -> list[TermResult]:
         idx_slice = slice(self.start, self.end)
         selected_indices = range(self.cob.n_terms())[idx_slice]
 
-        local_terms = []
+        local_terms: list[TermResult] = []
 
         with ctx.child_contexts(
             len(selected_indices), configurator=self.shifted_child_context_configurator
@@ -161,7 +164,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
         return local_terms
 
-    def worker_process_params(self, params: dict[str, Any], ctx: EvaluateContext):
+    def worker_process_params(self, params: ParametersT, ctx: EvaluateContext):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
 
         local_terms = self.evaluate_slice(params, ctx)
@@ -209,7 +212,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
 
             if isinstance(signal, EvaluateContext):
                 assert signal.parameters is not None
-                params: dict[str, Any] = signal.parameters
+                params = cast("ParametersT", signal.parameters)
                 ctx = signal
                 self.worker_process_params(params, ctx)
                 self.worker_gather_meta_data(ctx)
@@ -259,7 +262,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         ctx.meta["children"] = total_meta_data
 
     def __call__(
-        self, params: dict[str, Any], ctx: EvaluateContext | None = None
+        self, params: ParametersT, ctx: EvaluateContext | None = None
     ) -> float:
         """
         Evaluate the combined objective on rank 0 using MPI.
@@ -305,9 +308,7 @@ class MPIWrapperCOB(ObjectiveFunctor):
         # Broadcast the params to the worker ranks
         self.comm.bcast(ctx, root=0)
 
-        local_terms: list[
-            float | None
-        ] = []  # So we get NaN in case the local compute fails
+        local_terms: list[TermResult] = []
         try:
             # Compute one slice of the objective function on the main rank
             local_terms = self.evaluate_slice(params, ctx=ctx)
@@ -319,17 +320,19 @@ class MPIWrapperCOB(ObjectiveFunctor):
         self.gather_meta_data(ctx)
 
         # Since gathered will now be a list of list, we unpack it
-        terms: list[float | None] = []
+        terms: list[TermResult] = []
 
         if gathered_terms is not None:
             [terms.extend(m) for m in gathered_terms]
 
         # If any exceptions from worker loops were sent to us we re-raise it
-        for t in terms:
-            if isinstance(t, Exception):
-                raise t
+        values: list[float | None] = []
+        for term in terms:
+            if isinstance(term, Exception):
+                raise term
+            values.append(term)
 
-        filtered_terms = self.cob.filter_terms(terms, ctx)
+        filtered_terms = self.cob.filter_terms(values, ctx)
         ctx.loss = self.cob.apply_reduction(filtered_terms, ctx)
         return ctx.loss
 

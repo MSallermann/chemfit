@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 import math
 from collections.abc import Sequence
-from typing import Any, Callable, Protocol, cast
+from typing import Any, Callable, Generic, Protocol, TypeVar, cast
 
 from typing_extensions import Self
 
@@ -14,11 +14,14 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
+ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+ObjectiveLike = Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
+
 
 def transform_generic_callables(
-    list_of_callables: Sequence[Callable[[dict[str, Any]], float]],
-) -> list[ObjectiveFunctor]:
-    res = []
+    list_of_callables: Sequence[ObjectiveLike[ParametersT]],
+) -> list[ObjectiveFunctor[ParametersT]]:
+    res: list[ObjectiveFunctor[ParametersT]] = []
     for func in list_of_callables:
         if isinstance(func, ObjectiveFunctor):
             res.append(func)
@@ -28,15 +31,16 @@ def transform_generic_callables(
 
 
 class Reducer(Protocol):
-    def __call__(self, terms: list[float]) -> float: ...
+    def __call__(self, terms: list[float], /) -> float: ...
 
 
 class Aggregator(Protocol):
     def __call__(
         self,
         terms: list[float],
-        quantities: list[dict[str, Any]],
+        quantities: list[dict[str, Any] | None],
         ctx: EvaluateContext,
+        /,
     ) -> float: ...
 
 
@@ -54,7 +58,7 @@ def root_mean_reducer(terms: list[float]) -> float:
 
 class ExceptionHandler(Protocol):
     def __call__(
-        self, exception: Exception, ctx: EvaluateContext, idx: int
+        self, exception: Exception, ctx: EvaluateContext, idx: int, /
     ) -> float | None: ...
 
 
@@ -90,19 +94,19 @@ class WrappedReducer(Aggregator):
     def __call__(
         self,
         terms: Sequence[float],
-        quantities: Sequence[dict[str, Any]],  # noqa: ARG002
+        quantities: Sequence[dict[str, Any] | None],  # noqa: ARG002
         ctx: EvaluateContext,  # noqa: ARG002
     ) -> float:
-        return self.reducer(terms)
+        return self.reducer(list(terms))
 
     def to_reducer(self) -> Reducer:
         return self.reducer
 
 
-class CombinedObjectiveFunction(ObjectiveFunctor):
+class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
     def __init__(
         self,
-        objective_functions: Sequence[Callable[[dict[str, Any]], float]],
+        objective_functions: Sequence[ObjectiveLike[ParametersT]],
         weights: Sequence[float] | None = None,
         child_context_configurator: ChildContextConfigurator | None = None,
         reduction: Reducer | Aggregator = sum_reducer,
@@ -142,12 +146,12 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         """
 
         # Convert to list internally for mutability
-        self.objective_functions: list[ObjectiveFunctor] = transform_generic_callables(
-            objective_functions
-        )
+        self.objective_functions = transform_generic_callables(objective_functions)
 
         self.child_context_configurator = child_context_configurator
 
+        # TODO(MS): Replace signature-length inspection with an explicit,  # noqa: TD003
+        # reliable way to distinguish reducers from aggregators.
         if len(inspect.signature(reduction).parameters) == 1:
             reduction = cast("Reducer", reduction)
             self.reduction: Aggregator = WrappedReducer(reduction)
@@ -176,10 +180,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
     def add(
         self,
-        obj_funcs: (
-            Sequence[Callable[[dict[str, Any]], float]]
-            | Callable[[dict[str, Any]], float]
-        ),
+        obj_funcs: (Sequence[ObjectiveLike[ParametersT]] | ObjectiveLike[ParametersT]),
         weights: Sequence[float] | float = 1.0,
     ) -> Self:
         """
@@ -291,7 +292,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         # Ensure all scaling weights are non-negative
         assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
 
-        total_objective_functions: list[Callable[[dict[str, Any]], float]] = []
+        total_objective_functions: list[ObjectiveLike[ParametersT]] = []
         total_weights: list[float] = []
 
         for sub_cob, scale in zip(combined_objective_functions_list, weights):
@@ -308,7 +309,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
     def evaluate_term(
         self,
-        parameters: dict[str, Any],
+        parameters: ParametersT,
         idx: int,
         ctx: EvaluateContext,
     ) -> float | None:
@@ -355,15 +356,15 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
         ctx.meta["skipped_indices"] = skipped_indices
         return filtered_terms
 
-    def apply_reduction(self, terms: Sequence[float], ctx: EvaluateContext):
-        child_quantities = []
+    def apply_reduction(self, terms: Sequence[float], ctx: EvaluateContext) -> float:
+        child_quantities: list[dict[str, Any] | None] = []
         for idx, child in enumerate(ctx.meta["children"]):
             if idx not in ctx.meta["skipped_indices"]:
                 child_quantities.append(child["quantities"])
-        return self.reduction(terms, child_quantities, ctx)
+        return self.reduction(list(terms), child_quantities, ctx)
 
     def evaluate_terms(
-        self, parameters: dict[str, Any], ctx: EvaluateContext
+        self, parameters: ParametersT, ctx: EvaluateContext
     ) -> list[float]:
         """
         Evaluate the objective terms.
@@ -396,7 +397,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor):
 
     def __call__(
         self,
-        parameters: dict[str, Any],
+        parameters: ParametersT,
         ctx: EvaluateContext | None = None,
     ) -> float:
         """
