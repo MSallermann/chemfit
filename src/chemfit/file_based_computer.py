@@ -7,9 +7,18 @@ import subprocess
 import threading
 import time
 import uuid
-from typing import TYPE_CHECKING, Any, Callable, Protocol, cast, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Generic,
+    Protocol,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
-from typing_extensions import Self
+from typing_extensions import Concatenate, Self
 
 from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
 from chemfit.utils import check_protocol
@@ -22,6 +31,13 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+ParametersT_contra = TypeVar(
+    "ParametersT_contra", bound=dict[str, Any], contravariant=True
+)
+QuantitiesT = TypeVar("QuantitiesT", bound=dict[str, Any])
+QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
+
 
 def _subprocess_output_to_text(output: bytes | str) -> str:
     if isinstance(output, bytes):
@@ -30,10 +46,10 @@ def _subprocess_output_to_text(output: bytes | str) -> str:
 
 
 @runtime_checkable
-class OutputParser(Protocol):
+class OutputParser(Protocol[QuantitiesT_co]):
     """Protocol for parsing output files into a quantity dictionary."""
 
-    def __call__(self, output_files: list[Path]) -> dict[str, Any]:
+    def __call__(self, output_files: list[Path], /) -> QuantitiesT_co:
         """
         Parse the output files and retrieve the quantities.
 
@@ -50,10 +66,10 @@ class OutputParser(Protocol):
 
 
 @runtime_checkable
-class PreSubmitHook(Protocol):
+class PreSubmitHook(Protocol[ParametersT_contra]):
     """Protocol for running things before the command is submitted."""
 
-    def __call__(self, parameters: dict[str, Any], workdir: Path) -> None:
+    def __call__(self, parameters: ParametersT_contra, workdir: Path, /) -> None:
         """
         Run pre-submit actions.
 
@@ -64,20 +80,22 @@ class PreSubmitHook(Protocol):
         """
 
 
-CommandType = Callable[[dict[str, Any], Path], list[str]]
+CommandType = Callable[[ParametersT, Path], list[str]]
 
 
-class FileBasedQuantityComputer(QuantityComputer):
+class FileBasedQuantityComputer(
+    QuantityComputer[ParametersT, QuantitiesT], Generic[ParametersT, QuantitiesT]
+):
     def __init__(
         self,
         output_files: list[Path | str],
-        output_parsers: list[OutputParser] | OutputParser,
+        output_parsers: list[OutputParser[QuantitiesT]] | OutputParser[QuantitiesT],
         base_working_directory: Path | str,
-        executable_cmd: CommandType | None = None,
-        presubmit_hook: PreSubmitHook | None = None,
+        executable_cmd: CommandType[ParametersT] | None = None,
+        presubmit_hook: PreSubmitHook[ParametersT] | None = None,
         wait_timeout: float | None = 500.0,
         poll_interval: float = 1,
-        subprocess_run_args: dict | None = None,
+        subprocess_run_args: dict[str, Any] | None = None,
         delete_temp_workdirs: bool = True,
         write_dump_file_after_crash: bool = True,
         keep_temp_workdir_after_crash: bool = True,
@@ -156,11 +174,11 @@ class FileBasedQuantityComputer(QuantityComputer):
             raise Exception(msg)
 
         if subprocess_run_args is None:
-            self.subprocess_run_args = {"capture_output": True}
+            self.subprocess_run_args: dict[str, Any] = {"capture_output": True}
         else:
             self.subprocess_run_args = subprocess_run_args
 
-        self.executable_cmd: CommandType | None = executable_cmd
+        self.executable_cmd = executable_cmd
 
         # Make sure that, if a single OutputParser has been passed, we turn it into a list with on element
         if isinstance(output_parsers, OutputParser):
@@ -193,7 +211,12 @@ class FileBasedQuantityComputer(QuantityComputer):
         temp_workdir.mkdir(exist_ok=False, parents=True)
         return temp_workdir
 
-    def with_presubmit(self, presubmit: Callable[..., None], /, **kwargs: Any) -> Self:
+    def with_presubmit(
+        self,
+        presubmit: Callable[Concatenate[ParametersT, Path, ...], None],
+        /,
+        **kwargs: Any,
+    ) -> Self:
         """
         Return a copy of this computer with a bound presubmit hook.
 
@@ -234,12 +257,14 @@ class FileBasedQuantityComputer(QuantityComputer):
         """
 
         new = copy.copy(self)
-        new.presubmit_hook = functools.partial(presubmit, **kwargs)
+        new.presubmit_hook = cast(
+            "PreSubmitHook[ParametersT]", functools.partial(presubmit, **kwargs)
+        )
         return new
 
     def with_cmd(
         self,
-        executable_cmd: Callable[..., list[str]],
+        executable_cmd: Callable[Concatenate[ParametersT, Path, ...], list[str]],
         /,
         **kwargs: Any,
     ) -> Self:
@@ -283,10 +308,12 @@ class FileBasedQuantityComputer(QuantityComputer):
         """
 
         new = copy.copy(self)
-        new.executable_cmd = functools.partial(executable_cmd, **kwargs)
+        new.executable_cmd = cast(
+            "CommandType[ParametersT]", functools.partial(executable_cmd, **kwargs)
+        )
         return new
 
-    def build_cmd(self, parameters: dict[str, Any], ctx: EvaluateContext) -> list[str]:
+    def build_cmd(self, parameters: ParametersT, ctx: EvaluateContext) -> list[str]:
         """
         Build the external command for the current evaluation.
 
@@ -299,14 +326,14 @@ class FileBasedQuantityComputer(QuantityComputer):
             Command to execute, formatted for ``subprocess.run``.
 
         """
-        self.executable_cmd = cast("CommandType", self.executable_cmd)
+        self.executable_cmd = cast("CommandType[ParametersT]", self.executable_cmd)
         return self.executable_cmd(parameters, ctx.temp.workdir)
 
     def _compute(  # noqa: PLR0912, PLR0915
         self,
-        parameters: dict[str, Any],
+        parameters: ParametersT,
         ctx: EvaluateContext,
-    ) -> dict[str, Any]:
+    ) -> QuantitiesT:
         """
         Execute external command and parse parse its output files.
 
@@ -525,7 +552,7 @@ class FileBasedQuantityComputer(QuantityComputer):
                     err_message = f"Timed out waiting for {ctx.temp.output_files}"
                     raise TimeoutError(err_message)
 
-            res = {}
+            res: dict[str, Any] = {}
             for o in self.output_parsers:
                 success = False
                 # First we perform the retries while silencing all exceptions
@@ -560,7 +587,7 @@ class FileBasedQuantityComputer(QuantityComputer):
             if self.delete_temp_workdirs:
                 shutil.rmtree(ctx.temp.workdir)
 
-        return res
+        return cast("QuantitiesT", res)
 
     def _file_watch_loop(
         self,

@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, runtime_checkable
 
 from ase import Atoms
 from ase.calculators.calculator import Calculator
 from ase.io import read
 from ase.optimize import BFGS
 
-from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ParametersT_contra,
+    QuantitiesT_co,
+    QuantityComputer,
+)
 from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
@@ -26,16 +31,16 @@ class CalculatorFactory(Protocol):
     for the given ``Atoms`` object and assign it to ``atoms.calc``.
     """
 
-    def __call__(self, atoms: Atoms) -> None:
+    def __call__(self, atoms: Atoms, /) -> None:
         """Construct a calculator and overwrite `atoms.calc`."""
         ...
 
 
 @runtime_checkable
-class ParameterApplier(Protocol):
+class ParameterApplier(Protocol[ParametersT_contra]):
     """Protocol for a callable that applies parameters to an ASE calculator."""
 
-    def __call__(self, atoms: Atoms, params: dict[str, Any]) -> None:
+    def __call__(self, atoms: Atoms, params: ParametersT_contra, /) -> None:
         """Applies a parameter dictionary to `atoms.calc` in-place."""
         ...
 
@@ -44,7 +49,7 @@ class ParameterApplier(Protocol):
 class AtomsPostProcessor(Protocol):
     """Protocol for a callable that post-processes an ASE Atoms object."""
 
-    def __call__(self, atoms: Atoms) -> None:
+    def __call__(self, atoms: Atoms, /) -> None:
         """Modify the atoms in-place."""
         ...
 
@@ -59,7 +64,7 @@ class AtomsFactory(Protocol):
 
 
 @runtime_checkable
-class QuantityProcessor(Protocol):
+class QuantityProcessor(Protocol[QuantitiesT_co]):
     """
     Protocol for a callable that extracts quantities from an ASE evaluation.
 
@@ -68,7 +73,7 @@ class QuantityProcessor(Protocol):
     returns a dictionary of quantities to include in the final output.
     """
 
-    def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:
+    def __call__(self, calc: Calculator, atoms: Atoms, /) -> QuantitiesT_co:
         """
         Extract quantities from an evaluated calculator and atoms pair.
 
@@ -135,7 +140,10 @@ class DefaultQuantityProcessor:
         return res
 
 
-class SinglePointASEComputer(QuantityComputer):
+class SinglePointASEComputer(
+    QuantityComputer[ParametersT_contra, QuantitiesT_co],
+    Generic[ParametersT_contra, QuantitiesT_co],
+):
     """
     ASE-based quantity computer for single-point evaluations.
 
@@ -148,10 +156,10 @@ class SinglePointASEComputer(QuantityComputer):
     def __init__(
         self,
         calc_factory: CalculatorFactory,
-        param_applier: ParameterApplier,
+        param_applier: ParameterApplier[ParametersT_contra],
         atoms_factory: AtomsFactory,
         atoms_post_processor: AtomsPostProcessor | None = None,
-        quantity_processors: list[QuantityProcessor] | None = None,
+        quantity_processors: list[QuantityProcessor[QuantitiesT_co]] | None = None,
         tag: str | None = None,
     ) -> None:
         """
@@ -187,9 +195,10 @@ class SinglePointASEComputer(QuantityComputer):
         self.atoms_post_processor = atoms_post_processor
 
         if quantity_processors is None:
-            self.quantity_processors: list[QuantityProcessor] = [
-                DefaultQuantityProcessor()
-            ]
+            self.quantity_processors = cast(
+                "list[QuantityProcessor[QuantitiesT_co]]",
+                [DefaultQuantityProcessor()],
+            )
         else:
             self.quantity_processors = quantity_processors
 
@@ -205,7 +214,7 @@ class SinglePointASEComputer(QuantityComputer):
             "type": type(self).__name__,
         }
 
-    def prepare_ctx(self, parameters: dict[str, Any], ctx: EvaluateContext):
+    def prepare_ctx(self, parameters: ParametersT_contra, ctx: EvaluateContext):
         """
         Prepare the evaluation context for a single-point calculation.
 
@@ -234,9 +243,9 @@ class SinglePointASEComputer(QuantityComputer):
 
     def _compute(
         self,
-        parameters: dict[str, Any],
+        parameters: ParametersT_contra,
         ctx: EvaluateContext,
-    ) -> dict[str, Any]:
+    ) -> QuantitiesT_co:
         """
         Compute quantities from a single-point ASE evaluation.
 
@@ -259,14 +268,17 @@ class SinglePointASEComputer(QuantityComputer):
         assert ctx.temp.atoms.calc is not None
         ctx.temp.atoms.calc.calculate(ctx.temp.atoms)
 
-        quants = {}
+        quants: dict[str, Any] = {}
         for qp in self.quantity_processors:
             quants.update(qp(ctx.temp.atoms.calc, ctx.temp.atoms))
 
-        return quants
+        return cast("QuantitiesT_co", quants)
 
 
-class MinimizationASEComputer(SinglePointASEComputer):
+class MinimizationASEComputer(
+    SinglePointASEComputer[ParametersT_contra, QuantitiesT_co],
+    Generic[ParametersT_contra, QuantitiesT_co],
+):
     """
     ASE-based quantity computer using a locally optimized structure.
 
@@ -300,8 +312,8 @@ class MinimizationASEComputer(SinglePointASEComputer):
         super().__init__(**kwargs)
 
     def _compute(
-        self, parameters: dict[str, Any], ctx: EvaluateContext
-    ) -> dict[str, Any]:
+        self, parameters: ParametersT_contra, ctx: EvaluateContext
+    ) -> QuantitiesT_co:
         """
         Compute quantities after local geometry optimization.
 
@@ -329,8 +341,8 @@ class MinimizationASEComputer(SinglePointASEComputer):
         optimizer = BFGS(ctx.temp.atoms, logfile=None)
         optimizer.run(fmax=self.fmax, steps=self.max_steps)
 
-        quants = {}
+        quants: dict[str, Any] = {}
         for qp in self.quantity_processors:
             quants.update(qp(ctx.temp.atoms.calc, ctx.temp.atoms))
 
-        return quants
+        return cast("QuantitiesT_co", quants)

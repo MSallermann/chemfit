@@ -7,7 +7,7 @@ import time
 from collections.abc import MutableMapping
 from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Callable, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, cast
 
 import nevergrad as ng
 import numpy as np
@@ -28,6 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 logger = logging.getLogger(__name__)
+
+ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
 
 
 class FitterEvaluateContext(EvaluateContext):
@@ -86,10 +88,10 @@ class FitterEvaluateContext(EvaluateContext):
         self.opt_quantities = state["opt_quantities"]
 
 
-class FitterObjectiveFunctor(ObjectiveFunctor):
+class FitterObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
     def __init__(
         self,
-        wrap_me: ObjectiveFunctor,
+        wrap_me: ObjectiveFunctor[ParametersT],
         swallow_exceptions: bool = False,
         log_exceptions: bool = True,
         value_bad_params: float = 1e5,
@@ -125,7 +127,7 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
 
     def post_process_return_value(
         self,
-        parameters: dict[str, Any],
+        parameters: ParametersT,
         value: float | None,
         ctx: FitterEvaluateContext,
     ) -> float:
@@ -157,11 +159,14 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
 
         return loss
 
-    def __call__(  # type: ignore
-        self, parameters: dict[str, Any], ctx: FitterEvaluateContext | None = None
+    def __call__(
+        self, parameters: ParametersT, ctx: EvaluateContext | None = None
     ) -> float:
         if ctx is None:
             ctx = FitterEvaluateContext()
+        elif not isinstance(ctx, FitterEvaluateContext):
+            msg = "FitterObjectiveFunctor requires a FitterEvaluateContext"
+            raise TypeError(msg)
 
         # first we try if we can get a value at all
         try:
@@ -182,10 +187,12 @@ class FitterObjectiveFunctor(ObjectiveFunctor):
         )
 
 
-class Fitter:
+class Fitter(Generic[ParametersT]):
     def __init__(
         self,
-        objective_function: Callable[[dict[str, Any]], float] | ObjectiveFunctor,
+        objective_function: (
+            Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
+        ),
         initial_params: MutableMapping[str, Any],
         bounds: dict[str, Any] | None = None,
         near_bound_tol: float | None = None,
@@ -298,7 +305,7 @@ class Fitter:
         logger.info("Start fitting")
         self.time_fit_start = time.time()
 
-    def _hook_post_fit(self, opt_params: dict[str, Any]):
+    def _hook_post_fit(self, opt_params: ParametersT):
         """
         Run bookkeeping steps after an optimization.
 
@@ -366,7 +373,7 @@ class Fitter:
 
     def ask(
         self,
-        parameters: dict[str, Any] | list[dict[str, Any]],
+        parameters: ParametersT | list[ParametersT],
         context_index: int = 0,
     ) -> float | list[float]:
         """
@@ -382,7 +389,7 @@ class Fitter:
 
         if isinstance(parameters, MutableMapping):
             return self.objective_function(
-                dict(parameters), self.contexts[context_index]
+                cast("ParametersT", dict(parameters)), self.contexts[context_index]
             )
 
         if len(parameters) > self._session_num_workers:
@@ -424,7 +431,7 @@ class Fitter:
 
         self._session_step = current_step + 1
 
-    def finish(self, opt_params: dict[str, Any] | None = None) -> dict[str, Any]:
+    def finish(self, opt_params: ParametersT | None = None) -> ParametersT:
         """
         Finalize a user-driven session and return its chosen parameters.
 
@@ -439,7 +446,7 @@ class Fitter:
                 raise RuntimeError(msg)
             best_context = min(evaluated, key=lambda ctx: cast("float", ctx.opt_loss))
             assert best_context.opt_params is not None
-            opt_params = copy.deepcopy(best_context.opt_params)
+            opt_params = cast("ParametersT", copy.deepcopy(best_context.opt_params))
 
         self._hook_post_fit(opt_params)
 
@@ -505,9 +512,9 @@ class Fitter:
         executor: ExecutorLike | None = None,
         parametrization: MutableMapping[str, Any] | None = None,
         initial_observations: (
-            Iterable[tuple[dict[str, Any], float | None]] | None
+            Iterable[tuple[ParametersT, float | None]] | None
         ) = None,
-    ) -> dict[str, Any]:
+    ) -> ParametersT:
         """
         Optimize parameters using a nevergrad optimizer.
 
@@ -618,7 +625,10 @@ class Fitter:
             asked_params = [optimizer.ask() for _ in range(batch_size)]
             flat_params = [candidate.value[0][0] for candidate in asked_params]
             nested_params = [
-                unflatten_dict(parameters, dict_factory=dict[str, Any])
+                cast(
+                    "ParametersT",
+                    unflatten_dict(parameters, dict_factory=dict[str, Any]),
+                )
                 for parameters in flat_params
             ]
             asked_losses = self.ask(nested_params)
@@ -632,7 +642,10 @@ class Fitter:
         recommendation = optimizer.provide_recommendation()
         args, _ = recommendation.value
         flat_opt_params = args[0]
-        opt_params = unflatten_dict(flat_opt_params, dict_factory=dict[str, Any])
+        opt_params = cast(
+            "ParametersT",
+            unflatten_dict(flat_opt_params, dict_factory=dict[str, Any]),
+        )
 
         return self.finish(opt_params)
 
@@ -641,7 +654,7 @@ class Fitter:
         method: str = "L-BFGS-B",
         ctx: FitterEvaluateContext | None = None,
         **kwargs,
-    ) -> dict[str, Any]:
+    ) -> ParametersT:
         """
         Optimize parameters using ``scipy.optimize.minimize``.
 
@@ -696,8 +709,9 @@ class Fitter:
         self.init(contexts=None if ctx is None else [ctx])
 
         def f_scipy(x: npt.NDArray) -> float:
-            parameters = unflatten_dict(
-                dict(zip(self._keys, x)), dict_factory=dict[str, Any]
+            parameters = cast(
+                "ParametersT",
+                unflatten_dict(dict(zip(self._keys, x)), dict_factory=dict[str, Any]),
             )
             loss = self.ask(parameters)
             assert isinstance(loss, float)
@@ -718,6 +732,6 @@ class Fitter:
         if not res.success:
             logger.warning(f"Fit did not converge: {res.message}")
 
-        opt_params = unflatten_dict(dict(zip(self._keys, res.x)))
+        opt_params = cast("ParametersT", unflatten_dict(dict(zip(self._keys, res.x))))
 
         return self.finish(opt_params)
