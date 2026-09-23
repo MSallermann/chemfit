@@ -1,3 +1,7 @@
+import pickle
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import numpy as np
@@ -32,6 +36,20 @@ def get_ob_func(eps: float, sigma: float):
     )
 
 
+class CountingLJAtomsFactory(LJAtomsFactory):
+    def __init__(self, r: float) -> None:
+        """Initialize a factory that records how often it is called."""
+        super().__init__(r)
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def __call__(self):
+        with self._lock:
+            self.calls += 1
+        time.sleep(0.05)
+        return super().__call__()
+
+
 def test_lj():
     eps = 1.0
     sigma = 1.0
@@ -51,6 +69,35 @@ def test_lj():
     assert ob.n_terms() == len(terms_meta_data)
     assert np.isclose(opt_params["epsilon"], eps)
     assert np.isclose(opt_params["sigma"], sigma)
+
+
+def test_base_geometry_is_initialized_once_across_threads():
+    atoms_factory = CountingLJAtomsFactory(1.0)
+    computer = SinglePointASEComputer(
+        calc_factory=construct_lj,
+        param_applier=apply_params_lj,
+        atoms_factory=atoms_factory,
+    )
+    parameters = {"epsilon": 1.0, "sigma": 1.0}
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        results = list(executor.map(computer, [parameters] * 8))
+
+    assert atoms_factory.calls == 1
+    assert all(np.isclose(result["energy"], results[0]["energy"]) for result in results)
+
+
+def test_single_point_computer_remains_pickleable():
+    computer = SinglePointASEComputer(
+        calc_factory=construct_lj,
+        param_applier=apply_params_lj,
+        atoms_factory=LJAtomsFactory(1.0),
+    )
+
+    restored = pickle.loads(pickle.dumps(computer))  # noqa: S301
+
+    quantities = restored({"epsilon": 1.0, "sigma": 1.0})
+    assert "energy" in quantities
 
 
 def test_lj_mpi():

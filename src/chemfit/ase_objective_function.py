@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, runtime_checkable
 
 from ase import Atoms
@@ -208,11 +209,23 @@ class SinglePointASEComputer(
         self.tag = tag or "tag_None"
 
         self._atoms: Atoms | None = None
+        self._atoms_init_lock = threading.Lock()
 
         self.static_meta_data = {
             "tag": self.tag,
             "type": type(self).__name__,
         }
+
+    def __getstate__(self) -> dict[str, Any]:
+        """Return pickle state without the non-pickleable initialization lock."""
+        state = self.__dict__.copy()
+        state.pop("_atoms_init_lock")
+        return state
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """Restore pickle state and create a lock local to this process."""
+        self.__dict__.update(state)
+        self._atoms_init_lock = threading.Lock()
 
     def prepare_ctx(self, parameters: ParametersT_contra, ctx: EvaluateContext):
         """
@@ -223,6 +236,9 @@ class SinglePointASEComputer(
         once to that base object before it is cached. For each evaluation,
         the cached atoms object is copied into ``ctx.temp.atoms``, a fresh
         calculator is attached, and the provided parameters are applied.
+        Deferred construction allows distributed backends to initialize only
+        the geometries assigned to each worker. Initialization is synchronized
+        so the same computer can also be evaluated concurrently by threads.
 
         Args:
             parameters: Parameter dictionary for the current evaluation.
@@ -230,14 +246,22 @@ class SinglePointASEComputer(
 
         """
 
-        if self._atoms is None:
-            self._atoms = self.atoms_factory()
-            if self.atoms_post_processor is not None:
-                self.atoms_post_processor(self._atoms)
+        atoms = self._atoms
+        if atoms is None:
+            # Several optimizer workers may evaluate this computer before its
+            # base geometry exists. Initialize it once, then publish only the
+            # fully post-processed object to the other workers.
+            with self._atoms_init_lock:
+                atoms = self._atoms
+                if atoms is None:
+                    atoms = self.atoms_factory()
+                    if self.atoms_post_processor is not None:
+                        self.atoms_post_processor(atoms)
+                    self._atoms = atoms
 
         # Since the calculation may change the internal state of the calculator
         # we create a new calculator and a new atoms object in the context
-        ctx.temp.atoms = self._atoms.copy()
+        ctx.temp.atoms = atoms.copy()
         self.calc_factory(ctx.temp.atoms)
         self.param_applier(ctx.temp.atoms, parameters)
 
