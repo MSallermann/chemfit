@@ -93,14 +93,14 @@ ChemFit provides two mechanisms for this:
 2.1 Executor-based parallelism
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Use :py:class:`~chemfit.parallel_execution.ExecutorWrapperCOB` to evaluate terms
+Use :py:class:`~chemfit.executor_wrapper_cob.ExecutorWrapperCOB` to evaluate terms
 in parallel using an executor.
 
 .. code-block:: python
 
    from concurrent.futures import ThreadPoolExecutor
 
-   from chemfit.parallel_execution import ExecutorWrapperCOB
+   from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
    from chemfit.abstract_objective_function import EvaluateContext
 
    executor = ThreadPoolExecutor(max_workers=4)
@@ -127,12 +127,12 @@ Use this when:
 2.2 MPI-based parallelism
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Use :py:class:`~chemfit.parallel_execution.MPIWrapperCOB` to distribute terms
+Use :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB` to distribute terms
 across MPI processes.
 
 .. code-block:: python
 
-   from chemfit.parallel_execution import MPIWrapperCOB
+   from chemfit.mpi_wrapper_cob import MPIWrapperCOB
    from chemfit.abstract_objective_function import EvaluateContext
 
    with MPIWrapperCOB(objective) as mpi:

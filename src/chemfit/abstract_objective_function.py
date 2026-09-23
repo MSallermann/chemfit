@@ -267,12 +267,17 @@ class EvaluateContext:
             exits, even if an exception is raised inside the managed block.
 
         Example:
-        >>> with ctx.child_contexts(
-                n_children=self.n_terms(), configurator=self.child_context_configurator
-            ) as child_ctxs:
-        >>>    terms = []
-        >>>    for idx, ctx_term in enumerate(child_ctxs):
-        >>>        terms.append(self.evaluate_term(parameters, idx, ctx_term))
+            .. code-block:: python
+
+                with ctx.child_contexts(
+                    n_children=self.n_terms(),
+                    configurator=self.child_context_configurator,
+                ) as child_ctxs:
+                    terms = []
+                    for idx, ctx_term in enumerate(child_ctxs):
+                        terms.append(
+                            self.evaluate_term(parameters, idx, ctx_term)
+                        )
 
         """
 
