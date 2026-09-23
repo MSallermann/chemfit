@@ -21,3 +21,10 @@ def tests(session):  # noqa: ANN001
 def tests_mpi(session):  # noqa: ANN001
     session.install(".[test,mpi]")
     session.run("mpiexec", "-n", "4", "pytest", "-k", "mpi")
+
+
+# strict static API checks
+@nox.session
+def typing(session):  # noqa: ANN001
+    session.install(".[test]", "pyright")
+    session.run("pyright", "tests/static_typing.py")
