@@ -34,7 +34,7 @@ def test_async_cob():
         time.sleep(0.5)
         return p["y"] ** 2
 
-    params = {"x": 1, "y": 2}
+    params = {"x": 1.0, "y": 2.0}
 
     # We create a combined objective function
     cob = CombinedObjectiveFunction([a, a, b, b])
@@ -53,7 +53,7 @@ def test_async_cob():
     assert np.isclose(res_sync, res_async)
 
     # Now we test if we can evaluate the objective function for many parameters at the same time
-    params_list = [{"x": i, "y": 2 - i} for i in range(5)]
+    params_list = [{"x": float(i), "y": float(2) - i} for i in range(5)]
 
     contexts = [EvaluateContext(executor=MockExecutor(2)) for _ in params_list]
     results = asyncio.run(async_eval_many(async_cob, params_list, contexts))

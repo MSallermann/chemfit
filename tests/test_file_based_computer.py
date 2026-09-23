@@ -171,7 +171,9 @@ def test_subprocess_exception_does_not_parse_by_default(
     with pytest.raises(Exception, match="Exception in `_compute`") as exc_info:
         computer({}, ctx)
 
-    subprocess_exception = exc_info.value.__cause__.__cause__
+    compute_exception = exc_info.value.__cause__
+    assert compute_exception is not None
+    subprocess_exception = compute_exception.__cause__
     assert isinstance(subprocess_exception, subprocess.CalledProcessError)
     assert not parser_called
     assert not ctx.temp.workdir.exists()

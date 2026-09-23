@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, Callable, Generic, Protocol, TypeVar, cast
 
 from typing_extensions import Self
@@ -14,7 +14,10 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
-ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+# Deliberately invariant: CombinedObjectiveFunction.add() mutates the stored
+# objective list.  Treating one instance as accepting a wider or narrower
+# parameter type could then allow an incompatible objective to be appended.
+ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 ObjectiveLike = Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
 
 

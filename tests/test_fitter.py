@@ -1,4 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from typing import Any
 
 import nevergrad as ng
 import numpy as np
@@ -432,13 +433,13 @@ def test_new_best_without_quantities_clears_previous_best_quantities():
 
 def test_initial_parameters_must_be_mapping():
     with pytest.raises(TypeError, match="must be a mapping"):
-        Fitter(lambda _params: 0.0, [1.0, 2.0])
+        Fitter(lambda _params: 0.0, [1.0, 2.0])  # type: ignore
 
 
 def test_nevergrad_parameter_leaves():
     evaluated = []
 
-    def objective(params: dict[str, object]) -> float:
+    def objective(params: dict[str, Any]) -> float:
         evaluated.append(params)
         model_loss = 0.0 if params["model"] == "quadratic" else 1.0
         return (
@@ -503,15 +504,26 @@ def test_nevergrad_parametrization_can_be_partial():
             "label": ng.p.Constant("fixed"),
         }
     )
-    parameter_leaves = instrumentation[0][0]
+    positional_parameters = instrumentation[0]
+    assert isinstance(positional_parameters, ng.p.Tuple)
+    parameter_leaves = positional_parameters[0]
+    assert isinstance(parameter_leaves, ng.p.Dict)
 
-    assert isinstance(parameter_leaves["x"], ng.p.Scalar)
-    assert np.array_equal(parameter_leaves["x"].bounds[0], [0.0])
-    assert np.array_equal(parameter_leaves["x"].bounds[1], [2.0])
-    assert isinstance(parameter_leaves["model.kind"], ng.p.Choice)
-    assert parameter_leaves["model.kind"] is not choice
-    assert isinstance(parameter_leaves["label"], ng.p.Constant)
-    assert parameter_leaves["label"].value == "fixed"
+    x_parameter = parameter_leaves["x"]
+    assert isinstance(x_parameter, ng.p.Scalar)
+    lower_bound, upper_bound = x_parameter.bounds
+    assert lower_bound is not None
+    assert upper_bound is not None
+    assert np.array_equal(lower_bound, [0.0])
+    assert np.array_equal(upper_bound, [2.0])
+
+    model_kind_parameter = parameter_leaves["model.kind"]
+    assert isinstance(model_kind_parameter, ng.p.Choice)
+    assert model_kind_parameter is not choice
+
+    label_parameter = parameter_leaves["label"]
+    assert isinstance(label_parameter, ng.p.Constant)
+    assert label_parameter.value == "fixed"
 
 
 def test_nevergrad_requires_explicit_non_numeric_leaves():

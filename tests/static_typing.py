@@ -21,6 +21,7 @@ if TYPE_CHECKING:
         QuantityProcessor,
         SinglePointASEComputer,
     )
+    from chemfit.async_helpers import async_eval_many, async_eval_one
     from chemfit.combined_objective_function import CombinedObjectiveFunction
     from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
     from chemfit.file_based_computer import FileBasedQuantityComputer
@@ -52,12 +53,43 @@ if TYPE_CHECKING:
     assert_type(context_objective, WrappedObjectiveFunctor[Parameters])
     context_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
+    # Async helpers preserve the objective's parameter type for individual
+    # evaluations and batches.
+    async_one = async_eval_one(context_objective, {"x": 1.0}, EvaluateContext())
+    invalid_async_one = async_eval_one(
+        context_objective,
+        {"x": "wrong"},  # pyright: ignore[reportArgumentType]
+        EvaluateContext(),
+    )
+    async_many = async_eval_many(context_objective, [{"x": 1.0}], [EvaluateContext()])
+
     # Fitter carries the objective's parameter type through its public API.
     fitter = Fitter(objective, {"x": 1.0})
     assert_type(fitter, Fitter[Parameters])
     fitter.objective_function(
         {"x": "wrong"}  # pyright: ignore[reportArgumentType]
     )
+
+    # An unannotated lambda falls back to a dynamic dictionary, keeping the
+    # common concise form usable without discarding precise function annotations.
+    inferred_fitter = Fitter(lambda parameters: parameters["x"] ** 2, {"x": 0.0})
+    assert_type(inferred_fitter, Fitter[dict[str, Any]])
+
+    # A heterogeneous nested dictionary intentionally uses Any unless the user
+    # supplies a more precise schema such as a TypedDict.
+    def dynamic_objective(parameters: dict[str, Any]) -> float:
+        return parameters["core"]["x"] ** 2
+
+    nested_fitter = Fitter(
+        dynamic_objective,
+        {
+            "model": "quadratic",
+            "core": {"x": 1.0, "weights": [1.0, 2.0]},
+            "metadata": "fixed",
+        },
+    )
+    assert_type(nested_fitter, Fitter[dict[str, Any]])
+    nested_fitter.initial_parameters["core"]["x"]
 
     # Quantity wrappers preserve both their parameter and result types. Binding
     # arguments and attaching a loss function must not erase either one.
@@ -116,20 +148,30 @@ if TYPE_CHECKING:
     )
     assert_type(combined_with_aggregator, CombinedObjectiveFunction[Parameters])
 
-    # Pyright currently fails to reject mixed inferred parameter types. Keep
-    # the inferred result documented, and verify that an explicit type does
-    # reject the incompatible objective.
+    # Aggregators must account for objectives that do not produce quantities.
+    # Consequently, a callback accepting only dictionaries is too narrow.
+    def aggregator_requiring_quantities(
+        values: list[float],
+        _outputs: list[dict[str, Any]],
+        _context: EvaluateContext,
+    ) -> float:
+        return sum(values)
+
+    CombinedObjectiveFunction(
+        [objective],
+        reduction=aggregator_requiring_quantities,  # pyright: ignore[reportArgumentType]
+    )
+
+    # Objectives with incompatible parameter value types must not be combined,
+    # whether the combined objective's type is inferred or explicit.
     def incompatible_objective(parameters: IncompatibleParameters) -> float:
         return float(parameters["x"])
 
-    # TODO(MS): This incompatible combination should be rejected. Pyright  # noqa: TD003
-    # currently accepts it and chooses one objective's parameter type.
     mixed_parameter_combination = CombinedObjectiveFunction(
-        [objective, incompatible_objective]
-    )
-    assert_type(
-        mixed_parameter_combination,
-        CombinedObjectiveFunction[IncompatibleParameters],
+        [
+            objective,  # pyright: ignore[reportArgumentType]
+            incompatible_objective,
+        ]
     )
 
     explicitly_typed_mixed_combination = CombinedObjectiveFunction[Parameters](
@@ -194,3 +236,24 @@ if TYPE_CHECKING:
         SinglePointASEComputer[Parameters, Quantities],
     )
     ase_computer({"x": "wrong"})  # pyright: ignore[reportArgumentType]
+
+    # The default ASE quantity processor produces a heterogeneous dictionary;
+    # omitting processors must not make the parameter type unknown.
+    default_ase_computer = SinglePointASEComputer(
+        calc_factory=calculator_factory,
+        param_applier=parameter_applier,
+        atoms_factory=atoms_factory,
+    )
+    assert_type(
+        default_ase_computer,
+        SinglePointASEComputer[Parameters, dict[str, Any]],
+    )
+
+    def default_ase_loss(quantities: dict[str, Any]) -> float:
+        return float(quantities["value"])
+
+    default_ase_objective = default_ase_computer.with_loss(default_ase_loss)
+    assert_type(
+        default_ase_objective,
+        QuantityComputerObjectiveFunction[Parameters, dict[str, Any]],
+    )

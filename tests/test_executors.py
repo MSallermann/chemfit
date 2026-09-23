@@ -31,7 +31,8 @@ class MyFuture(abstract_objective_function.FutureLike):
     def result(self, timeout: float | None = None):  # noqa: ARG002
         return self.func(*self.args)
 
-    def cancel(self): ...
+    def cancel(self):
+        return True
 
 
 class MyExecutor(abstract_objective_function.ExecutorLike):
@@ -46,8 +47,7 @@ class MyExecutor(abstract_objective_function.ExecutorLike):
         timeout: float | None = None,
         chunksize: int = 1,  # noqa: ARG002
     ):
-        if timeout is not None:
-            end_time = timeout + time.monotonic()
+        end_time = timeout + time.monotonic() if timeout is not None else None
 
         fs = [self.submit(fn, *args) for args in zip(*iterables)]
 
@@ -62,6 +62,7 @@ class MyExecutor(abstract_objective_function.ExecutorLike):
                     if timeout is None:
                         yield _result_or_cancel(fs.pop())
                     else:
+                        assert end_time is not None
                         yield _result_or_cancel(fs.pop(), end_time - time.monotonic())
             finally:
                 for future in fs:
@@ -76,7 +77,10 @@ class MyFunctor(abstract_objective_function.ObjectiveFunctor):
         parameters: dict[str, float],
         ctx: EvaluateContext | None = None,
     ) -> float:
-        ctx.loss = 99
+        if ctx is None:
+            ctx = EvaluateContext()
+
+        ctx.loss = 99.0
         ctx.parameters = parameters
         return parameters["a"] ** 2 - parameters["b"]
 
@@ -108,6 +112,8 @@ def test_executors():
         func = wrap_funcs.WrappedObjectiveFunctor(my_func)
         ctx = EvaluateContext(executor=executor)
         params = {"a": 2.0, "b": -1.0}
+
+        assert ctx.executor is not None
         fut = ctx.executor.submit(func, params, ctx)
 
         print(fut.result())

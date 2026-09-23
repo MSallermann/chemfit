@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Callable, Generic, TypeVar
 
 from typing_extensions import Concatenate
@@ -10,11 +11,16 @@ from chemfit.abstract_objective_function import (
     QuantityComputer,
 )
 
+# These mirror the input/output directions of the abstract interfaces:
+# wrapped functions consume parameters and produce quantities.  Keeping that
+# variance lets decorators preserve a user's concrete callback annotations.
 ParametersT_contra = TypeVar(
-    "ParametersT_contra", bound=dict[str, Any], contravariant=True
+    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
 )
 QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
 
+# Concatenate preserves the first ChemFit argument while allowing bind() to
+# carry arbitrary additional positional or keyword parameters.
 WrappableObjFunction = Callable[Concatenate[ParametersT_contra, ...], float]
 
 

@@ -1,15 +1,21 @@
 import asyncio
-from collections.abc import Iterable
-from typing import Any, Callable
+from collections.abc import Iterable, Mapping
+from typing import Callable, TypeVar
 
 from chemfit.abstract_objective_function import EvaluateContext
 
+# This TypeVar links the callback and its arguments so the helpers preserve the
+# caller's concrete parameter type instead of erasing it to the Mapping bound.
+# Variance is not declared because this is used by generic functions, not as a
+# substitutable generic class or protocol.
+ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
+
 
 async def async_eval_one(
-    obj: Callable[[dict[str, Any], EvaluateContext], float],
-    params: dict[str, Any],
+    obj: Callable[[ParametersT, EvaluateContext], float],
+    params: ParametersT,
     ctx: EvaluateContext,
-):
+) -> float:
     """
     Evaluate one objective call asynchronously.
 
@@ -19,12 +25,12 @@ async def async_eval_one(
     a `(params, ctx)` signature.
 
     Args:
-        obj (Callable[[dict[str, Any], EvaluateContext], float]):
+        obj (Callable[[Mapping[str, object], EvaluateContext], float]):
             Objective-like callable. Typically an ``ObjectiveFunctor`` or a
             wrapper around one. Must be synchronous and thread-safe when
             provided distinct ``EvaluateContext`` instances.
-        params (dict[str, Any]):
-            Parameter dictionary for this evaluation.
+        params (Mapping[str, object]):
+            Parameter mapping for this evaluation.
         ctx (EvaluateContext):
             Context that will be populated during evaluation.
 
@@ -43,10 +49,10 @@ async def async_eval_one(
 
 
 async def async_eval_many(
-    obj: Callable[[dict[str, Any], EvaluateContext], float],
-    params_list: Iterable[dict[str, Any]],
+    obj: Callable[[ParametersT, EvaluateContext], float],
+    params_list: Iterable[ParametersT],
     ctxs: Iterable[EvaluateContext],
-):
+) -> list[float]:
     """
     Evaluate multiple objective calls concurrently.
 
@@ -56,11 +62,11 @@ async def async_eval_many(
     ``asyncio.to_thread`` and therefore do not block the event loop.
 
     Args:
-        obj (Callable[[dict[str, Any], EvaluateContext], float]):
+        obj (Callable[[Mapping[str, object], EvaluateContext], float]):
             Objective-like callable. Must be compatible with concurrent
             calls when provided separate contexts.
-        params_list (Iterable[dict[str, Any]]):
-            Iterable of parameter dictionaries. One evaluation is performed
+        params_list (Iterable[Mapping[str, object]]):
+            Iterable of parameter mappings. One evaluation is performed
             per entry.
         ctxs (Iterable[EvaluateContext]):
             Iterable of contexts. Must have the same length as

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import copy
+from collections.abc import Mapping
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol
 
-from typing_extensions import Concatenate
+from typing_extensions import Concatenate, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -107,7 +108,7 @@ class EvaluateContext:
             quantities (dict[str, Any] | None): Intermediate quantities
                 computed during evaluation. Implementations may leave this
                 as None if no quantities are produced.
-            parameters (dict[str, Any] | None): Parameter dictionary used
+            parameters (Mapping[str, object] | None): Parameter mapping used
                 for this evaluation.
             loss (float | None): Final scalar loss value. Set by
                 `ObjectiveFunctor` implementations.
@@ -148,7 +149,7 @@ class EvaluateContext:
         self, config: SimpleNamespace | None, shared: SimpleNamespace | None
     ):
         self.quantities: dict[str, Any] | None = None
-        self.parameters: dict[str, Any] | None = None
+        self.parameters: Mapping[str, object] | None = None
         self.loss: float | None = None
         self.temp = SimpleNamespace()
         self.config = SimpleNamespace() if config is None else config
@@ -248,8 +249,8 @@ class EvaluateContext:
 
         This context manager is a convenience wrapper around
         ``spawn_children()`` and ``collect_child_meta_data()``. It is intended
-        for nested evaluations where the component spawning child contexts is
-        also responsible for collecting their metadata before returning.
+        for nested evaluations where the component, that is spawning child contexts,
+        is also responsible for collecting their metadata before returning.
 
         Args:
             n_children: Number of child contexts to create.
@@ -264,6 +265,14 @@ class EvaluateContext:
         Notes:
             Child metadata is collected automatically when the context manager
             exits, even if an exception is raised inside the managed block.
+
+        Example:
+        >>> with ctx.child_contexts(
+                n_children=self.n_terms(), configurator=self.child_context_configurator
+            ) as child_ctxs:
+        >>>    terms = []
+        >>>    for idx, ctx_term in enumerate(child_ctxs):
+        >>>        terms.append(self.evaluate_term(parameters, idx, ctx_term))
 
         """
 
@@ -341,10 +350,28 @@ class EvaluateContext:
         self.meta = state["meta"]
 
 
+# Variance here follows the direction in which values cross the public API:
+#
+# * Parameters are only consumed by ObjectiveFunctor and QuantityComputer, so
+#   they are contravariant. For example, an objective that accepts a broad
+#   Mapping[str, object] is safe wherever one accepting dict[str, float] is
+#   required. The Mapping bound is only an upper bound; it does not force user
+#   callbacks to spell their parameter annotation as Mapping.
+# * Quantities are produced by QuantityComputer, so they are covariant.  A
+#   computer returning a more specific quantity dictionary can therefore be
+#   used where a less specific result is expected.
+# * A loss function must consume the same quantity type produced by its paired
+#   computer. LossQuantitiesT is consequently kept invariant to tie those two
+#   sides together during inference.
 ParametersT_contra = TypeVar(
-    "ParametersT_contra", bound=dict[str, Any], contravariant=True
+    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
 )
-QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
+QuantitiesT_co = TypeVar(
+    "QuantitiesT_co",
+    bound=dict[str, Any],
+    covariant=True,
+    default=dict[str, Any],
+)
 LossQuantitiesT = TypeVar("LossQuantitiesT", bound=dict[str, Any])
 
 

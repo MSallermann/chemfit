@@ -1,37 +1,29 @@
-import functools
+from typing import Any
 
 import numpy as np
 import pytest
 from conftest import LJAtomsFactory, apply_params_lj, construct_lj, e_lj
 
-from chemfit.abstract_objective_function import (
-    EvaluateContext,
-    QuantityComputerObjectiveFunction,
-)
+from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.ase_objective_function import SinglePointASEComputer
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.fitter import Fitter
 
 
-def loss_function(quants: dict, e_ref: float):
+def loss_function(quants: dict[str, Any], e_ref: float) -> float:
     return (quants["energy"] - e_ref) ** 2
 
 
-def lj_ob_term(r: float, eps: float, sigma: float) -> QuantityComputerObjectiveFunction:
-    computer = SinglePointASEComputer(
+def lj_ob_term(r: float, eps: float, sigma: float):
+    return SinglePointASEComputer(
         calc_factory=construct_lj,
         param_applier=apply_params_lj,
         atoms_factory=LJAtomsFactory(r),
         tag="lj_{r}",
-    )
-
-    return QuantityComputerObjectiveFunction(
-        loss_function=functools.partial(loss_function, e_ref=e_lj(r, eps, sigma)),
-        quantity_computer=computer,
-    )
+    ).with_loss(loss_function, e_ref=e_lj(r, eps, sigma))
 
 
-def get_ob_func(eps: float, sigma: float) -> CombinedObjectiveFunction:
+def get_ob_func(eps: float, sigma: float):
     r_min = 2.0 ** (1 / 6) * sigma
     r_list = np.linspace(0.925 * r_min, 3.0 * sigma)
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+from collections.abc import Mapping
 from enum import Enum
 from typing import Any, Generic, TypeVar, cast
 
@@ -13,7 +14,9 @@ from chemfit.debug_utils import log_all_methods
 
 logger = logging.getLogger(__name__)
 
-ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+# CombinedObjectiveFunction is mutable and invariant, so wrappers that retain
+# one must preserve its exact parameter type as well.
+ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 TermResult = float | None | Exception
 
 
@@ -124,7 +127,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         The goal of this function is to lead to the same behaviour as on the original combined objective function.
         This means the child_context_configurator has to "see" the idx of the current child not within the current slice, but
         the absolute index.
-        Fort the same reason we overwrite the number of children.
+        For the same reason we overwrite the number of children.
 
         Args:
             idx_child_ctx (int): The index of the current child context *within* the slice

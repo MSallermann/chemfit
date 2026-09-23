@@ -15,6 +15,8 @@ from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+# The wrapped result only flows out of this helper, so a wrapper returning a
+# subtype is safe wherever a wrapper returning a broader type is expected.
 T_co = TypeVar("T_co", covariant=True)
 P = ParamSpec("P")
 

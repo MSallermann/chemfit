@@ -179,7 +179,7 @@ def test_quickstart():
     TARGET = 2
     ob = computer.with_loss(functools.partial(loss, target=TARGET))
 
-    PARAMS = {"x": 1, "y": 2}
+    PARAMS = {"x": 1.0, "y": 2.0}
     assert np.isclose(ob(PARAMS), (PARAMS["x"] ** 2 + PARAMS["y"] ** 2 - 2) ** 2)
 
     ctx = EvaluateContext()
@@ -200,7 +200,7 @@ def test_quickstart2():
         computer.bind(f=2).with_loss(loss, target=2),
     ]
 
-    PARAMS = {"x": 1, "y": 2}
+    PARAMS = {"x": 1.0, "y": 2.0}
     combined = CombinedObjectiveFunction(terms)
     ctx = EvaluateContext()
     combined(PARAMS, ctx)

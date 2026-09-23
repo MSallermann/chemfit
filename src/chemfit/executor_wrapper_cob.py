@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
@@ -11,7 +12,9 @@ from chemfit.abstract_objective_function import (
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_utils import map_with_context
 
-ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+# CombinedObjectiveFunction is mutable and invariant, so wrappers that retain
+# one must preserve its exact parameter type as well.
+ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 
 
 class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):

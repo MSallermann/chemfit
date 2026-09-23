@@ -7,6 +7,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Mapping
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -31,12 +32,18 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+# The protocols have one-way data flow: hooks consume parameters and parsers
+# produce quantities, hence their contravariant/covariant variables.
 ParametersT_contra = TypeVar(
-    "ParametersT_contra", bound=dict[str, Any], contravariant=True
+    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
 )
-QuantitiesT = TypeVar("QuantitiesT", bound=dict[str, Any])
 QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
+
+# The concrete computer stores mutable collections of callbacks and must keep
+# their parameter and result types matched.  Its variables are therefore
+# invariant even though the individual callback protocols above are variant.
+ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
+QuantitiesT = TypeVar("QuantitiesT", bound=dict[str, Any])
 
 
 def _subprocess_output_to_text(output: bytes | str) -> str:
@@ -229,7 +236,7 @@ class FileBasedQuantityComputer(
 
         Args:
             presubmit: Callable executed before the command is run. Must accept
-                ``(parameters: dict[str, Any], workdir: Path, ...)`` where any
+                ``(parameters: Mapping[str, object], workdir: Path, ...)`` where any
                 additional arguments are keyword-only.
             **kwargs: Keyword arguments to bind to ``presubmit``.
 
@@ -280,7 +287,7 @@ class FileBasedQuantityComputer(
 
         Args:
             executable_cmd: Callable used to construct the command. Must accept
-                ``(parameters: dict[str, Any], workdir: Path, ...)`` where any
+                ``(parameters: Mapping[str, object], workdir: Path, ...)`` where any
                 additional arguments are keyword-only.
             **kwargs: Keyword arguments to bind to ``executable_cmd``.
 

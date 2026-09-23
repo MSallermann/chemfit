@@ -1,8 +1,10 @@
+from __future__ import annotations
+
 import math
 import random
-from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from itertools import product
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pytest
@@ -20,6 +22,9 @@ from chemfit.abstract_objective_function import (
 from chemfit.executor_utils import map_with_context
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 from chemfit.wrap_funcs import to_quantity_computer
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 N_TERMS = 10
 
@@ -284,11 +289,12 @@ def test_combined_objective_exception_handlers_with_mpi():
 def test_aggregator(executor: ExecutorLike):
     def custom_aggregator(
         terms: list[float],  # noqa: ARG001
-        quantities: list[dict],
+        quantities: list[dict[str, Any] | None],
         ctx: EvaluateContext,
     ) -> float:
         ctx.meta["foo"] = "bar"
-        return sum(q["test"] for q in quantities)
+        assert all(q is not None for q in quantities)
+        return sum(q["test"] for q in quantities if q is not None)
 
     @to_quantity_computer()
     def q1(parameters: dict[str, float], f: float) -> dict[str, float]:

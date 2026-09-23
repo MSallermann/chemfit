@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from pydictnest import flatten_dict
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def check_protocol(obj: Any | None, prot: Any):
@@ -45,8 +48,8 @@ def dump_dict_to_file(file: Path, dictionary: dict) -> None:
 
 
 def check_params_near_bounds(
-    params: dict[str, Any],
-    bounds: dict[str, Any],
+    params: Mapping[str, object],
+    bounds: Mapping[str, object],
     relative_tol: float,
 ) -> list[tuple[str, float, float, float]]:
     """

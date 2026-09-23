@@ -4,16 +4,17 @@ import copy
 import logging
 import math
 import time
-from collections.abc import MutableMapping
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Callable, Generic, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Callable, Generic, cast
 
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
 from pydictnest import flatten_dict, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
+from typing_extensions import TypeVar
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
@@ -29,7 +30,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-ParametersT = TypeVar("ParametersT", bound=dict[str, Any])
+# Fitter both consumes candidates (ask/fit inputs) and returns parameters
+# (finish/fit outputs), so its parameter type must remain invariant.  The
+# default keeps concise unannotated lambdas and heterogeneous nested dicts
+# usable; an annotated objective still determines a more precise type.
+ParametersT = TypeVar("ParametersT", bound=dict[str, Any], default=dict[str, Any])
 
 
 class FitterEvaluateContext(EvaluateContext):
@@ -193,8 +198,8 @@ class Fitter(Generic[ParametersT]):
         objective_function: (
             Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
         ),
-        initial_params: MutableMapping[str, Any],
-        bounds: dict[str, Any] | None = None,
+        initial_params: Mapping[str, Any],
+        bounds: Mapping[str, object] | None = None,
         near_bound_tol: float | None = None,
         value_bad_params: float = 1e5,
         swallow_exceptions: bool = False,
@@ -215,7 +220,7 @@ class Fitter(Generic[ParametersT]):
                 `to_objective_functor`.
             initial_params: Nested mapping of concrete initial parameter
                 values passed to the objective.
-            bounds (dict[str, Any] | None, optional): Bounds for each
+            bounds (Mapping[str, object] | None, optional): Bounds for each
                 parameter. The structure must mirror ``initial_params``,
                 but may omit bounds for parameters.
                 Defaults to None.
@@ -229,12 +234,14 @@ class Fitter(Generic[ParametersT]):
 
         """
 
-        if not isinstance(initial_params, MutableMapping):
+        if not isinstance(initial_params, Mapping):
             msg = "initial_params must be a mapping"
             raise TypeError(msg)
 
-        self.initial_parameters = copy.deepcopy(dict(initial_params))
-        self.bounds = {} if bounds is None else bounds
+        self.initial_parameters = cast(
+            "ParametersT", copy.deepcopy(dict(initial_params))
+        )
+        self.bounds: Mapping[str, object] = {} if bounds is None else bounds
 
         # Make sure that we have an ObjectiveFunctor instance
         if not isinstance(objective_function, ObjectiveFunctor):
@@ -379,7 +386,7 @@ class Fitter(Generic[ParametersT]):
         """
         Evaluate one candidate or a parallel batch proposed by the user.
 
-        A dictionary produces one loss. A list produces a list of losses in
+        A mapping produces one loss. A list produces a list of losses in
         input order and may contain at most ``num_workers`` candidates.
         """
 
@@ -387,7 +394,7 @@ class Fitter(Generic[ParametersT]):
             msg = "call fitter.init() before fitter.ask()"
             raise RuntimeError(msg)
 
-        if isinstance(parameters, MutableMapping):
+        if isinstance(parameters, Mapping):
             return self.objective_function(
                 cast("ParametersT", dict(parameters)), self.contexts[context_index]
             )
@@ -456,7 +463,7 @@ class Fitter(Generic[ParametersT]):
         return opt_params
 
     def _make_nevergrad_parameterization(
-        self, parametrization: MutableMapping[str, Any] | None
+        self, parametrization: Mapping[str, object] | None
     ) -> ng.p.Instrumentation:
         """Build Nevergrad's representation from concrete parameter values."""
         flat_initial_params = flatten_dict(self.initial_parameters)
@@ -464,7 +471,7 @@ class Fitter(Generic[ParametersT]):
 
         if parametrization is None:
             flat_parametrization = {}
-        elif isinstance(parametrization, MutableMapping):
+        elif isinstance(parametrization, Mapping):
             flat_parametrization = flatten_dict(parametrization)
         else:
             msg = "parametrization must be a mapping"
@@ -510,7 +517,7 @@ class Fitter(Generic[ParametersT]):
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
         executor: ExecutorLike | None = None,
-        parametrization: MutableMapping[str, Any] | None = None,
+        parametrization: Mapping[str, object] | None = None,
         initial_observations: (
             Iterable[tuple[ParametersT, float | None]] | None
         ) = None,
