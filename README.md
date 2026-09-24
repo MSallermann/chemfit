@@ -128,7 +128,7 @@ initial_params = {"epsilon": 0.7, "sigma": 1.2}
 num_workers = 6
 
 
-# Allow every energy term in a four-candidate batch to run concurrently.
+# Allow every energy term in a batch of up to six candidates to run concurrently.
 with ThreadPoolExecutor(max_workers=num_workers * len(distances)) as term_executor:
     objective = ExecutorWrapperCOB(combined, executor=term_executor)
     fitter = Fitter(
@@ -142,7 +142,7 @@ with ThreadPoolExecutor(max_workers=num_workers * len(distances)) as term_execut
     fitter.register_callback(log_progress, n_steps=10)
     fitter.register_callback(remember_best, n_steps=1)
 
-    # Nevergrad also evaluates batches of six candidates concurrently.
+    # Nevergrad also evaluates batches of up to six candidates concurrently.
     result = fitter.fit_nevergrad(
         budget=400,
         optimizer_str="TwoPointsDE",
@@ -157,8 +157,8 @@ with ThreadPoolExecutor(max_workers=num_workers * len(distances)) as term_execut
 
 Each distance becomes an independent objective term with its own evaluation
 context. `ExecutorWrapperCOB` evaluates those terms in a shared thread pool,
-while Nevergrad evaluates four parameter candidates concurrently in a second
-pool. The built-in callback logs detailed progress every ten optimizer steps,
-while the custom callback records the best loss after every step. The final
-parent context retains each term's quantities, loss, and metadata for
+while Nevergrad evaluates up to six parameter candidates concurrently in a
+second pool. The built-in callback logs detailed progress every ten optimizer
+steps, while the custom callback records the best loss after every step. The
+final parent context retains each term's quantities, loss, and metadata for
 inspection.
