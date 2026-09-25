@@ -72,15 +72,11 @@ class MyExecutor(abstract_objective_function.ExecutorLike):
 
 
 class MyFunctor(abstract_objective_function.ObjectiveFunctor):
-    def __call__(
+    def _evaluate(
         self,
         parameters: dict[str, float],
-        ctx: EvaluateContext | None = None,
+        ctx: EvaluateContext,
     ) -> float:
-        if ctx is None:
-            ctx = EvaluateContext()
-
-        ctx.loss = 99.0
         ctx.parameters = parameters
         return parameters["a"] ** 2 - parameters["b"]
 

@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, cast
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
-from pydictnest import flatten_dict, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
@@ -24,6 +23,7 @@ from chemfit.abstract_objective_function import (
 from chemfit.executor_utils import map_with_context
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
+from pydictnest import flatten_dict, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -125,10 +125,15 @@ class FitterObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT]
 
         """
 
+        super().__init__()
         self.wrap_me = wrap_me
         self.value_bad_params = value_bad_params
         self.swallow_exceptions: bool = swallow_exceptions
         self.log_exceptions: bool = log_exceptions
+
+    def _create_context(self) -> FitterEvaluateContext:
+        """Create a fitter-specific default evaluation context."""
+        return FitterEvaluateContext()
 
     def post_process_return_value(
         self,
@@ -164,26 +169,22 @@ class FitterObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT]
 
         return loss
 
-    def __call__(
-        self, parameters: ParametersT, ctx: EvaluateContext | None = None
-    ) -> float:
-        if ctx is None:
-            ctx = FitterEvaluateContext()
-        elif not isinstance(ctx, FitterEvaluateContext):
+    def _evaluate(self, parameters: ParametersT, ctx: EvaluateContext) -> float:
+        if not isinstance(ctx, FitterEvaluateContext):
             msg = "FitterObjectiveFunctor requires a FitterEvaluateContext"
             raise TypeError(msg)
 
         # first we try if we can get a value at all
         try:
             value = self.wrap_me(parameters, ctx)
-        except Exception as e:
+        except Exception:
             if self.log_exceptions:
                 logger.exception(
                     "Caught exception while evaluating objective function."
                 )
 
             if not self.swallow_exceptions:
-                raise e
+                raise
 
             value = float("nan")
 

@@ -405,6 +405,10 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
 
+    def _create_context(self) -> EvaluateContext:
+        """Create the default context used when none is supplied."""
+        return EvaluateContext()
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Guard implementations against overriding __call__."""
 
@@ -507,7 +511,7 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         """
 
         if ctx is None:
-            ctx = EvaluateContext()
+            ctx = self._create_context()
 
         ctx.parameters = parameters
 

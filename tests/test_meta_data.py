@@ -14,13 +14,11 @@ from chemfit.wrap_funcs import to_objective_functor, to_quantity_computer
 class MyFunctor(ObjectiveFunctor):
     def __init__(self, f: float) -> None:
         """Initialize My Functor."""
+        super().__init__()
         self.f = f
         self.meta_data = {}
 
-    def __call__(self, parameters: dict, ctx: EvaluateContext | None = None) -> float:
-        if ctx is None:
-            ctx = EvaluateContext()
-
+    def _evaluate(self, parameters: dict, ctx: EvaluateContext) -> float:
         val = self.f * parameters["x"] ** 2
         ctx.meta["last_value"] = val
         return val
@@ -59,8 +57,8 @@ EXPECTED = [
     },
     {
         "quantities": None,
-        "parameters": None,
-        "loss": None,
+        "parameters": {"x": 1.0, "y": 2.0},
+        "loss": 1.0,
         "meta": {"last_value": 1.0},
     },
     {

@@ -88,6 +88,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         """
 
+        super().__init__()
         self.cob = cob
         if comm is None:
             self.comm = MPI.COMM_WORLD.Dup()
@@ -264,9 +265,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         # TODO(MS): think about this some more. It is a bit hacky because now the `ctx._children` variable only has the child ctxs for rank 0, but the meta_data from all the other ranks too  # noqa: TD003
         ctx.meta["children"] = total_meta_data
 
-    def __call__(
-        self, params: ParametersT, ctx: EvaluateContext | None = None
-    ) -> float:
+    def _evaluate(self, parameters: ParametersT, ctx: EvaluateContext) -> float:
         """
         Evaluate the combined objective on rank 0 using MPI.
 
@@ -277,9 +276,8 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         wrapped combined objective's reduction function.
 
         Args:
-            params: Parameter dictionary for the current evaluation.
-            ctx: Optional parent evaluation context. If ``None``, a new
-                ``EvaluateContext`` is created.
+            parameters: Parameter dictionary for the current evaluation.
+            ctx: Parent evaluation context.
 
         Returns:
             Reduced scalar loss value.
@@ -289,19 +287,12 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
             Exception: Re-raises any exception returned from a worker rank.
 
         Side Effects:
-            - Stores ``params`` in ``ctx.parameters``.
             - Broadcasts the evaluation context to all worker ranks.
             - Collects child metadata into ``ctx.meta["children"]``.
-            - Stores the final reduced loss in ``ctx.loss``.
 
         """
 
         # Function to evaluate the objective function, to be called from rank 0
-
-        if ctx is None:
-            ctx = EvaluateContext()
-
-        ctx.parameters = params
 
         # Ensure only rank 0 can call this
         if self.rank != 0:
@@ -314,7 +305,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         local_terms: list[TermResult] = []
         try:
             # Compute one slice of the objective function on the main rank
-            local_terms = self.evaluate_slice(params, ctx=ctx)
+            local_terms = self.evaluate_slice(parameters, ctx=ctx)
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank
@@ -336,8 +327,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
             values.append(term)
 
         filtered_terms = self.cob.filter_terms(values, ctx)
-        ctx.loss = self.cob.apply_reduction(filtered_terms, ctx)
-        return ctx.loss
+        return self.cob.apply_reduction(filtered_terms, ctx)
 
     def release_workers(self):
         # Only rank 0 needs to shut down workers

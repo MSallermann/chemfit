@@ -148,6 +148,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
         """
 
+        super().__init__()
+
         # Convert to list internally for mutability
         self.objective_functions = transform_generic_callables(objective_functions)
 
@@ -398,10 +400,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
         return self.filter_terms(terms, ctx)
 
-    def __call__(
+    def _evaluate(
         self,
         parameters: ParametersT,
-        ctx: EvaluateContext | None = None,
+        ctx: EvaluateContext,
     ) -> float:
         """
         Evaluate the combined objective.
@@ -414,27 +416,17 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
         Args:
             parameters: Parameter dictionary for the evaluation.
-            ctx: Optional parent evaluation context. If ``None``, a new
-                ``EvaluateContext`` is created.
+            ctx: Parent evaluation context.
 
         Returns:
             The reduced scalar loss computed from the evaluated terms.
 
         Side Effects:
-            - Populates ``ctx.parameters``.
             - Spawns child contexts in ``ctx``.
             - Collects child metadata into ``ctx.meta["children"]``.
-            - Stores the final reduced loss in ``ctx.loss``.
 
         """
 
-        if ctx is None:
-            ctx = EvaluateContext()
-
-        ctx.parameters = parameters
-
         filtered_terms = self.evaluate_terms(parameters=parameters, ctx=ctx)
 
-        ctx.loss = self.apply_reduction(filtered_terms, ctx)
-
-        return ctx.loss
+        return self.apply_reduction(filtered_terms, ctx)

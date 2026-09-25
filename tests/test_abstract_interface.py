@@ -6,19 +6,19 @@ import random
 import time
 
 import numpy as np
-from pydictnest import get_nested, items_nested
 
 from chemfit import abstract_objective_function, async_helpers
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.wrap_funcs import to_quantity_computer
+from pydictnest import get_nested, items_nested
 
 
 class MyFunctor(abstract_objective_function.ObjectiveFunctor):
-    def __call__(
+    def _evaluate(
         self,
         parameters: dict[str, float],
-        ctx: EvaluateContext | None = None,  # noqa: ARG002
+        ctx: EvaluateContext,  # noqa: ARG002
     ) -> float:
         return parameters["a"] ** 2 - parameters["b"]
 
