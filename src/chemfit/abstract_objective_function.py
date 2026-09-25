@@ -436,6 +436,14 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             the previous evaluation. Only ``ctx.parameters`` is updated before
             the hooks are invoked.
 
+            Hooks may run concurrently and, with process-based execution, may
+            run in another process. They should not mutate captured mutable
+            objects, global variables, or other shared state: such mutations
+            can race between threads and are not propagated back from worker
+            processes. Store per-evaluation output on ``ctx`` instead, usually
+            in ``ctx.meta``. Hooks used by a process-based executor must also
+            be serializable.
+
         """
         self.pre_eval_hooks.append(hook)
 
@@ -455,6 +463,14 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             collected and raised together as ``PostEvalHookError``. If
             ``_evaluate`` raises, its exception remains primary and is
             available to hooks as ``ctx.temp.exception``.
+
+            Hooks may run concurrently and, with process-based execution, may
+            run in another process. They should not mutate captured mutable
+            objects, global variables, or other shared state: such mutations
+            can race between threads and are not propagated back from worker
+            processes. Store per-evaluation output on ``ctx`` instead, usually
+            in ``ctx.meta``. Hooks used by a process-based executor must also
+            be serializable.
 
         """
         self.post_eval_hooks.append(hook)

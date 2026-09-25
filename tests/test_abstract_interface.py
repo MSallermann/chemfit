@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import pickle
 import random
 import time
 
 import numpy as np
+import pytest
 
 from chemfit import abstract_objective_function, async_helpers
 from chemfit.abstract_objective_function import EvaluateContext
@@ -36,6 +38,122 @@ class MyComputer(abstract_objective_function.QuantityComputer):
         time.sleep(random.random() * 0.1)  # noqa: S311
 
         return {"res": ctx.temp.a2 - parameters["b"]}
+
+
+def test_objective_functor_hooks_run_in_registration_order():
+    objective = MyFunctor()
+    ctx = EvaluateContext()
+    parameters = {"a": 2.0, "b": 3.0}
+
+    # Record observations on the per-evaluation context. Capturing and mutating
+    # a shared list from hooks would be unsafe during concurrent evaluation and
+    # would not propagate back when a hook runs in another process.
+    ctx.meta["hook_calls"] = []
+
+    objective.register_pre_eval_hook(
+        lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
+            ("pre-1", hook_ctx.parameters, hook_ctx.loss)
+        )
+    )
+    objective.register_pre_eval_hook(
+        lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
+            ("pre-2", hook_ctx.parameters, hook_ctx.loss)
+        )
+    )
+    objective.register_post_eval_hook(
+        lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
+            ("post-1", hook_ctx.loss, hook_ctx.temp.exception)
+        )
+    )
+    objective.register_post_eval_hook(
+        lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
+            ("post-2", hook_ctx.loss, hook_ctx.temp.exception)
+        )
+    )
+
+    assert objective(parameters, ctx) == 1.0
+    assert ctx.meta["hook_calls"] == [
+        ("pre-1", parameters, None),
+        ("pre-2", parameters, None),
+        ("post-1", 1.0, None),
+        ("post-2", 1.0, None),
+    ]
+
+
+def test_objective_functor_collects_all_post_hook_exceptions():
+    objective = MyFunctor()
+    ctx = EvaluateContext()
+    ctx.meta["hook_calls"] = []
+
+    def fail(hook_ctx: EvaluateContext, message: str) -> None:
+        hook_ctx.meta["hook_calls"].append(message)
+        raise ValueError(message)
+
+    objective.register_post_eval_hook(functools.partial(fail, message="first failure"))
+    objective.register_post_eval_hook(
+        lambda hook_ctx: hook_ctx.meta["hook_calls"].append("successful hook")
+    )
+    objective.register_post_eval_hook(functools.partial(fail, message="second failure"))
+
+    with pytest.raises(
+        abstract_objective_function.ObjectiveFunctor.PostEvalHookError
+    ) as exc_info:
+        objective({"a": 2.0, "b": 3.0}, ctx)
+
+    assert ctx.meta["hook_calls"] == [
+        "first failure",
+        "successful hook",
+        "second failure",
+    ]
+    assert ctx.loss == 1.0
+    assert ctx.temp.exception is None
+    assert [str(exc) for exc in exc_info.value.exceptions] == [
+        "first failure",
+        "second failure",
+    ]
+
+    restored = pickle.loads(pickle.dumps(exc_info.value))  # noqa: S301
+    assert isinstance(
+        restored, abstract_objective_function.ObjectiveFunctor.PostEvalHookError
+    )
+    assert [str(exc) for exc in restored.exceptions] == [
+        "first failure",
+        "second failure",
+    ]
+
+
+def test_evaluation_exception_remains_primary_when_post_hook_fails():
+    evaluation_error = ValueError("evaluation failed")
+    ctx = EvaluateContext()
+    ctx.meta["hook_calls"] = []
+
+    class FailingFunctor(abstract_objective_function.ObjectiveFunctor):
+        def _evaluate(
+            self,
+            parameters: dict[str, float],  # noqa: ARG002
+            ctx: EvaluateContext,  # noqa: ARG002
+        ) -> float:
+            raise evaluation_error
+
+    def failing_hook(hook_ctx: EvaluateContext) -> None:
+        hook_ctx.meta["hook_calls"].append("failing hook")
+        msg = "post hook failed"
+        raise RuntimeError(msg)
+
+    def observing_hook(hook_ctx: EvaluateContext) -> None:
+        hook_ctx.meta["hook_calls"].append("observing hook")
+        assert hook_ctx.loss is None
+        assert hook_ctx.temp.exception is evaluation_error
+
+    objective = FailingFunctor()
+    objective.register_post_eval_hook(failing_hook)
+    objective.register_post_eval_hook(observing_hook)
+
+    with pytest.raises(ValueError, match="evaluation failed") as exc_info:
+        objective({"a": 2.0}, ctx)
+
+    assert exc_info.value is evaluation_error
+    assert ctx.meta["hook_calls"] == ["failing hook", "observing hook"]
 
 
 def loss1(q: dict[str, float]):
@@ -148,7 +266,7 @@ def test_async_evaluation():
     n_terms = 10
     a_list = np.linspace(1, 5, n_terms)
     b_list = np.linspace(2, 7, n_terms)
-    params = [{"a": a, "b": b} for a, b in zip(a_list, b_list)]
+    params = [{"a": a, "b": b} for a, b in zip(a_list, b_list, strict=True)]
 
     sync_results = [0.0] * n_terms
 
