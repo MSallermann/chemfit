@@ -5,7 +5,7 @@ import copy
 from collections.abc import Mapping
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol
+from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, cast
 
 from typing_extensions import Concatenate, TypeVar
 
@@ -381,24 +381,92 @@ LossQuantitiesT = TypeVar("LossQuantitiesT", bound=dict[str, Any])
 
 
 class ObjectiveFunctor(Generic[ParametersT_contra]):
-    def __call__(
-        self,
-        parameters: ParametersT_contra,
-        ctx: EvaluateContext | None = None,
-    ) -> float:
+    class PostEvalHookError(RuntimeError):
+        """
+        Report failures raised by one or more post-evaluation hooks.
+
+        Attributes:
+            exceptions: Exceptions raised by the post-evaluation hooks, in
+                hook registration order.
+
+        """
+
+        def __init__(self, exceptions: list[Exception]) -> None:
+            """Initialize."""
+            self.exceptions = tuple(exceptions)
+            super().__init__(f"{len(exceptions)} post-evaluation hook(s) failed")
+
+        def __reduce__(self):
+            return type(self), (list(self.exceptions),)
+
+    def __init__(self) -> None:
+        """Initialize objective function."""
+
+        self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+        self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Guard implementations against overriding __call__."""
+
+        super().__init_subclass__(**kwargs)
+
+        if cls.__call__ is not ObjectiveFunctor.__call__:
+            msg = (
+                f"{cls.__qualname__} must implement _evaluate() "
+                "instead of overriding __call__()"
+            )
+            raise TypeError(msg)
+
+    def register_pre_eval_hook(self, hook: Callable[[EvaluateContext], None]):
+        """
+        Register a callback that is invoked before the evaluation.
+
+        The callback will be invoked as `cb(ctx)`,
+        where `ctx` is the current EvaluateContext.
+
+        Multiple callbacks can be registered. They are invoked in order of
+        registration.
+
+        Note:
+            If contexts are reused, pre-evaluation hooks may observe state from
+            the previous evaluation. Only ``ctx.parameters`` is updated before
+            the hooks are invoked.
+
+        """
+        self.pre_eval_hooks.append(hook)
+
+    def register_post_eval_hook(self, hook: Callable[[EvaluateContext], None]):
+        """
+        Register a callback that is invoked after the evaluation.
+
+        The callback will be invoked as `cb(ctx)`,
+        where `ctx` is the current EvaluateContext.
+
+        Multiple callbacks can be registered. They are invoked in order of
+        registration.
+
+        Note:
+            Every post-evaluation hook is attempted, even if an earlier hook
+            raises an exception. If evaluation succeeds, hook exceptions are
+            collected and raised together as ``PostEvalHookError``. If
+            ``_evaluate`` raises, its exception remains primary and is
+            available to hooks as ``ctx.temp.exception``.
+
+        """
+        self.post_eval_hooks.append(hook)
+
+    def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
         Evaluate the objective function.
 
         Implementations should compute a scalar loss from the given
         parameter dictionary. All per-evaluation state must be written
-        into the provided `ctx`. If no context is supplied,
-        a new one should be created internally.
+        into the provided `ctx`.
 
         Args:
             parameters (dict[str, Any]): Mapping of parameter names to
                 float values.
-            ctx (EvaluateContext | None): Optional evaluation context. If
-                None, a new `EvaluateContext` should be created.
+            ctx (EvaluateContext): Evaluation context.
 
         Returns:
             float: The computed scalar loss.
@@ -407,12 +475,69 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             - Implementations should avoid mutating `self` during the
               call. All per-evaluation information should be placed in
               `ctx` instead.
+
+        """
+        raise NotImplementedError
+
+    def __call__(
+        self,
+        parameters: ParametersT_contra,
+        ctx: EvaluateContext | None = None,
+    ) -> float:
+        """
+        Evaluate the objective function.
+
+        Args:
+            parameters (dict[str, Any]): Mapping of parameter names to
+                float values.
+            ctx (EvaluateContext | None): Optional evaluation context. If
+                None, a new `EvaluateContext` is created.
+
+        Notes:
+            - Derived classes must implement ``_evaluate`` rather than
+              overriding ``__call__``.
             - This method is synchronous. For concurrent or asynchronous
               evaluation, use one `EvaluateContext` per call and invoke
               this method in multiple threads/tasks.
 
+        Raises:
+            PostEvalHookError: If evaluation succeeds and one or more
+                post-evaluation hooks raise an exception.
+
         """
-        raise NotImplementedError
+
+        if ctx is None:
+            ctx = EvaluateContext()
+
+        ctx.parameters = parameters
+
+        for cb in self.pre_eval_hooks:
+            cb(ctx)
+
+        # we need this boolean flag so that we dont accidentally
+        # mask an evaluation exception by rasing PostEvalHookError
+        # in the finally block
+        evaluation_failed = False
+        try:
+            ctx.loss = self._evaluate(parameters, ctx)
+            ctx.temp.exception = None
+        except BaseException as e:
+            evaluation_failed = True
+            ctx.loss = None
+            ctx.temp.exception = e
+            raise
+        finally:
+            post_hook_exceptions = []
+            for cb in self.post_eval_hooks:
+                try:
+                    cb(ctx)
+                except Exception as e:  # noqa: PERF203
+                    post_hook_exceptions.append(e)
+
+            if not evaluation_failed and post_hook_exceptions:
+                raise self.PostEvalHookError(post_hook_exceptions)
+
+        return cast("float", ctx.loss)
 
 
 LossFunction = Callable[Concatenate[LossQuantitiesT, ...], float]
@@ -533,27 +658,22 @@ class QuantityComputerObjectiveFunction(
         self.static_meta_data: dict[str, Any] = {}
         self.loss_function = loss_function
 
-    def __call__(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
-    ) -> float:
+    def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
         Compute the objective loss.
 
-        This method:
-        1. Computes intermediate quantities using the quantity computer.
-        2. Applies the loss function.
-        3. Stores results in the evaluation context.
+        This method computes intermediate quantities using the quantity
+        computer and applies the loss function. The inherited ``__call__``
+        method stores the returned loss in ``ctx.loss``.
 
         Args:
             parameters (dict[str, Any]): Parameter dictionary.
-            ctx (EvaluateContext | None): Optional context. If None, a
-                new one is created.
+            ctx (EvaluateContext): Evaluation context.
 
         Returns:
             float: The computed scalar loss.
 
         Side Effects:
-            Stores the computed loss in ``ctx.loss``.
             Updates ``ctx.meta`` with ``self.static_meta_data`` after the
             wrapped ``QuantityComputer`` may have already added metadata.
             Populates ``ctx.quantities`` and ``ctx.parameters`` via the
@@ -565,9 +685,6 @@ class QuantityComputerObjectiveFunction(
 
         """
 
-        if ctx is None:
-            ctx = EvaluateContext()
-
         quantities = self.quantity_computer(parameters, ctx)
 
         # Update or set static meta data if needed
@@ -578,5 +695,4 @@ class QuantityComputerObjectiveFunction(
         except TypeError:
             loss = self.loss_function(quantities, parameters)
 
-        ctx.loss = loss
         return loss
