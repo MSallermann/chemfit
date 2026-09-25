@@ -380,6 +380,25 @@ QuantitiesT_co = TypeVar(
 LossQuantitiesT = TypeVar("LossQuantitiesT", bound=dict[str, Any])
 
 
+class PreEvaluationHook(Protocol):
+    """Callback that runs before an objective evaluation."""
+
+    def pre_eval(self, ctx: EvaluateContext) -> None:
+        """Run before the objective evaluation."""
+        ...
+
+
+class PostEvaluationHook(Protocol):
+    """Callback that runs after an objective evaluation."""
+
+    def post_eval(self, ctx: EvaluateContext) -> None:
+        """Run after the objective evaluation."""
+        ...
+
+
+EvaluationHook = PreEvaluationHook | PostEvaluationHook
+
+
 class ObjectiveFunctor(Generic[ParametersT_contra]):
     class PostEvalHookError(RuntimeError):
         """
@@ -421,48 +440,32 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             )
             raise TypeError(msg)
 
-    def register_pre_eval_hook(self, hook: Callable[[EvaluateContext], None]):
+    def register_eval_hook(self, hook: EvaluationHook) -> None:
         """
-        Register a callback that is invoked before the evaluation.
+        Register an evaluation hook.
 
-        The callback will be invoked as `cb(ctx)`,
-        where `ctx` is the current EvaluateContext.
+        A hook may implement ``pre_eval``, ``post_eval``, or both. Implemented
+        callbacks are invoked in registration order for their respective
+        evaluation phase.
 
-        Multiple callbacks can be registered. They are invoked in order of
-        registration.
+        Args:
+            hook: Object implementing at least one of
+                :class:`PreEvaluationHook` or :class:`PostEvaluationHook`.
+
+        Raises:
+            TypeError: If the hook implements neither callback, or if an
+                implemented callback is not callable.
 
         Note:
             If contexts are reused, pre-evaluation hooks may observe state from
             the previous evaluation. Only ``ctx.parameters`` is updated before
             the hooks are invoked.
 
-            Hooks may run concurrently and, with process-based execution, may
-            run in another process. They should not mutate captured mutable
-            objects, global variables, or other shared state: such mutations
-            can race between threads and are not propagated back from worker
-            processes. Store per-evaluation output on ``ctx`` instead, usually
-            in ``ctx.meta``. Hooks used by a process-based executor must also
-            be serializable.
-
-        """
-        self.pre_eval_hooks.append(hook)
-
-    def register_post_eval_hook(self, hook: Callable[[EvaluateContext], None]):
-        """
-        Register a callback that is invoked after the evaluation.
-
-        The callback will be invoked as `cb(ctx)`,
-        where `ctx` is the current EvaluateContext.
-
-        Multiple callbacks can be registered. They are invoked in order of
-        registration.
-
-        Note:
             Every post-evaluation hook is attempted, even if an earlier hook
             raises an exception. If evaluation succeeds, hook exceptions are
             collected and raised together as ``PostEvalHookError``. If
             ``_evaluate`` raises, its exception remains primary and is
-            available to hooks as ``ctx.temp.exception``.
+            available to post-evaluation hooks as ``ctx.temp.exception``.
 
             Hooks may run concurrently and, with process-based execution, may
             run in another process. They should not mutate captured mutable
@@ -473,7 +476,28 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             be serializable.
 
         """
-        self.post_eval_hooks.append(hook)
+        pre_eval = getattr(hook, "pre_eval", None)
+        post_eval = getattr(hook, "post_eval", None)
+
+        if pre_eval is None and post_eval is None:
+            msg = "evaluation hook must implement pre_eval() or post_eval()"
+            raise TypeError(msg)
+
+        if pre_eval is not None:
+            if not callable(pre_eval):
+                msg = "evaluation hook pre_eval attribute must be callable"
+                raise TypeError(msg)
+            self.pre_eval_hooks.append(
+                cast("Callable[[EvaluateContext], None]", pre_eval)
+            )
+
+        if post_eval is not None:
+            if not callable(post_eval):
+                msg = "evaluation hook post_eval attribute must be callable"
+                raise TypeError(msg)
+            self.post_eval_hooks.append(
+                cast("Callable[[EvaluateContext], None]", post_eval)
+            )
 
     def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
