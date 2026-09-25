@@ -43,6 +43,7 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         """
 
+        super().__init__()
         self.cob = cob
         self.executor: ExecutorLike | None = executor
 
@@ -66,9 +67,7 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         tb: object,
     ): ...
 
-    def __call__(
-        self, parameters: ParametersT, ctx: EvaluateContext | None = None
-    ) -> float:
+    def _evaluate(self, parameters: ParametersT, ctx: EvaluateContext) -> float:
         """
         Evaluate the wrapped combined objective using an executor.
 
@@ -84,8 +83,7 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         Args:
             parameters: Parameter dictionary for the evaluation.
-            ctx: Optional parent evaluation context. If ``None``, a new
-                ``EvaluateContext`` is created.
+            ctx: Parent evaluation context.
 
         Returns:
             The reduced scalar loss computed from the evaluated terms.
@@ -95,12 +93,8 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
             - Spawns one child context per objective term.
             - Evaluates terms through the selected executor.
             - Collects child metadata into ``ctx.meta["children"]``.
-            - Stores the final reduced loss in ``ctx.loss``.
 
         """
-
-        if ctx is None:
-            ctx = EvaluateContext()
 
         executor = ctx.executor or self.executor
         created_executor: ThreadPoolExecutor | None = None
@@ -108,7 +102,6 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
             created_executor = ThreadPoolExecutor()
             executor = created_executor
 
-        ctx.parameters = parameters
         ctx.meta.update({"n_terms": self.cob.n_terms()})
 
         try:
@@ -125,9 +118,7 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
             filtered_terms = self.cob.filter_terms(terms, ctx)
 
-            ctx.loss = self.cob.apply_reduction(filtered_terms, ctx)
-
-            return ctx.loss
+            return self.cob.apply_reduction(filtered_terms, ctx)
         finally:
             if created_executor is not None:
                 created_executor.shutdown()

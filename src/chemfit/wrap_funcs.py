@@ -82,9 +82,7 @@ class WrappedObjectiveFunctor(
             func=self.func, pass_ctx=self.pass_ctx, func_args=args, func_kwargs=kwargs
         )
 
-    def __call__(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
-    ) -> float:
+    def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
         Evaluate the wrapped callable as an objective functor.
 
@@ -94,29 +92,18 @@ class WrappedObjectiveFunctor(
 
         Args:
             parameters: Parameter dictionary for the current evaluation.
-            ctx: Optional evaluation context. If ``None``, a new
-                ``EvaluateContext`` is created.
+            ctx: Evaluation context for the current call.
 
         Returns:
             Scalar loss value returned by the wrapped callable.
 
-        Side Effects:
-            - Stores ``parameters`` in ``ctx.parameters``.
-            - Stores the returned loss in ``ctx.loss``.
-
         """
-
-        if ctx is None:
-            ctx = EvaluateContext()
-
-        ctx.parameters = parameters
 
         if self.pass_ctx:
             loss = self.func(parameters, *self.func_args, **self.func_kwargs, ctx=ctx)
         else:
             loss = self.func(parameters, *self.func_args, **self.func_kwargs)
 
-        ctx.loss = loss
         return loss
 
 
