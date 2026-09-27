@@ -5,9 +5,10 @@ import copy
 from collections.abc import Callable, Mapping
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Concatenate, Generic, Protocol, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
 
-from typing_extensions import Self, TypeVar
+# Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
+from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

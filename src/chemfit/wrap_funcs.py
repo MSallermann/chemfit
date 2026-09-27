@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, Concatenate, Generic, TypeVar
+from typing import Any, Generic, TypeVar
+
+# Python 3.10 needs the backport for Concatenate[T, ...].
+from typing_extensions import Concatenate  # noqa: UP035
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
