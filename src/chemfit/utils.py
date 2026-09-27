@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
 from pydictnest import flatten_dict
 
 if TYPE_CHECKING:

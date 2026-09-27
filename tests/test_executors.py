@@ -3,12 +3,15 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from chemfit import abstract_objective_function, wrap_funcs
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _result_or_cancel(fut: MyFuture, timeout: float | None = None):

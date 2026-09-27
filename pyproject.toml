@@ -23,7 +23,6 @@ build_docs = ["sphinx", "furo", "sphinxcontrib-napoleon", "sphinx-autobuild"]
 examples = ["optuna"]
 mpi = ["mpi4py"]
 test = ["pytest", "loky"]
-dashboard = ["streamlit>=1.37", "polars>=1.0", "plotly>=5.22"]
 
 [tool.setuptools.package-data]
 chemfit = ["py.typed"]
