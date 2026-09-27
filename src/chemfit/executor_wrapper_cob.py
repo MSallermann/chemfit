@@ -4,10 +4,14 @@ from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from typing import Generic, TypeVar
 
+from typing_extensions import Self
+
 from chemfit.abstract_objective_function import (
     EvaluateContext,
     ExecutorLike,
     ObjectiveFunctor,
+    PostEvaluationHook,
+    PreEvaluationHook,
 )
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_utils import map_with_context
@@ -45,7 +49,21 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         super().__init__()
         self.cob = cob
+        # Hooks belong to the COB; run its existing lifecycle callbacks around
+        # parallel evaluation, without copying or registering them twice.
+        self.pre_eval_hooks = cob.pre_eval_hooks
+        self.post_eval_hooks = cob.post_eval_hooks
         self.executor: ExecutorLike | None = executor
+
+    def register_eval_hook(
+        self,
+        hook: PreEvaluationHook | PostEvaluationHook,  # noqa: ARG002
+        *,
+        recursive: bool = False,  # noqa: ARG002
+    ) -> Self:
+        """Require hook registration on the wrapped combined objective."""
+        msg = "Register hooks on wrapper.cob.register_eval_hook(...) instead"
+        raise RuntimeError(msg)
 
     def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Expose evaluated terms; the wrapped combined __call__ is bypassed."""

@@ -435,9 +435,10 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Guard implementations against overriding __call__."""
 
+        allow_call_override = kwargs.pop("allow_call_override", False)
         super().__init_subclass__(**kwargs)
 
-        if cls.__call__ is not ObjectiveFunctor.__call__:
+        if not allow_call_override and cls.__call__ is not ObjectiveFunctor.__call__:
             msg = (
                 f"{cls.__qualname__} must implement _evaluate() "
                 "instead of overriding __call__()"
@@ -551,6 +552,23 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         """
         raise NotImplementedError
 
+    def _invoke_pre_eval_hooks(self, ctx: EvaluateContext):
+        """Invoke the pre evaluation hooks."""
+        for cb in self.pre_eval_hooks:
+            cb(ctx)
+
+    def _invoke_post_eval_hooks(self, ctx: EvaluateContext, evaluation_failed: bool):
+        """Invoke the post evaluation hooks."""
+        post_hook_exceptions = []
+        for cb in self.post_eval_hooks:
+            try:
+                cb(ctx)
+            except Exception as e:  # noqa: PERF203
+                post_hook_exceptions.append(e)
+
+        if not evaluation_failed and post_hook_exceptions:
+            raise self.PostEvalHookError(post_hook_exceptions)
+
     def __call__(
         self,
         parameters: ParametersT_contra,
@@ -584,13 +602,13 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         ctx.parameters = parameters
         ctx.loss = None
 
-        for cb in self.pre_eval_hooks:
-            cb(ctx)
+        self._invoke_pre_eval_hooks(ctx)
 
         # we need this boolean flag so that we dont accidentally
         # mask an evaluation exception by rasing PostEvalHookError
         # in the finally block
         evaluation_failed = False
+
         try:
             ctx.loss = self._evaluate(parameters, ctx)
             ctx.temp.exception = None
@@ -600,16 +618,7 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             ctx.temp.exception = e
             raise
         finally:
-            post_hook_exceptions = []
-            for cb in self.post_eval_hooks:
-                try:
-                    cb(ctx)
-                except Exception as e:  # noqa: PERF203
-                    post_hook_exceptions.append(e)
-
-            if not evaluation_failed and post_hook_exceptions:
-                raise self.PostEvalHookError(post_hook_exceptions)
-
+            self._invoke_post_eval_hooks(ctx, evaluation_failed)
         return cast("float", ctx.loss)
 
 
