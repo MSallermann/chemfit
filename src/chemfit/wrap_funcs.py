@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any, Callable, Generic, TypeVar
-
-from typing_extensions import Concatenate
+from collections.abc import Callable, Mapping
+from typing import Any, Concatenate, Generic, TypeVar
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,

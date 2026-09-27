@@ -4,14 +4,15 @@ import copy
 import logging
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Callable, Generic, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
+from pydictnest import flatten_dict, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
@@ -23,7 +24,6 @@ from chemfit.abstract_objective_function import (
 from chemfit.executor_utils import map_with_context
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
-from pydictnest import flatten_dict, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -723,7 +723,9 @@ class Fitter(Generic[ParametersT]):
         def f_scipy(x: npt.NDArray) -> float:
             parameters = cast(
                 "ParametersT",
-                unflatten_dict(dict(zip(self._keys, x)), dict_factory=dict[str, Any]),
+                unflatten_dict(
+                    dict(zip(self._keys, x, strict=False)), dict_factory=dict[str, Any]
+                ),
             )
             loss = self.ask(parameters)
             assert isinstance(loss, float)
@@ -744,6 +746,8 @@ class Fitter(Generic[ParametersT]):
         if not res.success:
             logger.warning(f"Fit did not converge: {res.message}")
 
-        opt_params = cast("ParametersT", unflatten_dict(dict(zip(self._keys, res.x))))
+        opt_params = cast(
+            "ParametersT", unflatten_dict(dict(zip(self._keys, res.x, strict=False)))
+        )
 
         return self.finish(opt_params)

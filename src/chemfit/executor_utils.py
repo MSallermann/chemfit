@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
     ParamSpec,
     TypeVar,
@@ -121,7 +121,7 @@ def map_with_context(
     )
 
     return_vals = []
-    for ctx_in, (r, ctx_r) in zip(ctxs, return_vals_with_ctx):
+    for ctx_in, (r, ctx_r) in zip(ctxs, return_vals_with_ctx, strict=False):
         ctx_in.apply_result_state(ctx_r)
         return_vals.append(r)
 
