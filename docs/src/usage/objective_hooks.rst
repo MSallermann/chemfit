@@ -126,6 +126,10 @@ Parent timing includes nested work; child timing measures the individual term.
 
 Recursive registration follows distinct child evaluation scopes through
 combined objectives, executor wrappers, MPI wrappers, and fitter wrappers.
+Executor and MPI wrappers use the wrapped combined objective's hook lists.
+Register hooks on the combined objective, not on those wrappers; direct wrapper
+registration raises ``RuntimeError``. Registrations made before or after
+wrapping are visible to the wrapper and run once around its parallel evaluation.
 Wrappers that share the wrapped objective's context or bypass its call do not
 introduce an extra child scope. Avoid attaching another timing hook to an
 already instrumented shared context.
