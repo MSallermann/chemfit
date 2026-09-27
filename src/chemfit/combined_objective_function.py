@@ -179,6 +179,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
+    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
+        """Return the objective terms evaluated in child contexts."""
+        return tuple(self.objective_functions)
+
     def n_terms(self) -> int:
         """Return the number of objective terms."""
         return len(self.weights)

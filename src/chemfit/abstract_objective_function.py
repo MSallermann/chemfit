@@ -7,7 +7,7 @@ from functools import partial
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, cast
 
-from typing_extensions import Concatenate, TypeVar
+from typing_extensions import Concatenate, Self, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -413,7 +413,11 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         def __init__(self, exceptions: list[Exception]) -> None:
             """Initialize."""
             self.exceptions = tuple(exceptions)
-            super().__init__(f"{len(exceptions)} post-evaluation hook(s) failed")
+            msg = f"{len(exceptions)} post-evaluation hook(s) failed:\n"
+            for e in self.exceptions:
+                msg += f"{e}\n"
+
+            super().__init__(msg)
 
         def __reduce__(self):
             return type(self), (list(self.exceptions),)
@@ -440,7 +444,13 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             )
             raise TypeError(msg)
 
-    def register_eval_hook(self, hook: EvaluationHook) -> None:
+    def _child_objectives(self) -> tuple[ObjectiveFunctor[Any], ...]:
+        """Return objectives evaluated in distinct child contexts."""
+        return ()
+
+    def register_eval_hook(
+        self, hook: EvaluationHook, *, recursive: bool = False
+    ) -> Self:
         """
         Register an evaluation hook.
 
@@ -451,6 +461,8 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         Args:
             hook: Object implementing at least one of
                 :class:`PreEvaluationHook` or :class:`PostEvaluationHook`.
+            recursive: Also register on descendant objectives in the call tree.
+                Defaults to registering only on this objective.
 
         Raises:
             TypeError: If the hook implements neither callback, or if an
@@ -458,8 +470,15 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
 
         Note:
             If contexts are reused, pre-evaluation hooks may observe state from
-            the previous evaluation. Only ``ctx.parameters`` is updated before
-            the hooks are invoked.
+            the previous evaluation. Before the hooks are invoked, ``ctx.parameters``
+            is updated and ``ctx.loss`` is set to None.
+
+            Recursive registration uses the same hook instance on every
+            objective, so hooks must keep per-evaluation state in ``ctx``.
+            It applies to the current objective structure; terms added later
+            are not automatically registered. Register recursive hooks before
+            submitting work to process executors, and on every MPI rank before
+            entering worker loops.
 
             Every post-evaluation hook is attempted, even if an earlier hook
             raises an exception. If evaluation succeeds, hook exceptions are
@@ -483,21 +502,30 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             msg = "evaluation hook must implement pre_eval() or post_eval()"
             raise TypeError(msg)
 
-        if pre_eval is not None:
-            if not callable(pre_eval):
-                msg = "evaluation hook pre_eval attribute must be callable"
-                raise TypeError(msg)
-            self.pre_eval_hooks.append(
-                cast("Callable[[EvaluateContext], None]", pre_eval)
-            )
+        if pre_eval is not None and not callable(pre_eval):
+            msg = "evaluation hook pre_eval attribute must be callable"
+            raise TypeError(msg)
 
-        if post_eval is not None:
-            if not callable(post_eval):
-                msg = "evaluation hook post_eval attribute must be callable"
-                raise TypeError(msg)
-            self.post_eval_hooks.append(
-                cast("Callable[[EvaluateContext], None]", post_eval)
-            )
+        if post_eval is not None and not callable(post_eval):
+            msg = "evaluation hook post_eval attribute must be callable"
+            raise TypeError(msg)
+
+        # Traverse child evaluation scopes without recursive Python calls.
+        pending: list[ObjectiveFunctor[Any]] = [self]
+        while pending:
+            objective = pending.pop()
+            if pre_eval is not None:
+                objective.pre_eval_hooks.append(
+                    cast("Callable[[EvaluateContext], None]", pre_eval)
+                )
+            if post_eval is not None:
+                objective.post_eval_hooks.append(
+                    cast("Callable[[EvaluateContext], None]", post_eval)
+                )
+            if recursive:
+                pending.extend(reversed(objective._child_objectives()))  # noqa: SLF001
+
+        return self
 
     def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
@@ -554,6 +582,7 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             ctx = self._create_context()
 
         ctx.parameters = parameters
+        ctx.loss = None
 
         for cb in self.pre_eval_hooks:
             cb(ctx)
@@ -645,6 +674,18 @@ class QuantityComputer(Generic[ParametersT_contra, QuantitiesT_co]):
     ) -> QuantitiesT_co:
         """Compute dictionary of quantities for a given set of parameters."""
         raise NotImplementedError
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Guard implementations against overriding __call__."""
+
+        super().__init_subclass__(**kwargs)
+
+        if cls.__call__ is not QuantityComputer.__call__:
+            msg = (
+                f"{cls.__qualname__} must implement _compute() "
+                "instead of overriding __call__()"
+            )
+            raise TypeError(msg)
 
     def with_loss(
         self, loss_function: LossFunction[QuantitiesT_co], /, **kwargs: Any
