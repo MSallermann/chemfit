@@ -47,6 +47,10 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         self.cob = cob
         self.executor: ExecutorLike | None = executor
 
+    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
+        """Expose evaluated terms; the wrapped combined __call__ is bypassed."""
+        return self.cob._child_objectives()  # noqa: SLF001
+
     def __enter__(self):
         """
         Enter the wrapper context.

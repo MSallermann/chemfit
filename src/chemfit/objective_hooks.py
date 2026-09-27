@@ -55,6 +55,14 @@ class TimingHook:
 
     Timing is also recorded when the objective raises, because post-evaluation
     hooks run during exception unwinding.
+
+    To time a combined objective and all its terms, register once after building
+    the objective tree::
+
+        objective.register_eval_hook(TimingHook(), recursive=True)
+
+    This uses one shared hook instance, with timing state kept in each context.
+    Do not also register a second timing hook on those same evaluation scopes.
     """
 
     def __init__(self, meta_key: str = "timing") -> None:

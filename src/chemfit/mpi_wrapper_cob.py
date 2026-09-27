@@ -112,6 +112,10 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
     def _log_func(self, msg: str):
         logger.warning(f"[Rank {self.rank}] {msg}")
 
+    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
+        """Expose evaluated terms; the wrapped combined __call__ is bypassed."""
+        return self.cob._child_objectives()  # noqa: SLF001
+
     def __enter__(self):
         return self
 

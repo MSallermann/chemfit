@@ -131,6 +131,10 @@ class FitterObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT]
         self.swallow_exceptions: bool = swallow_exceptions
         self.log_exceptions: bool = log_exceptions
 
+    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
+        """Follow child scopes; the wrapped objective shares this wrapper's context."""
+        return self.wrap_me._child_objectives()  # noqa: SLF001
+
     def _create_context(self) -> FitterEvaluateContext:
         """Create a fitter-specific default evaluation context."""
         return FitterEvaluateContext()

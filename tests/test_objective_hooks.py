@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.objective_hooks import TimingHook, UUIDHook
 
 
@@ -80,3 +81,19 @@ def test_timing_hook_records_failed_evaluation(monkeypatch: pytest.MonkeyPatch):
 
     assert ctx.meta["runtime"] == {"elapsed_seconds": 0.5}
     assert isinstance(ctx.temp.exception, ValueError)
+
+
+@pytest.mark.parametrize("recursive", [False, True])
+def test_recursive_timing_visits_nested_terms(recursive: bool):
+    leaf = ConstantObjective()
+    inner = CombinedObjectiveFunction([leaf, ConstantObjective()])
+    objective = CombinedObjectiveFunction([inner, ConstantObjective()])
+    assert objective.register_eval_hook(TimingHook(), recursive=recursive) is objective
+    ctx = EvaluateContext()
+    assert objective({"value": 3.0}, ctx) == 9.0
+    assert ctx.meta["timing"]["elapsed_seconds"] >= 0
+    children = ctx.meta["children"]
+    for child in [*children, *children[0]["meta"]["children"]]:
+        assert ("timing" in child["meta"]) is recursive
+    assert len(leaf.pre_eval_hooks) == int(recursive)
+    assert len(leaf.post_eval_hooks) == int(recursive)
