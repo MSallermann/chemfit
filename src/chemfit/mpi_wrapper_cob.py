@@ -7,8 +7,14 @@ from enum import Enum
 from typing import Any, Generic, TypeVar, cast
 
 from mpi4py import MPI
+from typing_extensions import Self
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ObjectiveFunctor,
+    PostEvaluationHook,
+    PreEvaluationHook,
+)
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.debug_utils import log_all_methods
 
@@ -90,6 +96,9 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         super().__init__()
         self.cob = cob
+        # Share the COB's hook lists so its callbacks surround parallel work.
+        self.pre_eval_hooks = cob.pre_eval_hooks
+        self.post_eval_hooks = cob.post_eval_hooks
         if comm is None:
             self.comm = MPI.COMM_WORLD.Dup()
         else:
@@ -111,6 +120,16 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
     def _log_func(self, msg: str):
         logger.warning(f"[Rank {self.rank}] {msg}")
+
+    def register_eval_hook(
+        self,
+        hook: PreEvaluationHook | PostEvaluationHook,  # noqa: ARG002
+        *,
+        recursive: bool = False,  # noqa: ARG002
+    ) -> Self:
+        """Require hook registration on the wrapped combined objective."""
+        msg = "Register hooks on wrapper.cob.register_eval_hook(...) instead"
+        raise RuntimeError(msg)
 
     def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Expose evaluated terms; the wrapped combined __call__ is bypassed."""

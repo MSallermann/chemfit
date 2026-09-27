@@ -115,10 +115,14 @@ def assert_post_hook_error(error: ObjectiveFunctor.PostEvalHookError) -> None:
 def test_objective_hooks_with_loky_process_pool():
     loky = pytest.importorskip("loky", reason="Missing loky")
     cob = make_hooked_cob()
+    register_wrapper_hooks(cob)
 
     with loky.ProcessPoolExecutor(2) as executor:
         wrapped = ExecutorWrapperCOB(cob, executor=executor)
-        register_wrapper_hooks(wrapped)
+        assert wrapped.pre_eval_hooks is cob.pre_eval_hooks
+        assert wrapped.post_eval_hooks is cob.post_eval_hooks
+        with pytest.raises(RuntimeError, match="wrapper.cob.register_eval_hook"):
+            wrapped.register_eval_hook(RecordingHook())
         ctx = EvaluateContext()
         result = wrapped(PARAMETERS, ctx)
 
@@ -148,7 +152,7 @@ def test_objective_hooks_with_mpi():
     cob = make_hooked_cob()
 
     with mpi_wrapper_cob.MPIWrapperCOB(cob, mpi_debug_log=False) as wrapped:
-        register_wrapper_hooks(wrapped)
+        register_wrapper_hooks(cob)
         if wrapped.rank == 0:
             ctx = EvaluateContext()
             result = wrapped(PARAMETERS, ctx)
