@@ -40,7 +40,7 @@ def process_csv(
     tags: list[str] = []
     energies: list[float] = []
 
-    for i, path_to_csv in zip(index, paths_to_csv):
+    for i, path_to_csv in zip(index, paths_to_csv, strict=False):
         p, t, e = process_single_csv(path_to_csv, i)
         paths += p
         tags += t

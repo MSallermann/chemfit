@@ -33,7 +33,7 @@ class MyOutputParser:
 
 def loss_function(quantities: dict[str, Any], ref_y: Iterable[float]) -> float:
     y_values = quantities["y"]
-    errors = [(y - y_r) ** 2 for y, y_r in zip(y_values, ref_y)]
+    errors = [(y - y_r) ** 2 for y, y_r in zip(y_values, ref_y, strict=False)]
     return np.sum(errors)
 
 

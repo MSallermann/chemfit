@@ -7,11 +7,11 @@ import subprocess
 import threading
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
+    Concatenate,
     Generic,
     Protocol,
     TypeVar,
@@ -19,7 +19,7 @@ from typing import (
     runtime_checkable,
 )
 
-from typing_extensions import Concatenate, Self
+from typing_extensions import Self
 
 from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
 from chemfit.utils import check_protocol

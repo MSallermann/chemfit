@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import inspect
 import math
-from collections.abc import Mapping, Sequence
-from typing import Any, Callable, Generic, Protocol, TypeVar, cast
+from collections.abc import Callable, Mapping, Sequence
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 from typing_extensions import Self
 
@@ -304,7 +304,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         total_objective_functions: list[ObjectiveLike[ParametersT]] = []
         total_weights: list[float] = []
 
-        for sub_cob, scale in zip(combined_objective_functions_list, weights):
+        for sub_cob, scale in zip(
+            combined_objective_functions_list, weights, strict=False
+        ):
             total_objective_functions.extend(sub_cob.objective_functions)
             # Scale each internal weight
             total_weights.extend([w * scale for w in sub_cob.weights])

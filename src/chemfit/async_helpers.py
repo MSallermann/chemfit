@@ -1,6 +1,6 @@
 import asyncio
-from collections.abc import Iterable, Mapping
-from typing import Callable, TypeVar
+from collections.abc import Callable, Iterable, Mapping
+from typing import TypeVar
 
 from chemfit.abstract_objective_function import EvaluateContext
 

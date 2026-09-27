@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
+from pydictnest import get_nested, items_nested
 
 from chemfit import abstract_objective_function, async_helpers
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.wrap_funcs import to_quantity_computer
-from pydictnest import get_nested, items_nested
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from typing import Any, Callable
+from typing import Any
 
 from chemfit import abstract_objective_function, wrap_funcs
 from chemfit.abstract_objective_function import EvaluateContext
@@ -49,7 +50,7 @@ class MyExecutor(abstract_objective_function.ExecutorLike):
     ):
         end_time = timeout + time.monotonic() if timeout is not None else None
 
-        fs = [self.submit(fn, *args) for args in zip(*iterables)]
+        fs = [self.submit(fn, *args) for args in zip(*iterables, strict=False)]
 
         # Yield must be hidden in closure so that the futures are submitted
         # before the first iterator value is required.

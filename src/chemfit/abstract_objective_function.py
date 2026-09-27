@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import contextlib
 import copy
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Callable, Generic, Protocol, cast
+from typing import TYPE_CHECKING, Any, Concatenate, Generic, Protocol, cast
 
-from typing_extensions import Concatenate, Self, TypeVar
+from typing_extensions import Self, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

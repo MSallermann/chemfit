@@ -51,7 +51,9 @@ def make_expected_terms(
     return [
         w * f
         for w, f in zip(
-            make_weights(n_terms), make_expected_child_losses(params, n_terms)
+            make_weights(n_terms),
+            make_expected_child_losses(params, n_terms),
+            strict=False,
         )
     ]
 
@@ -369,7 +371,7 @@ def test_parallel_evaluation(
 
     assert results == results_expected
 
-    for res, ctx, params in zip(results, ctxs, params_list):
+    for res, ctx, params in zip(results, ctxs, params_list, strict=False):
         child_losses = [child["loss"] for child in ctx.meta["children"]]
         assert np.allclose(child_losses, make_expected_child_losses(params))
 
