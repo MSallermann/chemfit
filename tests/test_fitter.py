@@ -4,6 +4,7 @@ from typing import Any
 import nevergrad as ng
 import numpy as np
 import pytest
+from pydictnest import get_nested, has_nested, items_nested
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
@@ -11,7 +12,6 @@ from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
-from pydictnest import get_nested, has_nested, items_nested
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
 NG_ATOL = 1e-1
