@@ -20,9 +20,9 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     QuantityComputerObjectiveFunction,
 )
-from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.mpi_wrapper_cob import MPIWrapperCOB
+from chemfit.executor_policy import ExecutorPolicy
+from chemfit.mpi_policy import MPIPolicy
 from chemfit.wrap_funcs import to_quantity_computer
 
 
@@ -34,10 +34,10 @@ def gil_sleep_busy(seconds: float) -> None:
 
 @to_quantity_computer(pass_ctx=True)
 def do_stuff(parameters: dict[str, Any], ctx: EvaluateContext):
-    if ctx.static.release_gil:
-        time.sleep(ctx.static.wait_time)
+    if ctx.config.release_gil:
+        time.sleep(ctx.config.wait_time)
     else:
-        gil_sleep_busy(ctx.static.wait_time)
+        gil_sleep_busy(ctx.config.wait_time)
     return {f"{k}_2": v**2 for k, v in parameters.items()}
 
 
@@ -74,8 +74,21 @@ class BenchmarkResult:
     time_taken_list: list[dict]
 
 
-def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:  # noqa: PLR0912
+def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
     time_taken_list = []
+    client = None
+    executor = None
+    executor_policy = None
+
+    if bm_params.method == Method.threadpool:
+        executor = ThreadPoolExecutor(max_workers=bm_params.n_workers)
+        executor_policy = ExecutorPolicy(executor)
+    elif bm_params.method == Method.loky_processpool:
+        executor = ProcessPoolExecutor(max_workers=bm_params.n_workers)
+        executor_policy = ExecutorPolicy(executor)
+    elif bm_params.method == Method.dask:
+        client = Client(scheduler_file="./scheduler.json")
+        executor_policy = ExecutorPolicy(client.get_executor())
 
     for n_terms in bm_params.n_terms_list:
         terms = [
@@ -84,39 +97,27 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:  # noqa: PLR09
             )
             for _ in range(n_terms)
         ]
-        cob = CombinedObjectiveFunction(terms)
+        mpi_policy = (
+            MPIPolicy(mpi_debug_log=False) if bm_params.method == Method.mpi else None
+        )
+        execution_policy = mpi_policy if mpi_policy is not None else executor_policy
+        cob = CombinedObjectiveFunction(terms, execution_policy=execution_policy)
+        if mpi_policy is not None and mpi_policy.rank != 0:
+            mpi_policy.worker_loop(cob)
+            continue
 
         for n_params in bm_params.n_params_list:
             params = {chr(i): float(i) for i in range(n_params)}
 
             ctx = EvaluateContext()
-            ctx.static.release_gil = bm_params.release_gil
-
-            if bm_params.method == Method.threadpool:
-                ob = AsyncWrapperCOB(cob)
-                ctx.executor = ThreadPoolExecutor(max_workers=bm_params.n_workers)
-            elif bm_params.method == Method.loky_processpool:
-                ob = AsyncWrapperCOB(cob)
-                ctx.executor = ProcessPoolExecutor(max_workers=bm_params.n_workers)
-            elif bm_params.method == Method.synchronous:
-                ob = cob
-            elif bm_params.method == Method.mpi:
-                # Since we dont use the wrapper as a context, we have to remember to shut it down later
-                ob = MPIWrapperCOB(cob, mpi_debug_log=False)
-                if ob.rank != 0:
-                    ob.worker_loop()
-                    continue
-            elif bm_params.method == Method.dask:
-                client = Client(scheduler_file="./scheduler.json")
-                ctx.executor = client.get_executor()
-                ob = AsyncWrapperCOB(cob)
+            ctx.config.release_gil = bm_params.release_gil
 
             for wait_time in bm_params.wait_times:
-                ctx.static.wait_time = wait_time
+                ctx.config.wait_time = wait_time
 
                 # some warmup iterations
                 for _ in range(bm_params.n_warmup):
-                    ob(params, ctx)
+                    cob(params, ctx)
 
                 _time_total = 0.0
 
@@ -130,7 +131,7 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:  # noqa: PLR09
 
                     # We only time the eval part
                     time_start = time.perf_counter()
-                    res = ob(params, ctx)
+                    res = cob(params, ctx)
                     _time_total += time.perf_counter() - time_start
 
                     # Ensure the results are correct
@@ -151,11 +152,13 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:  # noqa: PLR09
                     }
                 )
 
-    # shut down mpi if used
-    if bm_params.method == Method.mpi:
-        ob.release_workers()
+        if mpi_policy is not None:
+            mpi_policy.release_workers()
 
-    if bm_params.method == Method.dask:
+    if executor is not None:
+        executor.shutdown()
+
+    if client is not None:
         client.close()
 
     return BenchmarkResult(
