@@ -73,9 +73,8 @@ Calling a combined objective does three things.
 First, it spawns one child :py:class:`~chemfit.abstract_objective_function.EvaluateContext`
 per term.
 
-Second, it evaluates every term in its own child context. The per-term method
-that does this is
-:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.evaluate_term`.
+Second, its configured execution policy evaluates every term in its own child
+context.
 
 Third, it filters skipped terms and applies the configured reduction. The final
 result is stored in ``ctx.loss``.
