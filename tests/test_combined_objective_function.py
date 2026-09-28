@@ -19,8 +19,8 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     ExecutorLike,
 )
+from chemfit.executor_policy import ExecutorPolicy
 from chemfit.executor_utils import map_with_context
-from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
 from chemfit.wrap_funcs import to_quantity_computer
 
 if TYPE_CHECKING:
@@ -141,10 +141,29 @@ def test_combined_objective_reduces_terms_with_executor(
     reduction: combined_objective_function.Reducer, executor: ExecutorLike
 ):
     cob = make_cob(reduction=reduction)
-    wrapped = ExecutorWrapperCOB(cob, executor=executor)
+    cob.execution_policy = ExecutorPolicy(executor=executor)
 
     ctx = EvaluateContext()
-    res = wrapped(PARAMS, ctx)
+    res = cob(PARAMS, ctx)
+
+    standard_asserts(res, ctx, reduction)
+
+
+@pytest.mark.parametrize(("reduction", "executor"), list(product(REDUCERS, EXECUTORS)))
+def test_combined_objective_uses_executor_execution_policy(
+    reduction: combined_objective_function.Reducer, executor: ExecutorLike
+):
+    policy = ExecutorPolicy(executor=executor)
+    cob = combined_objective_function.CombinedObjectiveFunction(
+        make_funcs(),
+        make_weights(),
+        reduction=reduction,
+        child_context_configurator=context_configurator,
+        execution_policy=policy,
+    )
+
+    ctx = EvaluateContext()
+    res = cob(PARAMS, ctx)
 
     standard_asserts(res, ctx, reduction)
 
@@ -153,21 +172,46 @@ def test_combined_objective_reduces_terms_with_executor(
 def test_combined_objective_reduces_terms_with_mpi(
     reduction: combined_objective_function.Reducer,
 ):
-    mpi_wrapper_cob = pytest.importorskip(
-        "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
-    )
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
 
     cob = make_cob(reduction=reduction)
 
-    with mpi_wrapper_cob.MPIWrapperCOB(cob, mpi_debug_log=False) as mpi:
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        cob.execution_policy = mpi
+
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = mpi(PARAMS, ctx)
+            res = cob(PARAMS, ctx)
 
             standard_asserts(res, ctx, reduction)
 
         else:
-            mpi.worker_loop()
+            mpi.worker_loop(cob)
+
+
+@pytest.mark.parametrize("reduction", REDUCERS)
+def test_combined_objective_uses_mpi_execution_policy(
+    reduction: combined_objective_function.Reducer,
+):
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+
+    cob = combined_objective_function.CombinedObjectiveFunction(
+        make_funcs(),
+        make_weights(),
+        reduction=reduction,
+        child_context_configurator=context_configurator,
+    )
+
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        cob.execution_policy = mpi
+
+        if mpi.rank == 0:
+            ctx = EvaluateContext()
+            res = cob(PARAMS, ctx)
+
+            standard_asserts(res, ctx, reduction)
+        else:
+            mpi.worker_loop(cob)
 
 
 def test_combined_objective_exception_handlers_serial():
@@ -210,7 +254,8 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
         raise RuntimeError(msg)
 
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
-    wrapped = ExecutorWrapperCOB(ob, executor=executor)
+    ob.execution_policy = ExecutorPolicy(executor=executor)
+    wrapped = ob
 
     ob.exception_handler = combined_objective_function.raising_exception_handler
     with pytest.raises(RuntimeError, match="Whoops"):
@@ -234,9 +279,7 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
 
 
 def test_combined_objective_exception_handlers_with_mpi():
-    mpi_wrapper_cob = pytest.importorskip(
-        "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
-    )
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
 
     def func1(params: dict) -> float:  # noqa: ARG001
         return 1.0
@@ -249,42 +292,45 @@ def test_combined_objective_exception_handlers_with_mpi():
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.raising_exception_handler
 
-    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        ob.execution_policy = mpi
+
         if mpi.rank == 0:
             with pytest.raises(RuntimeError, match="Whoops"):
-                mpi(PARAMS)
+                ob(PARAMS)
         else:
-            mpi.worker_loop()
+            mpi.worker_loop(ob)
 
     # nan
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.nan_exception_handler
 
-    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        ob.execution_policy = mpi
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = mpi(PARAMS, ctx)
+            res = ob(PARAMS, ctx)
             assert math.isnan(res)
             assert ctx.loss is not None
             assert math.isnan(ctx.loss)
         else:
-            mpi.worker_loop()
+            mpi.worker_loop(ob)
 
     # skip
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.skip_exception_handler
 
-    with mpi_wrapper_cob.MPIWrapperCOB(ob, mpi_debug_log=False) as mpi:
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        ob.execution_policy = mpi
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = mpi(PARAMS, ctx)
+            res = ob(PARAMS, ctx)
             assert math.isclose(res, func1(PARAMS))
             assert ctx.loss is not None
             assert math.isclose(ctx.loss, func1(PARAMS))
             assert ctx.meta["skipped_indices"] == [1]
-
         else:
-            mpi.worker_loop()
+            mpi.worker_loop(ob)
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)
@@ -303,11 +349,15 @@ def test_aggregator(executor: ExecutorLike):
         return {"test": f * parameters["x"] + parameters["y"]}
 
     cob = combined_objective_function.CombinedObjectiveFunction(
-        [q1.bind(f=1).with_loss(lambda p: 0.0), q1.bind(f=2).with_loss(lambda p: 0.0)],  # noqa: ARG005
+        [
+            q1.bind(f=1).with_loss(lambda _: 0.0),
+            q1.bind(f=2).with_loss(lambda _: 0.0),
+        ],
         reduction=custom_aggregator,
     )
 
-    cob_wrapped = ExecutorWrapperCOB(cob, executor)
+    cob.execution_policy = ExecutorPolicy(executor)
+    cob_wrapped = cob
 
     ctx = EvaluateContext()
     res = cob_wrapped(PARAMS, ctx)
@@ -319,13 +369,13 @@ def test_aggregator(executor: ExecutorLike):
 @pytest.mark.parametrize("executor", EXECUTORS)
 def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
     cob = make_cob()
-    wrapped = ExecutorWrapperCOB(cob, executor=executor)
 
     ctx_serial = EvaluateContext()
-    ctx_exec = EvaluateContext()
-
     res_serial = cob(PARAMS, ctx_serial)
-    res_exec = wrapped(PARAMS, ctx_exec)
+
+    ctx_exec = EvaluateContext()
+    cob.execution_policy = ExecutorPolicy(executor=executor)
+    res_exec = cob(PARAMS, ctx_exec)
 
     assert np.isclose(res_exec, res_serial)
     assert ctx_exec.loss is not None
@@ -355,7 +405,8 @@ def test_parallel_evaluation(
     executor_outer: ExecutorLike, executor_inner: ExecutorLike
 ):
     cob = make_cob()
-    wrapped = ExecutorWrapperCOB(cob, executor=executor_inner)
+    cob.execution_policy = ExecutorPolicy(executor=executor_inner)
+    wrapped = cob
 
     executor_outer = ThreadPoolExecutor(N_EVALS)
 

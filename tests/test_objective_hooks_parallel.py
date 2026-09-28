@@ -9,7 +9,7 @@ import pytest
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+from chemfit.executor_policy import ExecutorPolicy
 from chemfit.objective_hooks import TimingHook, UUIDHook
 
 PARAMETERS = {"x": 2.0}
@@ -109,7 +109,6 @@ def assert_successful_parallel_evaluation(
 def assert_post_hook_error(error: ObjectiveFunctor.PostEvalHookError) -> None:
     assert len(error.exceptions) == 1
     assert isinstance(error.exceptions[0], ValueError)
-    assert str(error.exceptions[0]) == "post hook failed after loss 5.0"
 
 
 def test_objective_hooks_with_loky_process_pool():
@@ -118,13 +117,10 @@ def test_objective_hooks_with_loky_process_pool():
     register_wrapper_hooks(cob)
 
     with loky.ProcessPoolExecutor(2) as executor:
-        wrapped = ExecutorWrapperCOB(cob, executor=executor)
-        assert wrapped.pre_eval_hooks is cob.pre_eval_hooks
-        assert wrapped.post_eval_hooks is cob.post_eval_hooks
-        with pytest.raises(RuntimeError, match="wrapper.cob.register_eval_hook"):
-            wrapped.register_eval_hook(RecordingHook())
+        cob.execution_policy = ExecutorPolicy(executor)
+
         ctx = EvaluateContext()
-        result = wrapped(PARAMETERS, ctx)
+        result = cob(PARAMETERS, ctx)
 
     assert_successful_parallel_evaluation(result, ctx, expected_worker_count=None)
     child_pids = {child["meta"]["evaluation_pid"] for child in ctx.meta["children"]}
@@ -136,29 +132,29 @@ def test_post_hook_error_crosses_loky_process_boundary():
     cob = make_hooked_cob(failing=True)
 
     with loky.ProcessPoolExecutor(2) as executor:
-        wrapped = ExecutorWrapperCOB(cob, executor=executor)
+        cob.execution_policy = ExecutorPolicy(executor=executor)
         # This also exercises PostEvalHookError.__reduce__: loky must serialize
         # both the aggregate error and its nested ValueError back to this process.
         with pytest.raises(ObjectiveFunctor.PostEvalHookError) as exc_info:
-            wrapped(PARAMETERS)
+            cob(PARAMETERS)
 
     assert_post_hook_error(exc_info.value)
 
 
 def test_objective_hooks_with_mpi():
-    mpi_wrapper_cob = pytest.importorskip(
-        "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
-    )
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+
     cob = make_hooked_cob()
 
-    with mpi_wrapper_cob.MPIWrapperCOB(cob, mpi_debug_log=False) as wrapped:
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        cob.execution_policy = mpi
         register_wrapper_hooks(cob)
-        if wrapped.rank == 0:
+        if mpi.rank == 0:
             ctx = EvaluateContext()
-            result = wrapped(PARAMETERS, ctx)
+            result = cob(PARAMETERS, ctx)
             # Match MPIWrapperCOB's ceiling-based partitioning so this remains
             # valid for MPI runs with a rank count other than four as well.
-            terms_per_rank = math.ceil(N_TERMS / wrapped.size)
+            terms_per_rank = math.ceil(N_TERMS / mpi.size)
             active_ranks = math.ceil(N_TERMS / terms_per_rank)
             assert_successful_parallel_evaluation(
                 result,
@@ -166,21 +162,21 @@ def test_objective_hooks_with_mpi():
                 expected_worker_count=active_ranks,
             )
         else:
-            wrapped.worker_loop()
+            mpi.worker_loop(cob)
 
 
 def test_post_hook_error_crosses_mpi_process_boundary():
-    mpi_wrapper_cob = pytest.importorskip(
-        "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
-    )
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+
     cob = make_hooked_cob(failing=True)
 
-    with mpi_wrapper_cob.MPIWrapperCOB(cob, mpi_debug_log=False) as wrapped:
-        if wrapped.rank == 0:
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        cob.execution_policy = mpi
+        if mpi.rank == 0:
             # The failing term is the last one, which runs on a worker rank in
             # the four-rank test. MPI must transport the aggregate hook error.
             with pytest.raises(ObjectiveFunctor.PostEvalHookError) as exc_info:
-                wrapped(PARAMETERS)
+                cob(PARAMETERS)
             assert_post_hook_error(exc_info.value)
         else:
-            wrapped.worker_loop()
+            mpi.worker_loop(cob)

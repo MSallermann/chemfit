@@ -4,14 +4,14 @@ from typing import Any
 import nevergrad as ng
 import numpy as np
 import pytest
-from pydictnest import get_nested, has_nested, items_nested
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+from chemfit.executor_policy import ExecutorPolicy
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
+from pydictnest import get_nested, has_nested, items_nested
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
 NG_ATOL = 1e-1
@@ -208,11 +208,12 @@ def test_with_square_func_threadpool():
     def cont2(params: dict):
         return 3.0 * (params["y"] + 1) ** 2
 
-    obj_func = CombinedObjectiveFunction([cont1, cont2])
-    async_obj_func = ExecutorWrapperCOB(obj_func)
+    obj_func = CombinedObjectiveFunction(
+        [cont1, cont2], execution_policy=ExecutorPolicy()
+    )
 
     initial_params = {"x": 0.0, "y": 0.0}
-    fitter = Fitter(objective_function=async_obj_func, initial_params=initial_params)
+    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
 
     NUM_WORKERS = 5
 
@@ -260,11 +261,12 @@ def test_with_square_func_processpool():
     def cont2(params: dict):
         return 3.0 * (params["y"] + 1) ** 2
 
-    obj_func = CombinedObjectiveFunction([cont1, cont2])
-    async_obj_func = ExecutorWrapperCOB(obj_func)
+    obj_func = CombinedObjectiveFunction(
+        [cont1, cont2], execution_policy=ExecutorPolicy()
+    )
 
     initial_params = {"x": 0.0, "y": 0.0}
-    fitter = Fitter(objective_function=async_obj_func, initial_params=initial_params)
+    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
 
     NUM_WORKERS = 5
 

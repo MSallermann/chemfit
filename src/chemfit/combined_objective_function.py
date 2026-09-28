@@ -89,9 +89,30 @@ def skip_exception_handler(
     return None
 
 
+def evaluate_weighted_term(
+    objective: ObjectiveFunctor[ParametersT],
+    weight: float,
+    exception_handler: ExceptionHandler,
+    parameters: ParametersT,
+    idx: int,
+    ctx: EvaluateContext,
+) -> float | None:
+    """
+    Evaluate one weighted term without retaining its combined objective.
+
+    Keeping this operation independent of the combined objective lets process
+    executors serialize term work without also serializing the execution
+    policy (and, potentially, the executor itself).
+    """
+    try:
+        return objective(parameters, ctx) * weight
+    except Exception as e:
+        return exception_handler(e, ctx, idx)
+
+
 class WrappedReducer(Aggregator):
     def __init__(self, reducer: Reducer) -> None:
-        """A reducer that is wrapped in order to be used like as an Aggregator."""
+        """A reducer that is wrapped in order to be used like an Aggregator."""
         self.reducer = reducer
 
     def __call__(
@@ -106,6 +127,50 @@ class WrappedReducer(Aggregator):
         return self.reducer
 
 
+class ExecutionPolicy(Protocol[ParametersT]):
+    """Strategy used by a combined objective to evaluate its terms."""
+
+    def evaluate_terms(
+        self,
+        cob: CombinedObjectiveFunction[ParametersT],
+        parameters: ParametersT,
+        ctx: EvaluateContext,
+    ) -> list[float | None]:
+        """Evaluate and return the weighted objective terms."""
+        ...
+
+
+class SerialExecutionPolicy(Generic[ParametersT]):
+    """Evaluate combined-objective terms serially in the calling thread."""
+
+    def evaluate_terms(
+        self,
+        cob: CombinedObjectiveFunction[ParametersT],
+        parameters: ParametersT,
+        ctx: EvaluateContext,
+    ) -> list[float | None]:
+        """Evaluate all terms in index order."""
+
+        with ctx.child_contexts(
+            n_children=cob.n_terms(), configurator=cob.child_context_configurator
+        ) as child_ctxs:
+            terms: list[float | None] = []
+
+            for idx, ctx_term in enumerate(child_ctxs):
+                terms.append(
+                    evaluate_weighted_term(
+                        cob.objective_functions[idx],
+                        cob.weights[idx],
+                        cob.exception_handler,
+                        parameters,
+                        idx,
+                        ctx_term,
+                    )
+                )
+
+            return terms
+
+
 class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
     def __init__(
         self,
@@ -114,6 +179,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         child_context_configurator: ChildContextConfigurator | None = None,
         reduction: Reducer | Aggregator = sum_reducer,
         exception_handler: ExceptionHandler = raising_exception_handler,
+        execution_policy: ExecutionPolicy[ParametersT] | None = None,
     ) -> None:
         """
         Initialize a combined objective from multiple weighted terms.
@@ -141,6 +207,8 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
             exception_handler: Callable used to handle exceptions raised
                 during term evaluation. It may return a replacement value or
                 ``None`` to skip the term entirely.
+            execution_policy: Strategy used to schedule term evaluations. If
+                omitted, terms are evaluated serially in index order.
 
         Raises:
             AssertionError: If the number of weights does not match the
@@ -178,6 +246,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         )
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
+        self.execution_policy: ExecutionPolicy[ParametersT] = (
+            SerialExecutionPolicy() if execution_policy is None else execution_policy
+        )
 
     def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the objective terms evaluated in child contexts."""
@@ -189,7 +260,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
     def add(
         self,
-        obj_funcs: (Sequence[ObjectiveLike[ParametersT]] | ObjectiveLike[ParametersT]),
+        obj_funcs: Sequence[ObjectiveLike[ParametersT]] | ObjectiveLike[ParametersT],
         weights: Sequence[float] | float = 1.0,
     ) -> Self:
         """
@@ -252,102 +323,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
         return self
 
-    @classmethod
-    def add_flat(
-        cls,
-        combined_objective_functions_list: Sequence[Self],
-        weights: Sequence[float] | None = None,
-    ) -> Self:
-        """
-        Flatten multiple combined objectives into a single instance.
-
-        The objective functions from all input instances are concatenated
-        into one flat list. The weights of each input instance are scaled by
-        the corresponding entry in ``weights`` before concatenation.
-
-        Warning:
-            This method **does not preserve execution policy** from the input
-            combined objectives. The resulting instance uses the default
-            ``reduction``, ``exception_handler``, and
-            ``child_context_configurator`` unless they are explicitly set
-            afterward.
-
-        Args:
-            combined_objective_functions_list: Combined objective instances to
-                flatten.
-            weights: Optional non-negative scaling weights, one per input
-                combined objective. If ``None``, all scaling weights default
-                to ``1.0``.
-
-        Returns:
-            A new combined objective containing all flattened terms and
-            scaled weights.
-
-        Raises:
-            AssertionError: If the number of scaling weights does not match
-                the number of combined objectives, or if any scaling weight
-                is negative.
-
-        """
-
-        if weights is None:
-            weights = [1.0 for _ in combined_objective_functions_list]
-
-        # Ensure we have one scaling weight per sub-instance
-        assert len(combined_objective_functions_list) == len(weights), (
-            "Must supply exactly one weight per CombinedObjectiveFunction."
-        )
-
-        # Ensure all scaling weights are non-negative
-        assert all(w >= 0 for w in weights), "All scaling weights must be non-negative."
-
-        total_objective_functions: list[ObjectiveLike[ParametersT]] = []
-        total_weights: list[float] = []
-
-        for sub_cob, scale in zip(
-            combined_objective_functions_list, weights, strict=False
-        ):
-            total_objective_functions.extend(sub_cob.objective_functions)
-            # Scale each internal weight
-            total_weights.extend([w * scale for w in sub_cob.weights])
-
-        # Ensure no negative weights after scaling
-        assert all(w >= 0 for w in total_weights), (
-            "Resulting weights must be non-negative."
-        )
-
-        return cls(total_objective_functions, total_weights)
-
-    def evaluate_term(
-        self,
-        parameters: ParametersT,
-        idx: int,
-        ctx: EvaluateContext,
-    ) -> float | None:
-        """
-        Evaluate a single weighted objective term.
-
-        The selected objective function is evaluated with the provided
-        parameters and child context, then multiplied by its corresponding
-        weight. If evaluation raises an exception, the configured
-        ``exception_handler`` is called.
-
-        Args:
-            parameters: Parameter dictionary for the current evaluation.
-            idx: Absolute index of the objective term to evaluate.
-            ctx: Child evaluation context for this term.
-
-        Returns:
-            The weighted term value, or ``None`` if the exception handler
-            chooses to skip the term.
-
-        """
-
-        try:
-            return self.objective_functions[idx](parameters, ctx) * self.weights[idx]
-        except Exception as e:
-            return self.exception_handler(e, ctx, idx)
-
     def filter_terms(
         self, terms: list[float | None], ctx: EvaluateContext
     ) -> list[float]:
@@ -373,38 +348,6 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
             if idx not in ctx.meta["skipped_indices"]:
                 child_quantities.append(child["quantities"])
         return self.reduction(list(terms), child_quantities, ctx)
-
-    def evaluate_terms(
-        self, parameters: ParametersT, ctx: EvaluateContext
-    ) -> list[float]:
-        """
-        Evaluate the objective terms.
-
-        This method prepares child contexts, evaluates each selected term in
-        its own context, and drops any terms for which ``evaluate_term()``
-        returns ``None``.
-
-        Args:
-            parameters: Parameter dictionary for the current evaluation.
-            ctx: Parent evaluation context.
-
-        Returns:
-            List of weighted term values that were successfully evaluated and
-            not skipped by the exception handler.
-
-        """
-
-        ctx.meta.update({"n_terms": self.n_terms()})
-
-        with ctx.child_contexts(
-            n_children=self.n_terms(), configurator=self.child_context_configurator
-        ) as child_ctxs:
-            terms = []
-
-            for idx, ctx_term in enumerate(child_ctxs):
-                terms.append(self.evaluate_term(parameters, idx, ctx_term))
-
-        return self.filter_terms(terms, ctx)
 
     def _evaluate(
         self,
@@ -433,6 +376,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
         """
 
-        filtered_terms = self.evaluate_terms(parameters=parameters, ctx=ctx)
+        ctx.meta.update({"n_terms": self.n_terms()})
 
-        return self.apply_reduction(filtered_terms, ctx)
+        terms = self.execution_policy.evaluate_terms(
+            self, parameters=parameters, ctx=ctx
+        )
+
+        return self.apply_reduction(self.filter_terms(terms, ctx), ctx)

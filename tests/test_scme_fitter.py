@@ -164,7 +164,7 @@ def test_kabsch_objective_function():
             self.atoms_factory = atoms_factory
             self._positions_ref = None
 
-        def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:  # noqa: ARG002
+        def __call__(self, _: Calculator, atoms: Atoms) -> dict[str, Any]:
             if self._positions_ref is None:
                 self._positions_ref = self.atoms_factory().positions
 
@@ -245,16 +245,15 @@ def test_multi_energy_ob_function_fitting():
 
 
 def test_multi_energy_ob_function_fitting_mpi():
-    mpi_wrapper_cob = pytest.importorskip(
-        "chemfit.mpi_wrapper_cob", reason="Cannot import `mpi4py`"
-    )
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
 
     ob = construct_objective_function(REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES)
 
-    with mpi_wrapper_cob.MPIWrapperCOB(ob) as ob_mpi:
-        if ob_mpi.rank == 0:
-            fitter = Fitter(objective_function=ob_mpi, initial_params=INITIAL_PARAMS)
+    with mpi_policy.MPIPolicy() as mpi:
+        ob.execution_policy = mpi
+        if mpi.rank == 0:
+            fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
             optimal_params = fitter.fit_scipy(tol=0, options={"maxiter": 50})
             print(f"{optimal_params = }")
         else:
-            ob_mpi.worker_loop()
+            mpi.worker_loop(ob)
