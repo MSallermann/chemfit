@@ -147,12 +147,15 @@ The following demonstrates the use of the "ExecutorLike" approach
 .. testcode::
 
     from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+    from chemfit.executor_policy import ExecutorPolicy
     from concurrent.futures import ThreadPoolExecutor
 
-    cob = CombinedObjectiveFunction( terms ) # define the combined objective function
-    cob_parallel = ExecutorWrapperCOB(cob, executor=ThreadPoolExecutor(4))
-    print(cob_parallel(PARAMS)) # <-- evaluation of the wrapper parallelizes over the terms
+    executor = ThreadPoolExecutor(4)
+    cob = CombinedObjectiveFunction(
+        terms,
+        execution_policy=ExecutorPolicy(executor),
+    )
+    print(cob(PARAMS)) # <-- the policy parallelizes evaluation over the terms
 
 .. testoutput::
     :hide:
@@ -173,7 +176,7 @@ It can be used as follows
     from chemfit.fitter import Fitter
     import math
 
-    fitter = Fitter(objective_function=cob_parallel, initial_params=PARAMS)
+    fitter = Fitter(objective_function=cob, initial_params=PARAMS)
 
     # fit with nevergrad
     optimal_params = fitter.fit_nevergrad(budget=10) # <--- search solutions with a budget of 10

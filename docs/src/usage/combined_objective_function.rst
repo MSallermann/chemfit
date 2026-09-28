@@ -484,51 +484,22 @@ The same weight rules apply as in the constructor. A single weight is broadcast
 to all added terms, while a sequence of weights must match the number of added
 terms.
 
-Flattening several combined objectives
---------------------------------------
-
-If you already have several combined objectives and want to combine them into
-one flat object, use
-:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.add_flat`.
-
-.. code-block:: python
-
-   from chemfit.combined_objective_function import CombinedObjectiveFunction
-
-   cob1 = CombinedObjectiveFunction([term1, term2], weights=[1.0, 2.0])
-   cob2 = CombinedObjectiveFunction([term3], weights=[0.5])
-
-   flat = CombinedObjectiveFunction.add_flat(
-       [cob1, cob2],
-       weights=[1.0, 10.0],
-   )
-
-In this example, the terms of ``cob2`` are included with their internal weights
-scaled by ``10.0``.
-
-.. warning::
-
-    One detail matters here: ``add_flat`` only flattens terms and weights. It does
-    not preserve the execution policy or other custom behavior of the input objects.
-    The returned object is a fresh combined objective using the class defaults unless
-    you reconfigure it afterward.
 
 Parallel execution
 ------------------
 
 Combined objectives are the main place where term-level parallelism makes sense.
 
-Serial evaluation calls
-:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.evaluate_term`
-for each term in turn.
-
-Parallel execution uses the same per-term interface but schedules the term
-evaluations differently. See :ref:`parallel_execution`.
+By default, a
+:py:class:`~chemfit.combined_objective_function.SerialExecutionPolicy`
+evaluates terms in order. Supply a different ``execution_policy`` to the
+constructor, or assign ``objective.execution_policy`` later, to change how
+those terms are scheduled. See :ref:`parallel_execution`.
 
 In practice this means the same combined objective can be used
 
 - serially
-- with :py:class:`~chemfit.executor_wrapper_cob.ExecutorWrapperCOB`
-- with :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB`
+- with :py:class:`~chemfit.executor_policy.ExecutorPolicy`
+- with :py:class:`~chemfit.mpi_policy.MPIPolicy`
 
 without changing the terms themselves.

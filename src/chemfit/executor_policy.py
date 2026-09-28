@@ -25,18 +25,16 @@ class ExecutorPolicy(Generic[ParametersT]):
         """
         Initialize an execution policy that uses a concurrent.futures style executor.
 
-        This wrapper evaluates the terms of a ``CombinedObjectiveFunction``
+        This policy evaluates the terms of a ``CombinedObjectiveFunction``
         through an ``ExecutorLike`` instance. Each term is evaluated in its
         own child ``EvaluateContext``, and the resulting term values are
-        reduced using the wrapped combined objective's reduction function.
+        returned to the combined objective for reduction.
 
-        If no executor is provided here, the wrapper falls back to
+        If no executor is provided here, the policy falls back to
         ``ctx.executor`` at call time. If neither is available, a
         ``ThreadPoolExecutor`` is created lazily.
 
         Args:
-            cob: Combined objective function whose terms will be evaluated
-                concurrently.
             executor: Optional default executor used when ``ctx.executor``
                 is not set.
 
@@ -51,12 +49,11 @@ class ExecutorPolicy(Generic[ParametersT]):
         ctx: EvaluateContext,
     ) -> list[float | None]:
         """
-        Evaluate the wrapped combined objective using an executor.
+        Evaluate combined-objective terms using an executor.
 
         This method prepares one child context per objective term, evaluates
-        the terms through the configured executor, filters out any skipped
-        terms, and reduces the remaining weighted term values using the
-        wrapped combined objective's reduction function.
+        the terms through the configured executor, and returns the weighted
+        term values to the combined objective for reduction.
 
         Executor selection follows this order:
             1. ``ctx.executor``, if set
@@ -64,14 +61,14 @@ class ExecutorPolicy(Generic[ParametersT]):
             3. a lazily created ``ThreadPoolExecutor``
 
         Args:
+            cob: Combined objective function whose terms will be evaluated.
             parameters: Parameter dictionary for the evaluation.
             ctx: Parent evaluation context.
 
         Returns:
-            The reduced scalar loss computed from the evaluated terms.
+            Weighted term values in objective order.
 
         Side Effects:
-            - Initializes the parent context through ``self.cob.prepare_evaluation(...)``.
             - Spawns one child context per objective term.
             - Evaluates terms through the selected executor.
             - Collects child metadata into ``ctx.meta["children"]``.

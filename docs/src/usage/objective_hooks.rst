@@ -125,14 +125,10 @@ and ``meta``, with further descendants under each child's ``meta.children``.
 Parent timing includes nested work; child timing measures the individual term.
 
 Recursive registration follows distinct child evaluation scopes through
-combined objectives, executor wrappers, MPI wrappers, and fitter wrappers.
-Executor and MPI wrappers use the wrapped combined objective's hook lists.
-Register hooks on the combined objective, not on those wrappers; direct wrapper
-registration raises ``RuntimeError``. Registrations made before or after
-wrapping are visible to the wrapper and run once around its parallel evaluation.
-Wrappers that share the wrapped objective's context or bypass its call do not
-introduce an extra child scope. Avoid attaching another timing hook to an
-already instrumented shared context.
+combined objectives and fitter wrappers. Execution policies schedule the
+combined objective's terms; they do not introduce another objective or hook
+scope. Register hooks on the combined objective and, for MPI, construct the
+same hooked objective on every rank.
 
 The same hook instance is registered throughout the current tree. Terms added
 later are not automatically instrumented. Use distinct objective instances
@@ -144,14 +140,14 @@ Parallel execution
 ------------------
 
 Register hooks before submitting work to a process executor. For MPI, register
-term hooks on every rank before nonzero ranks enter ``worker_loop()``; registering
+term hooks on every rank before nonzero ranks enter ``worker_loop(cob)``; registering
 only on rank zero does not update worker objectives.
 
 Hooks can execute concurrently or in another process. Do not append to a
 captured shared list, mutate global state, or keep start times on the hook
 instance. Such writes can race between threads and do not propagate back from
 worker processes. Store observations in ``ctx.meta`` instead, which the
-parallel wrappers transport with evaluation results. ``ctx.temp`` is local
+execution policies transport with evaluation results. ``ctx.temp`` is local
 scratch state and is not transported.
 
 Process-based hooks must be serializable. Prefer module-level hook classes

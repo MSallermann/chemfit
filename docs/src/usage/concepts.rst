@@ -73,10 +73,9 @@ This enables parallel evaluation:
 As a result, parallelization is built into the structure of the objective function,
 rather than being added on top.
 
-The execution model is defined by the objective function itself.
-Parallel execution is provided by wrapper implementations, which
-evaluate the same objective structure using different execution backends
-(e.g. threads or MPI).
+The combined objective delegates term evaluation to an execution policy.
+Changing the policy selects serial, executor-based, or MPI execution without
+changing the objective's terms or its call interface.
 
 -------------------------
 

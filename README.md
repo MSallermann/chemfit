@@ -70,7 +70,7 @@ from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
     mean_reducer,
 )
-from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+from chemfit.executor_policy import ExecutorPolicy
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.fitter_callbacks import log_progress
 
@@ -130,9 +130,9 @@ num_workers = 6
 
 # Allow every energy term in a batch of up to six candidates to run concurrently.
 with ThreadPoolExecutor(max_workers=num_workers * len(distances)) as term_executor:
-    objective = ExecutorWrapperCOB(combined, executor=term_executor)
+    combined.execution_policy = ExecutorPolicy(term_executor)
     fitter = Fitter(
-        objective,
+        combined,
         initial_params=initial_params,
         bounds={"epsilon": (0.1, 2.0), "sigma": (0.5, 1.5)},
     )
@@ -151,12 +151,12 @@ with ThreadPoolExecutor(max_workers=num_workers * len(distances)) as term_execut
 
     # An explicit context exposes quantities, losses, and nested term metadata.
     context = EvaluateContext()
-    loss = objective(result, context)
+    loss = combined(result, context)
     print(result, loss, best_history[-1], len(context.meta["children"]))
 ```
 
 Each distance becomes an independent objective term with its own evaluation
-context. `ExecutorWrapperCOB` evaluates those terms in a shared thread pool,
+context. `ExecutorPolicy` evaluates those terms in a shared thread pool,
 while Nevergrad evaluates up to six parameter candidates concurrently in a
 second pool. The built-in callback logs detailed progress every ten optimizer
 steps, while the custom callback records the best loss after every step. The
