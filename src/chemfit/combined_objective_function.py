@@ -12,6 +12,12 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     ObjectiveFunctor,
 )
+from chemfit.scheduling import (
+    PreparedSchedule,
+    PreparedScheduleBase,
+    Scheduler,
+    SchedulingProfile,
+)
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
 # Deliberately invariant: CombinedObjectiveFunction.add() mutates the stored
@@ -127,41 +133,32 @@ class WrappedReducer(Aggregator):
         return self.reducer
 
 
-class ExecutionPolicy(Protocol[ParametersT]):
-    """Strategy used by a combined objective to evaluate its terms."""
+class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
+    def __init__(self, cob: CombinedObjectiveFunction[ParametersT]) -> None:
+        """Initialize the serial schedule."""
+        super().__init__()
+        self.cob = cob
 
     def evaluate_terms(
         self,
-        cob: CombinedObjectiveFunction[ParametersT],
         parameters: ParametersT,
         ctx: EvaluateContext,
-    ) -> list[float | None]:
-        """Evaluate and return the weighted objective terms."""
-        ...
-
-
-class SerialExecutionPolicy(Generic[ParametersT]):
-    """Evaluate combined-objective terms serially in the calling thread."""
-
-    def evaluate_terms(
-        self,
-        cob: CombinedObjectiveFunction[ParametersT],
-        parameters: ParametersT,
-        ctx: EvaluateContext,
+        /,
     ) -> list[float | None]:
         """Evaluate all terms in index order."""
 
         with ctx.child_contexts(
-            n_children=cob.n_terms(), configurator=cob.child_context_configurator
+            n_children=self.cob.n_terms(),
+            configurator=self.cob.child_context_configurator,
         ) as child_ctxs:
             terms: list[float | None] = []
 
             for idx, ctx_term in enumerate(child_ctxs):
                 terms.append(
                     evaluate_weighted_term(
-                        cob.objective_functions[idx],
-                        cob.weights[idx],
-                        cob.exception_handler,
+                        self.cob.objective_functions[idx],
+                        self.cob.weights[idx],
+                        self.cob.exception_handler,
                         parameters,
                         idx,
                         ctx_term,
@@ -169,6 +166,17 @@ class SerialExecutionPolicy(Generic[ParametersT]):
                 )
 
             return terms
+
+
+class SerialScheduler(Scheduler[ParametersT], Generic[ParametersT]):
+    def prepare(
+        self,
+        objective: CombinedObjectiveFunction[ParametersT],
+        /,
+        *,
+        profile: Mapping[tuple[int, ...], float] | None = None,
+    ) -> PreparedScheduleBase[ParametersT]:
+        return SerialSchedule(objective)
 
 
 class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
@@ -179,7 +187,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         child_context_configurator: ChildContextConfigurator | None = None,
         reduction: Reducer | Aggregator = sum_reducer,
         exception_handler: ExceptionHandler = raising_exception_handler,
-        execution_policy: ExecutionPolicy[ParametersT] | None = None,
+        scheduler: Scheduler[ParametersT] | None = None,
     ) -> None:
         """
         Initialize a combined objective from multiple weighted terms.
@@ -246,9 +254,15 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         )
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
-        self.execution_policy: ExecutionPolicy[ParametersT] = (
-            SerialExecutionPolicy() if execution_policy is None else execution_policy
+
+        self._scheduler: Scheduler = (
+            SerialScheduler() if scheduler is None else scheduler
         )
+        self._schedule: PreparedSchedule | None = None
+
+    def prepare(self, profile: SchedulingProfile | None = None):
+        """Prepare the schedule."""
+        self._schedule = self._scheduler.prepare(self, profile=profile)
 
     def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the objective terms evaluated in child contexts."""
@@ -378,8 +392,10 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
         ctx.meta.update({"n_terms": self.n_terms()})
 
-        terms = self.execution_policy.evaluate_terms(
-            self, parameters=parameters, ctx=ctx
-        )
+        if self._schedule is None:
+            msg = "Call the `.prepare` function, before invoking the objective."
+            raise Exception(msg)
+
+        terms = self._schedule.evaluate_terms(parameters, ctx)
 
         return self.apply_reduction(self.filter_terms(terms, ctx), ctx)
