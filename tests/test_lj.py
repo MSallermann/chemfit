@@ -101,9 +101,7 @@ def test_single_point_computer_remains_pickleable():
 
 
 def test_lj_mpi():
-    mpi_wrapper_cob = pytest.importorskip(
-        "chemfit.mpi_wrapper_cob", reason="Missing mpi4py"
-    )
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
 
     # Construct the objective function on *all* ranks
     eps = 1.0
@@ -114,9 +112,10 @@ def test_lj_mpi():
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    with mpi_wrapper_cob.MPIWrapperCOB(ob) as mpi:
+    with mpi_policy.MPIPolicy() as mpi:
+        ob.execution_policy = mpi
         if mpi.rank == 0:
-            fitter = Fitter(mpi, initial_params=initial_params)
+            fitter = Fitter(ob, initial_params=initial_params)
             opt_params = fitter.fit_scipy()
 
             ctx = EvaluateContext()
@@ -127,7 +126,7 @@ def test_lj_mpi():
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)
         else:
-            mpi.worker_loop()
+            mpi.worker_loop(ob)
 
 
 if __name__ == "__main__":

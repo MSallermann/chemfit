@@ -4,24 +4,22 @@ import logging
 import math
 from collections.abc import Mapping
 from enum import Enum
+from functools import partial
 from typing import Any, Generic, TypeVar, cast
 
 from mpi4py import MPI
-from typing_extensions import Self
 
-from chemfit.abstract_objective_function import (
-    EvaluateContext,
-    ObjectiveFunctor,
-    PostEvaluationHook,
-    PreEvaluationHook,
+from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.combined_objective_function import (
+    CombinedObjectiveFunction,
+    evaluate_weighted_term,
 )
-from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.debug_utils import log_all_methods
 
 logger = logging.getLogger(__name__)
 
-# CombinedObjectiveFunction is mutable and invariant, so wrappers that retain
-# one must preserve its exact parameter type as well.
+# CombinedObjectiveFunction is mutable and invariant, so policies preserve its
+# exact parameter type.
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 TermResult = float | None | Exception
 
@@ -55,25 +53,23 @@ class Signal(Enum):
     ABORT = -1
 
 
-class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
+class MPIPolicy(Generic[ParametersT]):
     """
-    MPI-based wrapper for ``CombinedObjectiveFunction``.
+    MPI-based policy for ``CombinedObjectiveFunction``.
 
-    This wrapper distributes the terms of a combined objective across
+    This policy distributes the terms of a combined objective across
     MPI ranks. Rank 0 acts as the driver rank: it broadcasts the
     evaluation context to all worker ranks, evaluates its own local
     slice of terms, gathers the worker results, re-raises any worker
     exceptions, collects child metadata, and applies the wrapped
     combined objective's reduction.
 
-    Worker ranks do not call ``__call__`` directly. Instead, they run
-    ``worker_loop()``, which waits for broadcast evaluation requests
+    Worker ranks run ``worker_loop()``, which waits for broadcast evaluation requests
     from rank 0 and processes the local slice assigned to that rank.
     """
 
     def __init__(
         self,
-        cob: CombinedObjectiveFunction[ParametersT],
         comm: Any | None = None,
         mpi_debug_log: bool = False,
     ) -> None:
@@ -94,11 +90,6 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         """
 
-        super().__init__()
-        self.cob = cob
-        # Share the COB's hook lists so its callbacks surround parallel work.
-        self.pre_eval_hooks = cob.pre_eval_hooks
-        self.post_eval_hooks = cob.post_eval_hooks
         if comm is None:
             self.comm = MPI.COMM_WORLD.Dup()
         else:
@@ -114,32 +105,16 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
                 log_res=True,
             )
 
-        self.start, self.end = list(slice_up_range(self.cob.n_terms(), self.size))[
-            self.rank
-        ]
-
     def _log_func(self, msg: str):
         logger.warning(f"[Rank {self.rank}] {msg}")
-
-    def register_eval_hook(
-        self,
-        hook: PreEvaluationHook | PostEvaluationHook,  # noqa: ARG002
-        *,
-        recursive: bool = False,  # noqa: ARG002
-    ) -> Self:
-        """Require hook registration on the wrapped combined objective."""
-        msg = "Register hooks on wrapper.cob.register_eval_hook(...) instead"
-        raise RuntimeError(msg)
-
-    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
-        """Expose evaluated terms; the wrapped combined __call__ is bypassed."""
-        return self.cob._child_objectives()  # noqa: SLF001
 
     def __enter__(self):
         return self
 
     def shifted_child_context_configurator(
         self,
+        cob: CombinedObjectiveFunction[ParametersT],
+        start: int,
         idx_child_ctx: int,
         child_ctx: EvaluateContext,
         num_children: int,  # noqa: ARG002
@@ -161,28 +136,41 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         """
 
-        if self.cob.child_context_configurator is not None:
-            self.cob.child_context_configurator(
-                idx_child_ctx=idx_child_ctx + self.start,
+        if cob.child_context_configurator is not None:
+            cob.child_context_configurator(
+                idx_child_ctx=idx_child_ctx + start,
                 child_ctx=child_ctx,
-                num_children=self.cob.n_terms(),
+                num_children=cob.n_terms(),
                 parent_ctx=parent_ctx,
             )
 
     def evaluate_slice(
-        self, params: ParametersT, ctx: EvaluateContext
+        self,
+        cob: CombinedObjectiveFunction[ParametersT],
+        params: ParametersT,
+        ctx: EvaluateContext,
     ) -> list[TermResult]:
-        idx_slice = slice(self.start, self.end)
-        selected_indices = range(self.cob.n_terms())[idx_slice]
+        start, end = list(slice_up_range(cob.n_terms(), self.size))[self.rank]
+        selected_indices = range(cob.n_terms())[start:end]
 
         local_terms: list[TermResult] = []
 
         with ctx.child_contexts(
-            len(selected_indices), configurator=self.shifted_child_context_configurator
+            len(selected_indices),
+            configurator=partial(self.shifted_child_context_configurator, cob, start),
         ) as contexts:
             for idx, ctx_term in zip(selected_indices, contexts, strict=True):
                 try:
-                    local_terms.append(self.cob.evaluate_term(params, idx, ctx_term))
+                    local_terms.append(
+                        evaluate_weighted_term(
+                            cob.objective_functions[idx],
+                            cob.weights[idx],
+                            cob.exception_handler,
+                            params,
+                            idx,
+                            ctx_term,
+                        )
+                    )
                 except Exception as e:  # noqa: PERF203
                     # If we catch an exception we log it and append it to the local terms
                     # It will be sent to master and raised there
@@ -191,10 +179,15 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         return local_terms
 
-    def worker_process_params(self, params: ParametersT, ctx: EvaluateContext):
+    def worker_process_params(
+        self,
+        cob: CombinedObjectiveFunction[ParametersT],
+        params: ParametersT,
+        ctx: EvaluateContext,
+    ):
         # In the usual use-case the worker loop will be the top-level context for the worker ranks.
 
-        local_terms = self.evaluate_slice(params, ctx)
+        local_terms = self.evaluate_slice(cob, params, ctx)
 
         # Finally, we have to run the gather
         # This must always happen, otherwise, we might cause deadlocks because other ranks might wait on a reduce.
@@ -209,7 +202,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         else:
             self.comm.gather([], root=0)
 
-    def worker_loop(self):
+    def worker_loop(self, cob: CombinedObjectiveFunction[ParametersT]):
         """
         Run the worker-side MPI evaluation loop.
 
@@ -241,7 +234,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
                 assert signal.parameters is not None
                 params = cast("ParametersT", signal.parameters)
                 ctx = signal
-                self.worker_process_params(params, ctx)
+                self.worker_process_params(cob, params, ctx)
                 self.worker_gather_meta_data(ctx)
 
     def gather_meta_data(self, ctx: EvaluateContext):
@@ -285,10 +278,17 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         if gathered is not None:
             [total_meta_data.extend(m) for m in gathered]
 
-        # TODO(MS): think about this some more. It is a bit hacky because now the `ctx._children` variable only has the child ctxs for rank 0, but the meta_data from all the other ranks too  # noqa: TD003
+        # TODO(MS): think about this some more. # noqa: TD003
+        # It is a bit hacky because now the `ctx._children` variable only has the child ctxs for rank 0,
+        # but the meta_data from all the other ranks too
         ctx.meta["children"] = total_meta_data
 
-    def _evaluate(self, parameters: ParametersT, ctx: EvaluateContext) -> float:
+    def evaluate_terms(
+        self,
+        cob: CombinedObjectiveFunction[ParametersT],
+        parameters: ParametersT,
+        ctx: EvaluateContext,
+    ) -> list[float | None]:
         """
         Evaluate the combined objective on rank 0 using MPI.
 
@@ -315,6 +315,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         """
 
+        ctx.meta.update({"n_terms": cob.n_terms()})
         # Function to evaluate the objective function, to be called from rank 0
 
         # Ensure only rank 0 can call this
@@ -328,7 +329,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         local_terms: list[TermResult] = []
         try:
             # Compute one slice of the objective function on the main rank
-            local_terms = self.evaluate_slice(parameters, ctx=ctx)
+            local_terms = self.evaluate_slice(cob, parameters, ctx=ctx)
         finally:
             # Finally, we have to run the reduce. This must always happen since, otherwise, we might cause deadlocks
             # Sum up all local_totals into a global_total on every rank
@@ -349,8 +350,7 @@ class MPIWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
                 raise term
             values.append(term)
 
-        filtered_terms = self.cob.filter_terms(values, ctx)
-        return self.cob.apply_reduction(filtered_terms, ctx)
+        return values
 
     def release_workers(self):
         # Only rank 0 needs to shut down workers

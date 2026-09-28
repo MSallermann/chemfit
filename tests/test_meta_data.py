@@ -82,12 +82,13 @@ def test_gather_meta_data():
 
 
 def test_gather_meta_data_mpi():
-    mpi_wrapper_cob = pytest.importorskip("chemfit.mpi_wrapper_cob")
+    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
 
     # Use the MPI Wrapper to make the combined objective function "MPI aware"
-    with mpi_wrapper_cob.MPIWrapperCOB(COB, mpi_debug_log=False) as ob_mpi:
-        if ob_mpi.rank == 0:
-            ob_mpi(INITIAL_PARAMS, ctx := EvaluateContext())
+    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
+        COB.execution_policy = mpi
+        if mpi.rank == 0:
+            COB(INITIAL_PARAMS, ctx := EvaluateContext())
             meta_data = ctx.to_meta_data()["meta"]["children"]
 
             print(f"{meta_data = }")
@@ -96,4 +97,4 @@ def test_gather_meta_data_mpi():
             assert meta_data == EXPECTED
 
         else:
-            ob_mpi.worker_loop()
+            mpi.worker_loop(COB)

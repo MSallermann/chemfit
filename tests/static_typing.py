@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     )
     from chemfit.async_helpers import async_eval_many, async_eval_one
     from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
     from chemfit.file_based_computer import FileBasedQuantityComputer
     from chemfit.fitter import Fitter
     from chemfit.wrap_funcs import (
@@ -177,11 +176,6 @@ if TYPE_CHECKING:
     explicitly_typed_mixed_combination = CombinedObjectiveFunction[Parameters](
         [objective, incompatible_objective]  # pyright: ignore[reportArgumentType]
     )
-
-    # Executor wrappers retain the combined objective's parameter type.
-    executor_wrapped = ExecutorWrapperCOB(combined)
-    assert_type(executor_wrapped, ExecutorWrapperCOB[Parameters])
-    executor_wrapped({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     # File-based computers connect the command callbacks' parameter type to
     # the parsers' common output type.

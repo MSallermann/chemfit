@@ -2,33 +2,28 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
+from itertools import repeat
 from typing import Generic, TypeVar
 
-from typing_extensions import Self
-
-from chemfit.abstract_objective_function import (
-    EvaluateContext,
-    ExecutorLike,
-    ObjectiveFunctor,
-    PostEvaluationHook,
-    PreEvaluationHook,
+from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
+from chemfit.combined_objective_function import (
+    CombinedObjectiveFunction,
+    evaluate_weighted_term,
 )
-from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_utils import map_with_context
 
-# CombinedObjectiveFunction is mutable and invariant, so wrappers that retain
-# one must preserve its exact parameter type as well.
+# CombinedObjectiveFunction is mutable and invariant, so policies preserve its
+# exact parameter type.
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 
 
-class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
+class ExecutorPolicy(Generic[ParametersT]):
     def __init__(
         self,
-        cob: CombinedObjectiveFunction[ParametersT],
         executor: ExecutorLike | None = None,
     ):
         """
-        Initialize a concurrent wrapper for a combined objective.
+        Initialize an execution policy that uses a concurrent.futures style executor.
 
         This wrapper evaluates the terms of a ``CombinedObjectiveFunction``
         through an ``ExecutorLike`` instance. Each term is evaluated in its
@@ -47,49 +42,14 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
 
         """
 
-        super().__init__()
-        self.cob = cob
-        # Hooks belong to the COB; run its existing lifecycle callbacks around
-        # parallel evaluation, without copying or registering them twice.
-        self.pre_eval_hooks = cob.pre_eval_hooks
-        self.post_eval_hooks = cob.post_eval_hooks
         self.executor: ExecutorLike | None = executor
 
-    def register_eval_hook(
+    def evaluate_terms(
         self,
-        hook: PreEvaluationHook | PostEvaluationHook,  # noqa: ARG002
-        *,
-        recursive: bool = False,  # noqa: ARG002
-    ) -> Self:
-        """Require hook registration on the wrapped combined objective."""
-        msg = "Register hooks on wrapper.cob.register_eval_hook(...) instead"
-        raise RuntimeError(msg)
-
-    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
-        """Expose evaluated terms; the wrapped combined __call__ is bypassed."""
-        return self.cob._child_objectives()  # noqa: SLF001
-
-    def __enter__(self):
-        """
-        Enter the wrapper context.
-
-        This method allows the wrapper to be used as a context manager for
-        interface consistency with other combined-objective wrappers.
-
-        Returns:
-            The wrapper instance itself.
-
-        """
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: object,
-    ): ...
-
-    def _evaluate(self, parameters: ParametersT, ctx: EvaluateContext) -> float:
+        cob: CombinedObjectiveFunction[ParametersT],
+        parameters: ParametersT,
+        ctx: EvaluateContext,
+    ) -> list[float | None]:
         """
         Evaluate the wrapped combined objective using an executor.
 
@@ -119,28 +79,29 @@ class ExecutorWrapperCOB(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
         """
 
         executor = ctx.executor or self.executor
+
         created_executor: ThreadPoolExecutor | None = None
         if executor is None:
             created_executor = ThreadPoolExecutor()
             executor = created_executor
 
-        ctx.meta.update({"n_terms": self.cob.n_terms()})
+        ctx.meta.update({"n_terms": cob.n_terms()})
 
         try:
             with ctx.child_contexts(
-                self.cob.n_terms(), configurator=self.cob.child_context_configurator
+                cob.n_terms(), configurator=cob.child_context_configurator
             ) as child_contexts:
-                terms = map_with_context(
+                return map_with_context(
                     executor,
-                    self.cob.evaluate_term,
-                    [parameters for _ in range(self.cob.n_terms())],
-                    range(self.cob.n_terms()),
+                    evaluate_weighted_term,
+                    cob.objective_functions,
+                    cob.weights,
+                    repeat(cob.exception_handler, cob.n_terms()),
+                    repeat(parameters, cob.n_terms()),
+                    range(cob.n_terms()),
                     ctxs=child_contexts,
                 )
 
-            filtered_terms = self.cob.filter_terms(terms, ctx)
-
-            return self.cob.apply_reduction(filtered_terms, ctx)
         finally:
             if created_executor is not None:
                 created_executor.shutdown()

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from chemfit import abstract_objective_function, wrap_funcs
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
+from chemfit.executor_policy import ExecutorPolicy
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -100,9 +100,7 @@ def b(p: dict):
 
 
 # We create a combined objective function
-cob = CombinedObjectiveFunction([a, a, b, b])
-# ... and an async wrapper around it
-async_cob = ExecutorWrapperCOB(cob)
+cob = CombinedObjectiveFunction([a, a, b, b], execution_policy=ExecutorPolicy())
 
 
 def test_executors():
@@ -122,4 +120,4 @@ def test_executors():
         print(ctx.parameters)
         print(ctx.executor)
 
-        async_cob(params, ctx)
+        cob(params, ctx)
