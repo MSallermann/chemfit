@@ -93,21 +93,19 @@ ChemFit provides two mechanisms for this:
 2.1 Executor-based parallelism
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Use :py:class:`~chemfit.executor_wrapper_cob.ExecutorWrapperCOB` to evaluate terms
-in parallel using an executor.
+Use :py:class:`~chemfit.executor_policy.ExecutorPolicy` to evaluate terms in
+parallel using an executor.
 
 .. code-block:: python
 
    from concurrent.futures import ThreadPoolExecutor
 
-   from chemfit.executor_wrapper_cob import ExecutorWrapperCOB
    from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.executor_policy import ExecutorPolicy
 
-   executor = ThreadPoolExecutor(max_workers=4)
-
-   wrapped = ExecutorWrapperCOB(objective, executor=executor)
-
-   value = wrapped(parameters, EvaluateContext())
+   with ThreadPoolExecutor(max_workers=4) as executor:
+       objective.execution_policy = ExecutorPolicy(executor)
+       value = objective(parameters, EvaluateContext())
 
 This is the simplest way to parallelize a combined objective.
 
@@ -127,19 +125,20 @@ Use this when:
 2.2 MPI-based parallelism
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Use :py:class:`~chemfit.mpi_wrapper_cob.MPIWrapperCOB` to distribute terms
-across MPI processes.
+Use :py:class:`~chemfit.mpi_policy.MPIPolicy` to distribute terms across MPI
+processes.
 
 .. code-block:: python
 
-   from chemfit.mpi_wrapper_cob import MPIWrapperCOB
    from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.mpi_policy import MPIPolicy
 
-   with MPIWrapperCOB(objective) as mpi:
+   with MPIPolicy() as mpi:
+       objective.execution_policy = mpi
        if mpi.rank == 0:
-           value = mpi(parameters, EvaluateContext())
+           value = objective(parameters, EvaluateContext())
        else:
-           mpi.worker_loop()
+           mpi.worker_loop(objective)
 
 MPI does not behave like an executor.
 

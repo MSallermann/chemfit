@@ -331,7 +331,9 @@ Calling computers from within computers
 
 .. note::
 
-    This section is for fairly advanced use and, probably, most relevant if you are looking to implement your own execution wrapper for the :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`, besides the built-in MPI and executor wrappers.
+    This section is for fairly advanced use and is particularly relevant when
+    implementing an execution policy for
+    :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
 If we want to make calls to other computers from our custom computer, the recommended approach is to make use of the child context system to supply fresh contexts to the inner computers.
 
@@ -464,8 +466,8 @@ Or adjust configuration per child:
     def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
         child_ctx.config["worker_id"] = idx_child_ctx
 
-This mechanism is particularly useful when writing execution wrappers
-(e.g. MPI or executor-based parallelization), where different children
+This mechanism is particularly useful when writing execution policies
+(for example, MPI or executor-based parallelization), where different children
 may correspond to different processes or resources.
 
 **Rule of thumb:**

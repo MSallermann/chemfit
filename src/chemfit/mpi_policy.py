@@ -61,11 +61,11 @@ class MPIPolicy(Generic[ParametersT]):
     MPI ranks. Rank 0 acts as the driver rank: it broadcasts the
     evaluation context to all worker ranks, evaluates its own local
     slice of terms, gathers the worker results, re-raises any worker
-    exceptions, collects child metadata, and applies the wrapped
-    combined objective's reduction.
+    exceptions, and collects child metadata. The combined objective applies
+    its configured reduction to the returned values.
 
-    Worker ranks run ``worker_loop()``, which waits for broadcast evaluation requests
-    from rank 0 and processes the local slice assigned to that rank.
+    Worker ranks run ``worker_loop(cob)``, which waits for broadcast
+    evaluation requests from rank 0 and processes its assigned local slice.
     """
 
     def __init__(
@@ -74,19 +74,17 @@ class MPIPolicy(Generic[ParametersT]):
         mpi_debug_log: bool = False,
     ) -> None:
         """
-        Initialize an MPI wrapper for a combined objective.
+        Initialize an MPI execution policy.
 
         Args:
-            cob: Combined objective function whose terms are distributed
-                across MPI ranks.
             comm: MPI communicator to use. If ``None``, a duplicate of
                 ``MPI.COMM_WORLD`` is created.
             mpi_debug_log: If ``True``, wrap the communicator so that MPI
                 method calls are logged for debugging.
 
         Notes:
-            Each rank is assigned a contiguous slice of objective terms at
-            initialization time.
+            The policy computes contiguous rank-local slices from the current
+            number of objective terms for each evaluation.
 
         """
 
@@ -294,16 +292,16 @@ class MPIPolicy(Generic[ParametersT]):
 
         Rank 0 broadcasts the evaluation context to all worker ranks,
         evaluates its own assigned slice locally, gathers the worker term
-        values, re-raises any worker exceptions, gathers child metadata
-        from all ranks, and reduces the full list of term values using the
-        wrapped combined objective's reduction function.
+        values, re-raises any worker exceptions, and gathers child metadata
+        from all ranks. The combined objective reduces the returned values.
 
         Args:
+            cob: Combined objective function whose terms will be distributed.
             parameters: Parameter dictionary for the current evaluation.
             ctx: Parent evaluation context.
 
         Returns:
-            Reduced scalar loss value.
+            Weighted term values in objective order.
 
         Raises:
             RuntimeError: If called on a nonzero rank.

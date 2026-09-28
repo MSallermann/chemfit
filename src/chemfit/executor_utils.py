@@ -86,7 +86,7 @@ def map_with_context(
     final positional argument is an ``EvaluateContext``. Each worker
     returns both the function result and the serialized state of its
     context. After execution, the input context objects are updated in
-    place via ``EvaluateContext.__setstate__()`` so that caller-visible
+    place via ``EvaluateContext.apply_result_state()`` so that caller-visible
     context state reflects mutations performed inside the executor.
 
     This is especially useful for executors that may run work in
