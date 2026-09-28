@@ -37,7 +37,7 @@ def test_debug_log():
 
     log_recs = []
     obj = MyCoolObject(2, 3)
-    obj_logged = log_all_methods(obj, lambda msg: log_recs.append(msg))
+    obj_logged = log_all_methods(obj, log_recs.append)
 
     obj_logged.a = 2
     obj_logged.method(3.14, bla="bla")
