@@ -416,7 +416,7 @@ class SerialTreeSchedule(
                 ),
             )
 
-    def cancel_pending_and_wait(self) -> None: ...
+    def cancel_pending_and_wait(self, eval_state: EvaluationState) -> None: ...
 
 
 class TreeScheduler(Scheduler[ParametersT_contra], Generic[ParametersT_contra]):
