@@ -1,5 +1,6 @@
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Generic, TypeVar, cast
 
 from chemfit.abstract_objective_function import EvaluateContext
@@ -48,6 +49,8 @@ class EvaluationState:
     term_results: list[TermSlot]
     remaining_children: list[int]
     open_nodes: set[NodeId]
+
+    extra_state: SimpleNamespace
 
     def __init__(self, tree: CallTree, root_ctx: EvaluateContext):
         """Initialize the eval state."""
@@ -230,7 +233,7 @@ class TreeScheduleBase(
         node_id: int,
         parameters: ParametersT_contra,
         eval_state: EvaluationState,
-    ) -> TermResult:
+    ) -> tuple[NodeId, TermResult]:
         """Evaluate one leaf and return the term value it contributes to its parent."""
 
         node = self.tree.nodes[node_id]
@@ -245,7 +248,7 @@ class TreeScheduleBase(
         ctx = eval_state.contexts[node_id]
         assert ctx is not None
 
-        return evaluate_weighted_term(
+        return node_id, evaluate_weighted_term(
             objective=node.objective,
             weight=parent.objective.weights[node.child_idx],
             exception_handler=parent.objective.exception_handler,
@@ -407,19 +410,16 @@ class SerialTreeSchedule(
         """Evaluate leaves serially and yield completion events."""
 
         for node_id in self.leaf_ids:
-            yield (
+            yield self.evaluate_leaf(
                 node_id,
-                self.evaluate_leaf(
-                    node_id,
-                    parameters,
-                    eval_state,
-                ),
+                parameters,
+                eval_state,
             )
 
     def cancel_pending_and_wait(self, eval_state: EvaluationState) -> None: ...
 
 
-class TreeScheduler(Scheduler[ParametersT_contra], Generic[ParametersT_contra]):
+class SerialTreeScheduler(Scheduler[ParametersT_contra], Generic[ParametersT_contra]):
     def prepare(
         self,
         objective: CombinedObjectiveFunction[ParametersT_contra],
