@@ -230,7 +230,7 @@ class TreeScheduleBase(
         node_id: int,
         parameters: ParametersT_contra,
         eval_state: EvaluationState,
-    ) -> tuple[NodeId, TermResult]:
+    ) -> TermResult:
         """Evaluate one leaf and return the term value it contributes to its parent."""
 
         node = self.tree.nodes[node_id]
@@ -245,7 +245,7 @@ class TreeScheduleBase(
         ctx = eval_state.contexts[node_id]
         assert ctx is not None
 
-        return node_id, evaluate_weighted_term(
+        return evaluate_weighted_term(
             objective=node.objective,
             weight=parent.objective.weights[node.child_idx],
             exception_handler=parent.objective.exception_handler,
@@ -407,10 +407,13 @@ class SerialTreeSchedule(
         """Evaluate leaves serially and yield completion events."""
 
         for node_id in self.leaf_ids:
-            yield self.evaluate_leaf(
+            yield (
                 node_id,
-                parameters,
-                eval_state,
+                self.evaluate_leaf(
+                    node_id,
+                    parameters,
+                    eval_state,
+                ),
             )
 
     def cancel_pending_and_wait(self, eval_state: EvaluationState) -> None: ...
