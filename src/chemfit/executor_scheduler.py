@@ -1,6 +1,5 @@
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from concurrent.futures import Executor, Future, as_completed
-from time import sleep
+from concurrent.futures import Executor, Future, as_completed, wait
 from typing import Any, Generic, TypeVar, cast
 
 from chemfit.abstract_objective_function import (
@@ -71,11 +70,15 @@ class ExecutorTreeSchedule(
         return (node_id, res)
 
     def set_leaf_futures(self, eval_state: EvaluationState, fs: Iterable[Future]):
-        root_ctx: EvaluateContext = cast("EvaluateContext", eval_state.contexts[0])
+        root_ctx: EvaluateContext = cast(
+            "EvaluateContext", eval_state.contexts[self.tree.root]
+        )
         root_ctx.temp.leaf_futures = list(fs)
 
     def get_leaf_futures(self, eval_state: EvaluationState) -> list[Future]:
-        root_ctx: EvaluateContext = cast("EvaluateContext", eval_state.contexts[0])
+        root_ctx: EvaluateContext = cast(
+            "EvaluateContext", eval_state.contexts[self.tree.root]
+        )
         return root_ctx.temp.leaf_futures
 
     def evaluate_leaves(
@@ -102,22 +105,17 @@ class ExecutorTreeSchedule(
         for fs in as_completed(self.get_leaf_futures(eval_state=eval_state)):
             yield fs.result()
 
-    def cancel_pending_and_wait(
-        self, eval_state: EvaluationState, sleep_time: float = 0.001
-    ) -> None:
+    def cancel_pending_and_wait(self, eval_state: EvaluationState) -> None:
         """Cancel pending leaves and wait for other leaves to complete."""
 
+        futures = self.get_leaf_futures(eval_state)
+
         # first try to cancel all leaf futures
-        for fs in self.get_leaf_futures(eval_state):
+        for fs in futures:
             assert fs is not None
             fs.cancel()
 
-        # then wait for completion of non-cancelled ones
-        while not all(
-            fs.done() if fs is not None else True
-            for fs in self.get_leaf_futures(eval_state)
-        ):
-            sleep(sleep_time)
+        wait(futures)
 
 
 class ExecutorTreeScheduler(Scheduler[ParametersT_contra], Generic[ParametersT_contra]):
