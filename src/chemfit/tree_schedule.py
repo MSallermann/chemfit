@@ -1,6 +1,5 @@
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from types import SimpleNamespace
 from typing import Any, Generic, TypeVar, cast
 
 from chemfit.abstract_objective_function import EvaluateContext
@@ -49,8 +48,6 @@ class EvaluationState:
     term_results: list[TermSlot]
     remaining_children: list[int]
     open_nodes: set[NodeId]
-
-    extra_state: SimpleNamespace
 
     def __init__(self, tree: CallTree, root_ctx: EvaluateContext):
         """Initialize the eval state."""
