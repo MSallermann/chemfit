@@ -553,11 +553,6 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         """
         raise NotImplementedError
 
-    def _invoke_pre_eval_hooks(self, ctx: EvaluateContext):
-        """Invoke the pre evaluation hooks."""
-        for cb in self.pre_eval_hooks:
-            cb(ctx)
-
     def _invoke_post_eval_hooks(self, ctx: EvaluateContext, evaluation_failed: bool):
         """Invoke the post evaluation hooks."""
         post_hook_exceptions = []
@@ -569,6 +564,62 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
 
         if not evaluation_failed and post_hook_exceptions:
             raise self.PostEvalHookError(post_hook_exceptions)
+
+    def _begin_evaluation(self, parameters: ParametersT_contra, ctx: EvaluateContext):
+        """
+        Initialize an objective evaluation and invoke pre-evaluation hooks.
+
+        The context is updated with the current parameters and its previous loss
+        is cleared before hooks are invoked.
+
+        This is the first half of the objective evaluation lifecycle. Every
+        successful call should eventually be paired with ``_end_evaluation()``.
+        """
+
+        ctx.parameters = parameters
+        ctx.loss = None
+        for cb in self.pre_eval_hooks:
+            cb(ctx)
+
+    def _end_evaluation(
+        self,
+        ctx: EvaluateContext,
+        exception: BaseException | None,
+    ):
+        """
+        Finalize an objective evaluation and invoke post-evaluation hooks.
+
+        Args:
+            ctx:
+                Evaluation context associated with the evaluation.
+            exception:
+                Exception raised during evaluation, or ``None`` if evaluation
+                completed successfully.
+
+        Notes:
+            When ``exception`` is not ``None``, the context loss is cleared and
+            the exception is stored in ``ctx.temp.exception`` before post-hooks
+            are invoked.
+
+            Post-hook failures are raised as ``PostEvalHookError`` only when the
+            evaluation itself succeeded. If evaluation already failed, post-hook
+            failures do not replace the original exception.
+
+        """
+
+        if exception is None:
+            ctx.temp.exception = None
+            self._invoke_post_eval_hooks(
+                ctx,
+                evaluation_failed=False,
+            )
+        else:
+            ctx.loss = None
+            ctx.temp.exception = exception
+            self._invoke_post_eval_hooks(
+                ctx,
+                evaluation_failed=True,
+            )
 
     def __call__(
         self,
@@ -600,26 +651,16 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         if ctx is None:
             ctx = self._create_context()
 
-        ctx.parameters = parameters
-        ctx.loss = None
-
-        self._invoke_pre_eval_hooks(ctx)
-
-        # we need this boolean flag so that we dont accidentally
-        # mask an evaluation exception by rasing PostEvalHookError
-        # in the finally block
-        evaluation_failed = False
+        self._begin_evaluation(parameters=parameters, ctx=ctx)
 
         try:
             ctx.loss = self._evaluate(parameters, ctx)
-            ctx.temp.exception = None
         except BaseException as e:
-            evaluation_failed = True
-            ctx.loss = None
-            ctx.temp.exception = e
+            self._end_evaluation(ctx, e)
             raise
-        finally:
-            self._invoke_post_eval_hooks(ctx, evaluation_failed)
+        else:
+            self._end_evaluation(ctx, None)
+
         return cast("float", ctx.loss)
 
 

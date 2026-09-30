@@ -174,8 +174,12 @@ class SerialScheduler(Scheduler[ParametersT], Generic[ParametersT]):
         objective: CombinedObjectiveFunction[ParametersT],
         /,
         *,
-        profile: Mapping[tuple[int, ...], float] | None = None,
-    ) -> PreparedScheduleBase[ParametersT]:
+        profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
+    ) -> SerialSchedule[ParametersT]:
+        for term in objective.objective_functions:
+            if isinstance(term, CombinedObjectiveFunction):
+                term.prepare()
+
         return SerialSchedule(objective)
 
 
@@ -262,7 +266,15 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
     def prepare(self, profile: SchedulingProfile | None = None):
         """Prepare the schedule."""
+        if self._schedule is not None:
+            self._schedule.close()
+
         self._schedule = self._scheduler.prepare(self, profile=profile)
+
+    def set_scheduler(self, scheduler: Scheduler) -> None:
+        """Set scheduler. Invalidates the current scheduler."""
+        self._scheduler = scheduler
+        self._schedule = None
 
     def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the objective terms evaluated in child contexts."""
@@ -300,6 +312,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
                 if any provided weight is negative.
 
         """
+
+        # Mutation needs to invalidated the schedule
+        self._schedule = None
 
         # Determine how many new functions are being added
         if isinstance(obj_funcs, Sequence) and not callable(obj_funcs):
@@ -363,6 +378,24 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
                 child_quantities.append(child["quantities"])
         return self.reduction(list(terms), child_quantities, ctx)
 
+    def _reduce_terms(
+        self,
+        terms: Sequence[float | None],
+        ctx: EvaluateContext,
+    ) -> float:
+        """Compute this COB's result from precomputed immediate term results."""
+
+        if len(terms) != self.n_terms():
+            msg = f"Expected {self.n_terms()} terms, got {len(terms)}."
+            raise ValueError(msg)
+
+        ctx.meta["n_terms"] = self.n_terms()
+
+        return self.apply_reduction(
+            self.filter_terms(list(terms), ctx),
+            ctx,
+        )
+
     def _evaluate(
         self,
         parameters: ParametersT,
@@ -384,18 +417,11 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         Returns:
             The reduced scalar loss computed from the evaluated terms.
 
-        Side Effects:
-            - Spawns child contexts in ``ctx``.
-            - Collects child metadata into ``ctx.meta["children"]``.
-
         """
 
-        ctx.meta.update({"n_terms": self.n_terms()})
-
         if self._schedule is None:
-            msg = "Call the `.prepare` function, before invoking the objective."
+            msg = "No `_schedule` found! Call the `.prepare` function, before invoking the objective."
             raise Exception(msg)
 
         terms = self._schedule.evaluate_terms(parameters, ctx)
-
-        return self.apply_reduction(self.filter_terms(terms, ctx), ctx)
+        return self._reduce_terms(terms, ctx)

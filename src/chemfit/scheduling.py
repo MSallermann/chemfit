@@ -271,8 +271,10 @@ if TYPE_CHECKING:
     from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 
-ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
-ResultT = TypeVar("ResultT", covariant=True)
+ParametersT_contra = TypeVar(
+    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
+)
+ResultT_co = TypeVar("ResultT_co", covariant=True)
 
 #: Stable path to an objective within a nested combined-objective tree.
 #:
@@ -298,7 +300,7 @@ ResourceRequest: TypeAlias = Mapping[str, float]
 
 
 @runtime_checkable
-class PreparedSchedule(Protocol[ParametersT]):
+class PreparedSchedule(Protocol[ParametersT_contra]):
     """
     Prepared execution plan for one combined objective.
 
@@ -324,7 +326,7 @@ class PreparedSchedule(Protocol[ParametersT]):
 
     def evaluate_terms(
         self,
-        parameters: ParametersT,
+        parameters: ParametersT_contra,
         ctx: EvaluateContext,
         /,
     ) -> list[float | None]:
@@ -390,7 +392,7 @@ class PreparedSchedule(Protocol[ParametersT]):
         ...
 
 
-class PreparedScheduleBase(ABC, Generic[ParametersT]):
+class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
     """
     Optional convenience base class for prepared schedules.
 
@@ -405,7 +407,7 @@ class PreparedScheduleBase(ABC, Generic[ParametersT]):
     @abstractmethod
     def evaluate_terms(
         self,
-        parameters: ParametersT,
+        parameters: ParametersT_contra,
         ctx: EvaluateContext,
         /,
     ) -> list[float | None]:
@@ -415,7 +417,7 @@ class PreparedScheduleBase(ABC, Generic[ParametersT]):
     def close(self) -> None:
         """Release schedule-local state.  Default implementation is a no-op."""
 
-    def __enter__(self) -> PreparedScheduleBase[ParametersT]:
+    def __enter__(self) -> PreparedScheduleBase[ParametersT_contra]:
         """Return this prepared schedule."""
         return self
 
@@ -423,14 +425,14 @@ class PreparedScheduleBase(ABC, Generic[ParametersT]):
         self,
         exc_type: type[BaseException] | None,
         exc_value: BaseException | None,
-        traceback: Any,
+        traceback: object,
     ) -> None:
         """Close this prepared schedule when leaving a context-manager scope."""
         self.close()
 
 
 @runtime_checkable
-class Scheduler(Protocol[ParametersT]):
+class Scheduler(Protocol[ParametersT_contra]):
     """
     Factory for prepared combined-objective execution plans.
 
@@ -456,13 +458,22 @@ class Scheduler(Protocol[ParametersT]):
 
     def prepare(
         self,
-        objective: CombinedObjectiveFunction[ParametersT],
+        objective: CombinedObjectiveFunction[ParametersT_contra],
         /,
         *,
         profile: SchedulingProfile | None = None,
-    ) -> PreparedSchedule[ParametersT]:
+    ) -> PreparedSchedule[ParametersT_contra]:
         """
         Prepare repeated execution of ``objective``.
+
+        Scheduler.prepare(root) prepares the complete CombinedObjectiveFunction
+        call tree rooted at root.
+        The scheduler is authoritative for that preparation.
+        Scheduler configurations attached to nested combined objectives are ignored;
+        they apply only when those objectives are independently prepared as roots.
+        Implementations may install one or more PreparedSchedule objects throughout the tree, but all
+        such schedules belong to the same root preparation and scheduling backend
+
 
         Parameters
         ----------
@@ -520,12 +531,12 @@ class TaskSubmitter(Protocol):
 
     def submit(
         self,
-        fn: Callable[..., ResultT],
+        fn: Callable[..., ResultT_co],
         /,
         *args: Any,
         resources: ResourceRequest | None = None,
         **kwargs: Any,
-    ) -> FutureLike[ResultT]:
+    ) -> FutureLike[ResultT_co]:
         """
         Submit an arbitrary callable for execution.
 
