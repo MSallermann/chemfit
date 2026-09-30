@@ -274,6 +274,7 @@ if TYPE_CHECKING:
 ParametersT_contra = TypeVar(
     "ParametersT_contra", bound=Mapping[str, object], contravariant=True
 )
+ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 ResultT_co = TypeVar("ResultT_co", covariant=True)
 
 #: Stable path to an objective within a nested combined-objective tree.
@@ -392,6 +393,13 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
         ...
 
 
+PreparedScheduleT_co = TypeVar(
+    "PreparedScheduleT_co",
+    bound=PreparedSchedule[Any],
+    covariant=True,
+)
+
+
 class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
     """
     Optional convenience base class for prepared schedules.
@@ -432,7 +440,7 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
 
 
 @runtime_checkable
-class Scheduler(Protocol[ParametersT_contra]):
+class Scheduler(Protocol[PreparedScheduleT_co]):
     """
     Factory for prepared combined-objective execution plans.
 
@@ -458,11 +466,11 @@ class Scheduler(Protocol[ParametersT_contra]):
 
     def prepare(
         self,
-        objective: CombinedObjectiveFunction[ParametersT_contra],
+        objective: CombinedObjectiveFunction[ParametersT],
         /,
         *,
         profile: SchedulingProfile | None = None,
-    ) -> PreparedSchedule[ParametersT_contra]:
+    ) -> PreparedScheduleT_co:
         """
         Prepare repeated execution of ``objective``.
 

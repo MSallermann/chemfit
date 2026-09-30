@@ -141,7 +141,7 @@ class ExecutorTreeSchedule(
         wait(futures)
 
 
-class ExecutorTreeScheduler(Scheduler[ParametersT_contra], Generic[ParametersT_contra]):
+class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
     def __init__(self, executor_factory: Callable[[], Executor]) -> None:
         """Initialize executor schedule."""
 

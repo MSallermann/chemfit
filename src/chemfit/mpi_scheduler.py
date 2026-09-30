@@ -518,10 +518,7 @@ class MPITreeSchedule(
         super().close()
 
 
-class MPITreeScheduler(
-    Scheduler[ParametersT],
-    Generic[ParametersT],
-):
+class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
     """
     Scheduler creating an MPI-backed tree schedule.
 

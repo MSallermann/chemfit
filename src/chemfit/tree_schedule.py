@@ -419,12 +419,12 @@ class SerialTreeSchedule(
     def cancel_pending_and_wait(self, eval_state: EvaluationState) -> None: ...
 
 
-class SerialTreeScheduler(Scheduler[ParametersT_contra], Generic[ParametersT_contra]):
+class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
     def prepare(
         self,
         objective: CombinedObjectiveFunction[ParametersT_contra],
         /,
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
-    ) -> TreeScheduleBase[ParametersT_contra]:
+    ) -> SerialTreeSchedule[ParametersT_contra]:
         return SerialTreeSchedule(tree=cob_to_call_tree(objective))
