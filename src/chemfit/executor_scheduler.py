@@ -52,21 +52,23 @@ def evaluate_leaf_worker(
 class ExecutorTreeSchedule(
     TreeScheduleBase[ParametersT_contra], Generic[ParametersT_contra]
 ):
-    def __init__(self, tree: CallTree, executor: Executor) -> None:
+    def __init__(self, tree: CallTree, executor: Executor, owns_executor: bool) -> None:
         """Initialize the executor schedule."""
         super().__init__(tree)
         self.executor = executor
+        self.owns_executor = owns_executor
 
     def close(self):
         super().close()
-        self.executor.shutdown()
+        if self.owns_executor:
+            self.executor.shutdown()
 
     def evaluate_leaf(
         self,
         node_id: int,  # noqa: ARG002
         parameters: ParametersT_contra,  # noqa: ARG002
         eval_state: EvaluationState,  # noqa: ARG002
-    ) -> tuple[NodeId, TermResult]:
+    ) -> TermResult:
         """
         Evaluate one leaf and return the term value it contributes to its parent.
 
@@ -142,8 +144,19 @@ class ExecutorTreeSchedule(
 
 
 class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
-    def __init__(self, executor_factory: Callable[[], Executor]) -> None:
+    def __init__(
+        self,
+        executor_factory: Callable[[], Executor] | None,
+        executor: Executor | None = None,
+    ) -> None:
         """Initialize executor schedule."""
+
+        if (executor is None) == (executor_factory is None):
+            msg = "Specify exactly one of executor or executor_factory."
+            raise ValueError(msg)
+
+        self.executor = executor
+        self.executor_factory = executor_factory
 
         super().__init__()
         self.executor_factory = executor_factory
@@ -155,6 +168,16 @@ class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> ExecutorTreeSchedule[ParametersT_contra]:
+        if self.executor is not None:
+            executor = self.executor
+            owns_executor = False
+        else:
+            assert self.executor_factory is not None
+            executor = self.executor_factory()
+            owns_executor = True
+
         return ExecutorTreeSchedule(
-            tree=cob_to_call_tree(objective), executor=self.executor_factory()
+            tree=cob_to_call_tree(objective),
+            executor=executor,
+            owns_executor=owns_executor,
         )
