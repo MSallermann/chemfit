@@ -26,6 +26,8 @@ from chemfit.wrap_funcs import WrappedObjectiveFunctor
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 ObjectiveLike = Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
 
+PreparedScheduleT = TypeVar("PreparedScheduleT", bound=PreparedSchedule[Any])
+
 
 def transform_generic_callables(
     list_of_callables: Sequence[ObjectiveLike[ParametersT]],
@@ -168,7 +170,7 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
             return terms
 
 
-class SerialScheduler(Scheduler[ParametersT], Generic[ParametersT]):
+class SerialScheduler(Scheduler[SerialSchedule[Any]]):
     def prepare(
         self,
         objective: CombinedObjectiveFunction[ParametersT],
@@ -191,7 +193,7 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         child_context_configurator: ChildContextConfigurator | None = None,
         reduction: Reducer | Aggregator = sum_reducer,
         exception_handler: ExceptionHandler = raising_exception_handler,
-        scheduler: Scheduler[ParametersT] | None = None,
+        scheduler: Scheduler[PreparedSchedule[Any]] | None = None,
     ) -> None:
         """
         Initialize a combined objective from multiple weighted terms.
@@ -259,22 +261,52 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
 
-        self._scheduler: Scheduler = (
-            SerialScheduler() if scheduler is None else scheduler
+        self._scheduler: Scheduler[PreparedSchedule[Any]] = SerialScheduler()
+        self._schedule: PreparedSchedule[Any] | None = None
+        self.set_scheduler(SerialScheduler() if scheduler is None else scheduler)
+
+    def prepare(
+        self,
+        profile: SchedulingProfile | None = None,
+    ) -> PreparedSchedule[ParametersT]:
+        """Reprepare using the currently configured scheduler."""
+
+        old_schedule = self._schedule
+
+        schedule = self._scheduler.prepare(
+            self,
+            profile=profile,
         )
-        self._schedule: PreparedSchedule | None = None
 
-    def prepare(self, profile: SchedulingProfile | None = None):
-        """Prepare the schedule."""
-        if self._schedule is not None:
-            self._schedule.close()
+        self._schedule = schedule
 
-        self._schedule = self._scheduler.prepare(self, profile=profile)
+        if old_schedule is not None:
+            old_schedule.close()
 
-    def set_scheduler(self, scheduler: Scheduler) -> None:
-        """Set scheduler. Invalidates the current scheduler."""
+        return schedule
+
+    def set_scheduler(
+        self,
+        scheduler: Scheduler[PreparedScheduleT],
+        *,
+        profile: SchedulingProfile | None = None,
+    ) -> PreparedScheduleT:
+        """Set the scheduler, prepare it, and return its concrete schedule."""
+
+        schedule = scheduler.prepare(
+            self,
+            profile=profile,
+        )
+
+        old_schedule = self._schedule
+
         self._scheduler = scheduler
-        self._schedule = None
+        self._schedule = schedule
+
+        if old_schedule is not None:
+            old_schedule.close()
+
+        return schedule
 
     def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the objective terms evaluated in child contexts."""
