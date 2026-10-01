@@ -427,13 +427,15 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Guard implementations against overriding __call__."""
 
-        allow_call_override = kwargs.pop("allow_call_override", False)
+        allow_custom_call = kwargs.pop("allow_custom_call", False)
         super().__init_subclass__(**kwargs)
 
-        if not allow_call_override and cls.__call__ is not ObjectiveFunctor.__call__:
+        if not allow_custom_call and cls.__call__ is not ObjectiveFunctor.__call__:
             msg = (
-                f"{cls.__qualname__} must implement _evaluate() "
-                "instead of overriding __call__()"
+                f"{cls.__qualname__} must implement `_evaluate()` "
+                "instead of overriding `__call__()`. "
+                "Very advanced users may override this behavior by setting "
+                "`allow_custom_call=True` in their class definition. "
             )
             raise TypeError(msg)
 
