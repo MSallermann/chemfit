@@ -14,7 +14,7 @@ from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
     evaluate_weighted_term,
 )
-from chemfit.scheduling import PreparedSchedule, Scheduler
+from chemfit.scheduling import PreparedScheduleBase, Scheduler
 
 ParametersT_contra = TypeVar(
     "ParametersT_contra", contravariant=True, bound=Mapping[str, Any]
@@ -61,7 +61,7 @@ class EvaluationState:
 
 
 class TreeScheduleBase(
-    PreparedSchedule[ParametersT_contra], Generic[ParametersT_contra]
+    PreparedScheduleBase[ParametersT_contra], Generic[ParametersT_contra]
 ):
     def __init__(self, tree: CallTree) -> None:
         """Initialize the tree schedule from a call tree."""
@@ -392,8 +392,6 @@ class TreeScheduleBase(
             assert t is not PENDING
 
         return terms
-
-    def close(self): ...
 
 
 class SerialTreeSchedule(

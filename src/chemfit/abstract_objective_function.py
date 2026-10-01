@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import copy
 from collections.abc import Callable, Mapping
+from concurrent.futures import Future
 from functools import partial
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
@@ -15,17 +16,7 @@ if TYPE_CHECKING:
 
 T = TypeVar("T", covariant=True)  # noqa: PLC0105
 
-
-class FutureLike(Protocol, Generic[T]):
-    """
-    Minimal protocol for future-like objects used by the evaluation framework.
-
-    This protocol intentionally mirrors the subset of the interface provided by
-    :class:`concurrent.futures.Future`
-    """
-
-    def result(self, timeout: float | None = None) -> T: ...
-    def cancel(self) -> bool: ...
+FutureLike = Future
 
 
 class ExecutorLike(Protocol):

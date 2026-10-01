@@ -260,6 +260,7 @@ from typing import (
     Any,
     Generic,
     Protocol,
+    Self,
     TypeAlias,
     TypeVar,
     runtime_checkable,
@@ -392,6 +393,9 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
         """
         ...
 
+    @property
+    def closed(self) -> bool: ...
+
 
 PreparedScheduleT_co = TypeVar(
     "PreparedScheduleT_co",
@@ -412,6 +416,10 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
     state representation, resource handling, or task submission semantics.
     """
 
+    def __init__(self) -> None:
+        """Initialize the SchedulerBase."""
+        self._closed = False
+
     @abstractmethod
     def evaluate_terms(
         self,
@@ -424,8 +432,14 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
 
     def close(self) -> None:
         """Release schedule-local state.  Default implementation is a no-op."""
+        self._closed = False
 
-    def __enter__(self) -> PreparedScheduleBase[ParametersT_contra]:
+    @property
+    def closed(self) -> bool:
+        """Check if schedule is closed."""
+        return self._closed
+
+    def __enter__(self) -> Self:
         """Return this prepared schedule."""
         return self
 
