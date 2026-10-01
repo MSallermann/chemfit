@@ -59,9 +59,9 @@ class ExecutorTreeSchedule(
         self.owns_executor = owns_executor
 
     def close(self):
-        super().close()
-        if self.owns_executor:
+        if not self.closed and self.owns_executor:
             self.executor.shutdown()
+        super().close()
 
     def evaluate_leaf(
         self,
@@ -146,7 +146,8 @@ class ExecutorTreeSchedule(
 class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
     def __init__(
         self,
-        executor_factory: Callable[[], Executor] | None,
+        /,
+        executor_factory: Callable[[], Executor] | None = None,
         executor: Executor | None = None,
     ) -> None:
         """Initialize executor schedule."""

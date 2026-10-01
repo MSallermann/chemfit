@@ -451,8 +451,9 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
 
         """
 
-        if self._schedule is None:
-            msg = "No `_schedule` found! Call the `.prepare` function, before invoking the objective."
+        if self._schedule is None or self._schedule.closed:
+            msg = "Either no `_schedule` is found or the schedule is closed!"
+            "Call the `.prepare` function, before invoking the objective."
             raise Exception(msg)
 
         terms = self._schedule.evaluate_terms(parameters, ctx)
