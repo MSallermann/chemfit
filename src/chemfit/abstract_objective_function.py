@@ -647,14 +647,15 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         self._begin_evaluation(parameters=parameters, ctx=ctx)
 
         try:
-            ctx.loss = self._evaluate(parameters, ctx)
+            value = self._evaluate(parameters, ctx)
+            ctx.loss = value
         except BaseException as e:
             self._end_evaluation(ctx, e)
             raise
         else:
             self._end_evaluation(ctx, None)
 
-        return cast("float", ctx.loss)
+        return value
 
 
 LossFunction = Callable[Concatenate[LossQuantitiesT, ...], float]

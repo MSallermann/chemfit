@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import math
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, Generic, Protocol, TypeVar, cast
 
 from typing_extensions import Self
@@ -13,6 +13,8 @@ from chemfit.abstract_objective_function import (
     ObjectiveFunctor,
 )
 from chemfit.scheduling import (
+    EvaluationRequest,
+    EvaluationResult,
     PreparedSchedule,
     PreparedScheduleBase,
     Scheduler,
@@ -141,33 +143,23 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
         super().__init__()
         self.cob = cob
 
-    def evaluate_terms(
-        self,
-        parameters: ParametersT,
-        ctx: EvaluateContext,
-        /,
-    ) -> list[float | None]:
-        """Evaluate all terms in index order."""
+    def evaluate_many(
+        self, requests: Sequence[EvaluationRequest[ParametersT]]
+    ) -> Iterator[EvaluationResult]:
+        for idx, req in enumerate(requests):
+            parameters = req.parameters
+            ctx = req.ctx
+            self.cob._begin_evaluation(parameters, ctx)  # noqa: SLF001
+            try:
+                value = self.cob._evaluate(parameters, ctx)  # noqa: SLF001
+                ctx.loss = value
+            except BaseException as e:
+                self.cob._end_evaluation(ctx, e)  # noqa: SLF001
+                raise
+            else:
+                self.cob._end_evaluation(ctx, None)  # noqa: SLF001
 
-        with ctx.child_contexts(
-            n_children=self.cob.n_terms(),
-            configurator=self.cob.child_context_configurator,
-        ) as child_ctxs:
-            terms: list[float | None] = []
-
-            for idx, ctx_term in enumerate(child_ctxs):
-                terms.append(
-                    evaluate_weighted_term(
-                        self.cob.objective_functions[idx],
-                        self.cob.weights[idx],
-                        self.cob.exception_handler,
-                        parameters,
-                        idx,
-                        ctx_term,
-                    )
-                )
-
-            return terms
+            yield EvaluationResult(index=idx, value=value)
 
 
 class SerialScheduler(Scheduler[SerialSchedule[Any]]):
@@ -185,7 +177,9 @@ class SerialScheduler(Scheduler[SerialSchedule[Any]]):
         return SerialSchedule(objective)
 
 
-class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
+class CombinedObjectiveFunction(
+    ObjectiveFunctor[ParametersT], Generic[ParametersT], allow_custom_call=True
+):
     def __init__(
         self,
         objective_functions: Sequence[ObjectiveLike[ParametersT]],
@@ -433,28 +427,43 @@ class CombinedObjectiveFunction(ObjectiveFunctor[ParametersT], Generic[Parameter
         parameters: ParametersT,
         ctx: EvaluateContext,
     ) -> float:
-        """
-        Evaluate the combined objective.
+        with ctx.child_contexts(
+            n_children=self.n_terms(),
+            configurator=self.child_context_configurator,
+        ) as child_ctxs:
+            terms = [
+                evaluate_weighted_term(
+                    objective,
+                    weight,
+                    self.exception_handler,
+                    parameters,
+                    idx,
+                    child_ctx,
+                )
+                for idx, (objective, weight, child_ctx) in enumerate(
+                    zip(
+                        self.objective_functions,
+                        self.weights,
+                        child_ctxs,
+                        strict=True,
+                    )
+                )
+            ]
 
-        Each objective term is evaluated in its own child context using the
-        same parameter dictionary. The weighted term values are combined
-        using ``self.reduction``. After evaluation, child metadata is
-        collected into the parent context and the reduced loss is stored in
-        ``ctx.loss``.
+        return self._reduce_terms(terms, ctx)
 
-        Args:
-            parameters: Parameter dictionary for the evaluation.
-            ctx: Parent evaluation context.
-
-        Returns:
-            The reduced scalar loss computed from the evaluated terms.
-
-        """
-
-        if self._schedule is None or self._schedule.closed:
-            msg = "Either no `_schedule` is found or the schedule is closed!"
-            "Call the `.prepare` function, before invoking the objective."
+    def __call__(
+        self, parameters: ParametersT, ctx: EvaluateContext | None = None
+    ) -> float:
+        schedule = self._schedule
+        if schedule is None or schedule.closed:
+            msg = (
+                "Either no `_schedule` is found or the schedule is closed!"
+                "Call the `.prepare` or `set_scheduler` function, before invoking the objective."
+            )
             raise Exception(msg)
 
-        terms = self._schedule.evaluate_terms(parameters, ctx)
-        return self._reduce_terms(terms, ctx)
+        if ctx is None:
+            ctx = EvaluateContext()
+
+        return schedule.evaluate(parameters, ctx)
