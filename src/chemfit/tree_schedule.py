@@ -47,7 +47,8 @@ class _Inactive:
     """
     Sentinel for inactive evaluations.
 
-    This is for leaf nodes that can never be reached due to an exception in a parent setup phase.
+    This is for nodes that can never be reached due to an exception in a parent
+    setup phase.
 
     Note:
     We cannot use None since that has a special meaning in ChemFit already.
@@ -62,16 +63,29 @@ class _Inactive:
 
 INACTIVE = _Inactive()
 
+
+# A TermResult is the value consumed by CombinedObjectiveFunction._reduce_terms.
+# None is valid here because an exception handler may choose to omit a term.
 TermResult = float | None
-TermOutcome = TermResult | Exception
-TermSlot = TermOutcome | _Pending | _Inactive
-SetupOutcome = float | Exception | _Pending
+
+# A node itself always produces either a numerical value or an Exception.
+# None is therefore deliberately not part of NodeOutcome.
+NodeOutcome = float | Exception
+
+# Per-node execution state. Nodes begin INACTIVE, become PENDING when they are
+# reachable for this run, and are finally replaced by their raw NodeOutcome.
+NodeSlot = NodeOutcome | _Pending | _Inactive
+
+# Propagation either reaches the root and produces its outcome, or the run is
+# still waiting for other nodes to complete.
+PropagationResult = NodeOutcome | _Pending
+SetupOutcome = PropagationResult
 
 
 @dataclass
 class EvaluationState:
     contexts: list[EvaluateContext | None]
-    term_results: list[TermSlot]
+    node_slots: list[NodeSlot]
     remaining_children: list[int]
     open_nodes: set[NodeId]
 
@@ -79,13 +93,54 @@ class EvaluationState:
         """Initialize the eval state."""
         self.contexts = [None] * len(tree.nodes)
         self.contexts[tree.root] = root_ctx
-        self.term_results = [INACTIVE] * len(
+        self.node_slots = [INACTIVE] * len(
             tree.nodes
         )  # all nodes start out as INACTIVE
         self.remaining_children = [
-            len(n.children) if isinstance(n, CombineNode) else 0 for n in tree.nodes
+            len(node.children) if isinstance(node, CombineNode) else 0
+            for node in tree.nodes
         ]
         self.open_nodes = set()
+
+    def activate(self, node_id: NodeId) -> None:
+        """Mark a node as participating in this evaluation."""
+        if self.node_slots[node_id] is not INACTIVE:
+            msg = f"Node {node_id} is already active."
+            raise RuntimeError(msg)
+
+        self.node_slots[node_id] = PENDING
+
+    def complete(self, node_id: NodeId, outcome: NodeOutcome) -> None:
+        """Store the raw outcome of a pending node."""
+        if self.node_slots[node_id] is not PENDING:
+            msg = f"Node {node_id} is not pending."
+            raise RuntimeError(msg)
+
+        self.node_slots[node_id] = outcome
+
+    def outcome(self, node_id: NodeId) -> NodeOutcome:
+        """Return the raw outcome of a completed node."""
+        slot = self.node_slots[node_id]
+
+        if isinstance(slot, (_Pending, _Inactive)):
+            msg = f"Node {node_id} has no completed outcome."
+            raise RuntimeError(msg)
+
+        return slot
+
+    def child_completed(self, node_id: NodeId) -> bool:
+        """Record one completed child and report whether all children are complete."""
+        self.remaining_children[node_id] -= 1
+
+        if self.remaining_children[node_id] < 0:
+            msg = f"Combine node {node_id} received too many completions."
+            raise RuntimeError(msg)
+
+        return self.remaining_children[node_id] == 0
+
+    def is_pending(self, node_id: NodeId) -> bool:
+        """Return whether this node still needs to produce an outcome."""
+        return self.node_slots[node_id] is PENDING
 
 
 @dataclass
@@ -96,7 +151,8 @@ class EvaluationRun(Generic[ParametersT_co]):
 
 
 class TreeScheduleBase(
-    PreparedScheduleBase[ParametersT_contra], Generic[ParametersT_contra]
+    PreparedScheduleBase[ParametersT_contra],
+    Generic[ParametersT_contra],
 ):
     def __init__(self, tree: CallTree) -> None:
         """Initialize the tree schedule from a call tree."""
@@ -112,7 +168,7 @@ class TreeScheduleBase(
         root_ctx: EvaluateContext,
         eval_state: EvaluationState,
     ) -> SetupOutcome:
-        """Construct the context tree, begin nested COB lifecycles and change leaf term_slots to PENDING."""
+        """Construct the context tree, begin nested COB lifecycles and activate reachable nodes."""
 
         def propagate_setup_failure(
             node_id: NodeId,
@@ -122,19 +178,17 @@ class TreeScheduleBase(
 
             # A failure of the root is already the final outcome of this run.
             if node.parent_id is None:
-                eval_state.term_results[node_id] = exception
+                eval_state.complete(node_id, exception)
                 return exception
 
-            root_outcome = self.propagate_completion(
+            # Nested setup failures are raw outcomes of the failed combine node.
+            # The immediate parent COB owns interpretation of that exception,
+            # exactly as it would for an exception raised during normal evaluation.
+            return self.propagate_completion(
                 node_id,
                 exception,
                 eval_state,
             )
-
-            if root_outcome is None:
-                return PENDING
-
-            return root_outcome
 
         def visit(
             combine_ctx: EvaluateContext,
@@ -146,9 +200,8 @@ class TreeScheduleBase(
 
             # Start this COBs lifecycle
             # ... once evaluation begins, _end_evaluation() must be called exactly once.
+            eval_state.activate(node_id)
             eval_state.open_nodes.add(node_id)
-            # mark combine node pending
-            eval_state.term_results[node_id] = PENDING
 
             try:
                 cob._begin_evaluation(  # noqa: SLF001
@@ -160,6 +213,7 @@ class TreeScheduleBase(
                     cob.n_terms(),
                     cob.child_context_configurator,
                 )
+
             except Exception as e:
                 # an exception in `_begin_evaluation` or `spawn_children`,
                 # ends the current evaluation, and the child_nodes stay marked
@@ -183,7 +237,6 @@ class TreeScheduleBase(
                 strict=True,
             ):
                 eval_state.contexts[child_id] = child_ctx
-
                 child_node = self.tree.nodes[child_id]
 
                 # now we iterate over the children
@@ -194,11 +247,12 @@ class TreeScheduleBase(
                         node_id=child_id,
                     )
 
-                    if root_outcome is not PENDING:
+                    if not isinstance(root_outcome, _Pending):
                         return root_outcome
+
                 else:
                     # ... for LeafNodes we simply change the state to PENDING
-                    eval_state.term_results[child_id] = PENDING
+                    eval_state.activate(child_id)
 
             return PENDING
 
@@ -259,7 +313,7 @@ class TreeScheduleBase(
 
     def finish_combine_node(
         self,
-        node_id: int,
+        node_id: NodeId,
         eval_state: EvaluationState,
     ) -> float:
         """
@@ -271,7 +325,8 @@ class TreeScheduleBase(
 
         # NOTE: this overall function needs to mimic the semantics of the later part of
         # ObjectiveFunctor.__call__ (including the end of life cycle invocations)
-        # the first part (the beginning of the life cycle) is already handled in the top_down pass
+        # the first part (the beginning of the life cycle) is already handled in the
+        # top_down pass
 
         # tree state bookkeeping
         node = self.tree.nodes[node_id]
@@ -294,10 +349,10 @@ class TreeScheduleBase(
 
             try:
                 for idx, child_id in enumerate(node.children):
-                    outcome = eval_state.term_results[child_id]
-
-                    # None of the child outcomes may still be pending
-                    assert outcome is not PENDING
+                    # All children must have completed before this combine node is
+                    # finished. EvaluationState owns the node-state checks here so
+                    # this function only deals with actual raw outcomes.
+                    outcome = eval_state.outcome(child_id)
 
                     child_ctx = eval_state.contexts[child_id]
                     assert child_ctx is not None
@@ -356,7 +411,7 @@ class TreeScheduleBase(
         node_id: NodeId,
         parameters: ParametersT_contra,
         eval_state: EvaluationState,
-    ) -> TermOutcome:
+    ) -> NodeOutcome:
         """
         Evaluate one leaf and return its raw outcome.
 
@@ -366,7 +421,7 @@ class TreeScheduleBase(
         """
 
         # We should only invoke this on pending leaves
-        assert eval_state.term_results[node_id] is PENDING
+        assert eval_state.is_pending(node_id)
 
         # tree state bookkeeping
         node = self.tree.nodes[node_id]
@@ -392,9 +447,9 @@ class TreeScheduleBase(
     def propagate_completion(
         self,
         node_id: NodeId,
-        outcome: TermOutcome,
+        outcome: NodeOutcome,
         eval_state: EvaluationState,
-    ) -> float | Exception | None:
+    ) -> PropagationResult:
         """
         Record a completed node outcome and propagate completion towards the root.
 
@@ -403,23 +458,22 @@ class TreeScheduleBase(
         finished and its own raw outcome is propagated further upwards.
 
         Returns the root outcome when this completion finishes the entire run.
-        Otherwise returns None.
+        Otherwise returns PENDING.
         """
 
-        outcome_to_propagate: TermOutcome = outcome
+        outcome_to_propagate: NodeOutcome = outcome
         current_node_id: NodeId = node_id
 
         while True:
             node = self.tree.nodes[current_node_id]
 
             # A node may only complete once.
-            if eval_state.term_results[current_node_id] is not PENDING:
-                msg = f"Node {current_node_id} has already completed."
-                raise RuntimeError(msg)
-
             # Store the raw outcome of this node. The parent combine node will
             # interpret it later by applying its weight / exception handler.
-            eval_state.term_results[current_node_id] = outcome_to_propagate
+            eval_state.complete(
+                current_node_id,
+                outcome_to_propagate,
+            )
 
             # propagate_completion() is only called for nodes that have a parent.
             # The root itself is finished internally below and is never propagated.
@@ -427,15 +481,9 @@ class TreeScheduleBase(
             assert parent_id is not None
 
             # One more child of the parent has completed.
-            eval_state.remaining_children[parent_id] -= 1
-
-            if eval_state.remaining_children[parent_id] < 0:
-                msg = f"Combine node {parent_id} received too many completions."
-                raise RuntimeError(msg)
-
             # The parent cannot be finished until all of its children have completed.
-            if eval_state.remaining_children[parent_id] > 0:
-                return None
+            if not eval_state.child_completed(parent_id):
+                return PENDING
 
             parent = self.tree.nodes[parent_id]
             assert isinstance(parent, CombineNode)
@@ -457,7 +505,10 @@ class TreeScheduleBase(
             # The root has no parent, so its raw outcome is the final outcome
             # of this evaluation run.
             if parent.parent_id is None:
-                eval_state.term_results[parent_id] = outcome_to_propagate
+                eval_state.complete(
+                    parent_id,
+                    outcome_to_propagate,
+                )
                 return outcome_to_propagate
 
             # Otherwise the completed combine node behaves exactly like any other
@@ -468,11 +519,18 @@ class TreeScheduleBase(
     def evaluate_leaves(
         self,
         runs: Sequence[EvaluationRun[ParametersT_contra]],
-    ) -> Iterator[tuple[int, NodeId, TermOutcome]]:
-        """Evaluate leaves and yield completion events. The meaning of the tuple is [run_id, node_id, result]."""
+    ) -> Iterator[tuple[int, NodeId, NodeOutcome]]:
+        """
+        Evaluate leaves and yield completion events.
+
+        The tuple is [run_id, node_id, result].
+        """
         raise NotImplementedError
 
-    def cancel_pending_and_wait(self, runs: Sequence[EvaluationRun]) -> None:
+    def cancel_pending_and_wait(
+        self,
+        runs: Sequence[EvaluationRun[ParametersT_contra]],
+    ) -> None:
         """Cancel pending leaves and wait for other leaves to complete."""
         raise NotImplementedError
 
@@ -546,7 +604,7 @@ class TreeScheduleBase(
                     run.state,
                 )
 
-                if root_outcome is not None:
+                if not isinstance(root_outcome, _Pending):
                     yield EvaluationResult(
                         index=run.index,
                         value=root_outcome,
@@ -563,19 +621,28 @@ class TreeScheduleBase(
 
 class SerialTreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
     def evaluate_leaves(
-        self, runs: Sequence[EvaluationRun[ParametersT]]
-    ) -> Iterator[tuple[int, NodeId, TermOutcome]]:
+        self,
+        runs: Sequence[EvaluationRun[ParametersT]],
+    ) -> Iterator[tuple[int, NodeId, NodeOutcome]]:
         for run_idx, run in enumerate(runs):
             for node_id in self.leaf_ids:
                 # only submit pending leaves
-                if run.state.term_results[node_id] is PENDING:
+                if run.state.is_pending(node_id):
                     yield (
                         run_idx,
                         node_id,
-                        self.evaluate_leaf(node_id, run.parameters, run.state),
+                        self.evaluate_leaf(
+                            node_id,
+                            run.parameters,
+                            run.state,
+                        ),
                     )
 
-    def cancel_pending_and_wait(self, runs: Sequence[EvaluationRun]) -> None: ...
+    def cancel_pending_and_wait(
+        self,
+        runs: Sequence[EvaluationRun[ParametersT]],
+    ) -> None:
+        """Serial execution has no outstanding leaf work to cancel."""
 
 
 class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
