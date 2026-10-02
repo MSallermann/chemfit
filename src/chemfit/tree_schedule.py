@@ -1,6 +1,6 @@
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, TypeVar
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.callgraph import (
@@ -42,9 +42,30 @@ class _Pending:
 
 PENDING = _Pending()
 
+
+class _Inactive:
+    """
+    Sentinel for inactive evaluations.
+
+    This is for leaf nodes that can never be reached due to an exception in a parent setup phase.
+
+    Note:
+    We cannot use None since that has a special meaning in ChemFit already.
+
+    """
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        return "<INACTIVE>"
+
+
+INACTIVE = _Inactive()
+
 TermResult = float | None
 TermOutcome = TermResult | Exception
-TermSlot = TermOutcome | _Pending
+TermSlot = TermOutcome | _Pending | _Inactive
+SetupOutcome = float | Exception | _Pending
 
 
 @dataclass
@@ -58,7 +79,9 @@ class EvaluationState:
         """Initialize the eval state."""
         self.contexts = [None] * len(tree.nodes)
         self.contexts[tree.root] = root_ctx
-        self.term_results = [PENDING] * len(tree.nodes)
+        self.term_results = [INACTIVE] * len(
+            tree.nodes
+        )  # all nodes start out as INACTIVE
         self.remaining_children = [
             len(n.children) if isinstance(n, CombineNode) else 0 for n in tree.nodes
         ]
@@ -88,29 +111,72 @@ class TreeScheduleBase(
         parameters: ParametersT_contra,
         root_ctx: EvaluateContext,
         eval_state: EvaluationState,
-    ) -> None:
-        """Construct the context tree and begin nested COB life cycles."""
+    ) -> SetupOutcome:
+        """Construct the context tree, begin nested COB lifecycles and change leaf term_slots to PENDING."""
+
+        def propagate_setup_failure(
+            node_id: NodeId,
+            exception: Exception,
+        ) -> SetupOutcome:
+            node = self.tree.nodes[node_id]
+
+            # A failure of the root is already the final outcome of this run.
+            if node.parent_id is None:
+                eval_state.term_results[node_id] = exception
+                return exception
+
+            root_outcome = self.propagate_completion(
+                node_id,
+                exception,
+                eval_state,
+            )
+
+            if root_outcome is None:
+                return PENDING
+
+            return root_outcome
 
         def visit(
             combine_ctx: EvaluateContext,
-            node_id: int,
-        ) -> None:
+            node_id: NodeId,
+        ) -> SetupOutcome:
             node = self.tree.nodes[node_id]
             assert isinstance(node, CombineNode)
-
             cob = node.objective
 
-            cob._begin_evaluation(  # noqa: SLF001
-                parameters=parameters,
-                ctx=combine_ctx,
-            )
+            # Start this COBs lifecycle
+            # ... once evaluation begins, _end_evaluation() must be called exactly once.
             eval_state.open_nodes.add(node_id)
+            # mark combine node pending
+            eval_state.term_results[node_id] = PENDING
 
-            child_contexts = combine_ctx.spawn_children(
-                cob.n_terms(),
-                cob.child_context_configurator,
-            )
+            try:
+                cob._begin_evaluation(  # noqa: SLF001
+                    parameters=parameters,
+                    ctx=combine_ctx,
+                )
 
+                child_contexts = combine_ctx.spawn_children(
+                    cob.n_terms(),
+                    cob.child_context_configurator,
+                )
+            except Exception as e:
+                # an exception in `_begin_evaluation` or `spawn_children`,
+                # ends the current evaluation, and the child_nodes stay marked
+                # as INACTIVE
+                try:
+                    cob._end_evaluation(combine_ctx, e)  # noqa: SLF001
+                finally:
+                    eval_state.open_nodes.discard(node_id)
+
+                # setup failure has to be propagated up the tree
+                return propagate_setup_failure(
+                    node_id,
+                    e,
+                )
+
+            # BaseException deliberately escapes with this node still in open_nodes.
+            # evaluate_many() will then abort the incomplete evaluation.
             for child_id, child_ctx in zip(
                 node.children,
                 child_contexts,
@@ -120,10 +186,26 @@ class TreeScheduleBase(
 
                 child_node = self.tree.nodes[child_id]
 
+                # now we iterate over the children
+                # ... if a child is a CombineNode, we recurse
                 if isinstance(child_node, CombineNode):
-                    visit(combine_ctx=child_ctx, node_id=child_id)
+                    root_outcome = visit(
+                        combine_ctx=child_ctx,
+                        node_id=child_id,
+                    )
 
-        visit(combine_ctx=root_ctx, node_id=self.tree.root)
+                    if root_outcome is not PENDING:
+                        return root_outcome
+                else:
+                    # ... for LeafNodes we simply change the state to PENDING
+                    eval_state.term_results[child_id] = PENDING
+
+            return PENDING
+
+        return visit(
+            combine_ctx=root_ctx,
+            node_id=self.tree.root,
+        )
 
     def abort_evaluation(
         self,
@@ -283,6 +365,9 @@ class TreeScheduleBase(
         node can apply its own exception-handling semantics.
         """
 
+        # We should only invoke this on pending leaves
+        assert eval_state.term_results[node_id] is PENDING
+
         # tree state bookkeeping
         node = self.tree.nodes[node_id]
         ctx = eval_state.contexts[node_id]
@@ -372,6 +457,7 @@ class TreeScheduleBase(
             # The root has no parent, so its raw outcome is the final outcome
             # of this evaluation run.
             if parent.parent_id is None:
+                eval_state.term_results[parent_id] = outcome_to_propagate
                 return outcome_to_propagate
 
             # Otherwise the completed combine node behaves exactly like any other
@@ -386,7 +472,7 @@ class TreeScheduleBase(
         """Evaluate leaves and yield completion events. The meaning of the tuple is [run_id, node_id, result]."""
         raise NotImplementedError
 
-    def cancel_pending_and_wait(self, runs: list[EvaluationRun]) -> None:
+    def cancel_pending_and_wait(self, runs: Sequence[EvaluationRun]) -> None:
         """Cancel pending leaves and wait for other leaves to complete."""
         raise NotImplementedError
 
@@ -394,57 +480,52 @@ class TreeScheduleBase(
         self,
         requests: Sequence[EvaluationRequest[ParametersT_contra]],
     ) -> Iterator[EvaluationResult]:
-
-        runs: list[EvaluationRun[ParametersT_contra]] = []
-        setup_results: list[EvaluationResult] = []
-
         # 1. Perform the top-down pass for every request.
         #
         # Ordinary setup failures belong only to the corresponding evaluation.
         # No leaf work has been submitted at this point, so failed setup only
         # requires closing the COB lifecycles opened for that evaluation.
-        for idx, req in enumerate(requests):
-            eval_state = EvaluationState(
-                self.tree,
-                root_ctx=req.ctx,
-            )
 
-            try:
-                self.top_down_pass(
+        runs: list[EvaluationRun[ParametersT_contra]] = []
+        setup_results: list[EvaluationResult] = []
+        setup_states: list[EvaluationState] = []
+
+        try:
+            for idx, req in enumerate(requests):
+                eval_state = EvaluationState(
+                    self.tree,
+                    root_ctx=req.ctx,
+                )
+                setup_states.append(eval_state)
+
+                setup_outcome = self.top_down_pass(
                     req.parameters,
                     root_ctx=req.ctx,
                     eval_state=eval_state,
                 )
 
-            except Exception as e:
+                if isinstance(setup_outcome, _Pending):
+                    runs.append(
+                        EvaluationRun(
+                            index=idx,
+                            parameters=req.parameters,
+                            state=eval_state,
+                        )
+                    )
+                else:
+                    setup_results.append(
+                        EvaluationResult(
+                            index=idx,
+                            value=setup_outcome,
+                        )
+                    )
+
+        except BaseException as e:
+            # No leaves have been submitted yet.
+            for eval_state in setup_states:
                 self.abort_evaluation(e, eval_state)
 
-                setup_results.append(
-                    EvaluationResult(
-                        index=idx,
-                        value=e,
-                    )
-                )
-
-            except BaseException as e:
-                # Clean up the evaluation whose setup was interrupted.
-                self.abort_evaluation(e, eval_state)
-
-                # Previously prepared evaluations have open COB lifecycles too.
-                # No leaves have been submitted yet, so no cancellation is needed.
-                for run in runs:
-                    self.abort_evaluation(e, run.state)
-
-                raise
-
-            else:
-                runs.append(
-                    EvaluationRun(
-                        index=idx,
-                        parameters=req.parameters,
-                        state=eval_state,
-                    )
-                )
+            raise
 
         # 2. Yield setup failures and evaluate all successfully prepared runs.
         #
@@ -486,11 +567,13 @@ class SerialTreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
     ) -> Iterator[tuple[int, NodeId, TermOutcome]]:
         for run_idx, run in enumerate(runs):
             for node_id in self.leaf_ids:
-                yield (
-                    run_idx,
-                    node_id,
-                    self.evaluate_leaf(node_id, run.parameters, run.state),
-                )
+                # only submit pending leaves
+                if run.state.term_results[node_id] is PENDING:
+                    yield (
+                        run_idx,
+                        node_id,
+                        self.evaluate_leaf(node_id, run.parameters, run.state),
+                    )
 
     def cancel_pending_and_wait(self, runs: Sequence[EvaluationRun]) -> None: ...
 
