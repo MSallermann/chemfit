@@ -36,7 +36,11 @@ class EvaluationRequest(Generic[ParametersT_co]):
 @dataclass(frozen=True)
 class EvaluationResult:
     index: int
-    value: float
+    value: float | Exception
+
+    @property
+    def success(self) -> bool:
+        return not isinstance(self.value, Exception)
 
 
 #: Stable path to an objective within a nested combined-objective tree.
