@@ -366,6 +366,18 @@ class TreeScheduleBase(
                 finally:
                     eval_state.open_nodes.discard(node_id)
 
+                # spawn_children() installs the complete child batch before it
+                # invokes configurators. A configurator may therefore fail
+                # after creating partially configured, inactive contexts.
+                # Serial evaluation exposes those contexts when the parent
+                # recursively collects metadata. Tree schedules collect
+                # completed nodes non-recursively, so materialize this failed
+                # nested node's inactive children here to preserve the serial
+                # semantics. A failed root has no parent collection step and
+                # deliberately keeps the same unmaterialized state as serial.
+                if node.parent_id is not None:
+                    combine_ctx.collect_child_meta_data(recursive=True)
+
                 # setup failure has to be propagated up the tree
                 return propagate_setup_failure(
                     node_id,
