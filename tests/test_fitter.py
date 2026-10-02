@@ -4,14 +4,15 @@ from typing import Any
 import nevergrad as ng
 import numpy as np
 import pytest
-from pydictnest import get_nested, has_nested, items_nested
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_policy import ExecutorPolicy
+from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.fitter import Fitter, FitterEvaluateContext
+from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
+from pydictnest import get_nested, has_nested, items_nested
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
 NG_ATOL = 1e-1
@@ -208,8 +209,9 @@ def test_with_square_func_threadpool():
     def cont2(params: dict):
         return 3.0 * (params["y"] + 1) ** 2
 
-    obj_func = CombinedObjectiveFunction(
-        [cont1, cont2], execution_policy=ExecutorPolicy()
+    obj_func = CombinedObjectiveFunction([cont1, cont2])
+    schedule = obj_func.set_scheduler(
+        ExecutorTreeScheduler(executor_factory=ThreadPoolExecutor)
     )
 
     initial_params = {"x": 0.0, "y": 0.0}
@@ -251,6 +253,8 @@ def test_with_square_func_threadpool():
         assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
         assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
 
+    schedule.close()
+
 
 def test_with_square_func_processpool():
     loky = pytest.importorskip("loky", reason="Missing loky")
@@ -262,7 +266,8 @@ def test_with_square_func_processpool():
         return 3.0 * (params["y"] + 1) ** 2
 
     obj_func = CombinedObjectiveFunction(
-        [cont1, cont2], execution_policy=ExecutorPolicy()
+        [cont1, cont2],
+        scheduler=SerialTreeScheduler(),
     )
 
     initial_params = {"x": 0.0, "y": 0.0}

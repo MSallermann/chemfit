@@ -644,9 +644,8 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         if ctx is None:
             ctx = self._create_context()
 
-        self._begin_evaluation(parameters=parameters, ctx=ctx)
-
         try:
+            self._begin_evaluation(parameters=parameters, ctx=ctx)
             value = self._evaluate(parameters, ctx)
             ctx.loss = value
         except BaseException as e:

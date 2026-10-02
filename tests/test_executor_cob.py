@@ -7,7 +7,7 @@ import numpy as np
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.async_helpers import async_eval_many
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_policy import ExecutorPolicy
+from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.wrap_funcs import to_objective_functor
 
 
@@ -36,25 +36,26 @@ def test_async_cob():
 
     params = {"x": 1.0, "y": 2.0}
 
-    # We create a combined objective function
-    cob = CombinedObjectiveFunction([a, a, b, b], execution_policy=ExecutorPolicy())
+    # Compute a serial reference before attaching the executor scheduler.
+    cob = CombinedObjectiveFunction([a, a, b, b])
 
-    # Here we make sure that the async result matches the syn result and that the executor was used
     ctx_sync = EvaluateContext()
     res_sync = cob(params, ctx_sync)
 
-    ctx_async = EvaluateContext()
-    ctx_async.executor = MockExecutor(max_workers=5)
-    res_async = cob(params, ctx_async)
+    with MockExecutor(max_workers=5) as executor:
+        cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
 
-    assert ctx_async.executor.n_submit == cob.n_terms()
-    assert np.isclose(res_sync, res_async)
+        ctx_async = EvaluateContext()
+        res_async = cob(params, ctx_async)
 
-    # Now we test if we can evaluate the objective function for many parameters at the same time
-    params_list = [{"x": float(i), "y": float(2) - i} for i in range(5)]
+        assert executor.n_submit == cob.n_terms()
+        assert np.isclose(res_sync, res_async)
 
-    contexts = [EvaluateContext(executor=MockExecutor(2)) for _ in params_list]
-    results = asyncio.run(async_eval_many(cob, params_list, contexts))
+        # Evaluate the scheduled objective concurrently from several threads.
+        params_list = [{"x": float(i), "y": float(2) - i} for i in range(5)]
 
-    results_expected = [cob(p) for p in params_list]
-    assert results == results_expected
+        contexts = [EvaluateContext() for _ in params_list]
+        results = asyncio.run(async_eval_many(cob, params_list, contexts))
+
+        results_expected = [cob(p) for p in params_list]
+        assert results == results_expected
