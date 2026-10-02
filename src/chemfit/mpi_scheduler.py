@@ -1,3 +1,16 @@
+"""
+MPI-backed tree scheduling with persistent worker ranks.
+
+Rank 0 coordinates each evaluation batch, owns the authoritative context and
+tree state, and performs nested reductions. Nonzero ranks keep persistent
+worker loops that receive statically assigned leaf tasks, evaluate objectives,
+and return raw outcomes with transferable context state.
+
+Ordinary objective Exceptions are returned to the coordinator for parent-level
+handling. MPI protocol or worker-runtime failures instead abort the batch and
+trigger coordinated cancellation before open evaluation lifecycles are closed.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -40,7 +53,22 @@ _RESULT_TAG = 41002
 
 
 def slice_up_range(n: int, n_ranks: int):
-    """Split ``range(n)`` into contiguous rank-local chunks."""
+    """
+    Split a range into contiguous rank-local chunks.
+
+    Args:
+        n: Number of positions to distribute.
+        n_ranks: Number of chunks to produce.
+
+    Yields:
+        Start and exclusive end indices for each rank, including empty chunks
+        when there are more ranks than positions.
+
+    Raises:
+        ValueError: If n_ranks is not positive.
+
+    """
+
     if n_ranks <= 0:
         msg = "n_ranks must be positive"
         raise ValueError(msg)
@@ -55,12 +83,32 @@ def slice_up_range(n: int, n_ranks: int):
 
 @dataclass(frozen=True)
 class _LeafTask:
+    """
+    Describe one leaf evaluation sent to a worker rank.
+
+    Args:
+        node_id: Identifier of the leaf in the compiled call tree.
+        ctx: Worker-side context for this leaf evaluation.
+
+    """
+
     node_id: NodeId
     ctx: EvaluateContext
 
 
 @dataclass(frozen=True)
 class _EvaluateRequest:
+    """
+    Group the leaf tasks assigned to one worker for one batch run.
+
+    Args:
+        eval_id: Worker-local identifier for the request.
+        run_id: Position of the evaluation run in the coordinator's batch.
+        parameters: Parameter mapping shared by the request's leaf tasks.
+        tasks: Ordered leaf tasks assigned to the receiving rank.
+
+    """
+
     eval_id: int
     run_id: int
     parameters: Mapping[str, Any]
@@ -69,16 +117,28 @@ class _EvaluateRequest:
 
 @dataclass(frozen=True)
 class _CancelPending:
-    pass
+    """Request that a worker cancel queued work and become quiescent."""
 
 
 @dataclass(frozen=True)
 class _Shutdown:
-    pass
+    """Request that a persistent worker loop terminate."""
 
 
 @dataclass(frozen=True)
 class _LeafCompleted:
+    """
+    Represent a completed leaf response.
+
+    Args:
+        eval_id: Worker-local identifier of the originating request.
+        run_id: Position of the evaluation run in the coordinator's batch.
+        node_id: Identifier of the completed leaf node.
+        result: Raw numerical value or Exception produced by the leaf.
+        ctx_result_state: Transferable result state of the worker context.
+
+    """
+
     eval_id: int
     run_id: int
     node_id: NodeId
@@ -88,12 +148,20 @@ class _LeafCompleted:
 
 @dataclass(frozen=True)
 class _EvaluationDone:
-    pass
+    """Acknowledge that a worker has become quiescent after cancellation."""
 
 
 @dataclass
 class _MPIEvaluationRuntime:
-    """MPI-specific state for one top-level evaluation."""
+    """
+    Track MPI request progress for one top-level evaluation.
+
+    Args:
+        eval_id: Identifier to assign to the next worker request.
+        started_workers: Ranks that received work for the evaluation.
+        done_workers: Ranks that acknowledged completion or cancellation.
+
+    """
 
     eval_id: int
     started_workers: set[int]
@@ -101,7 +169,7 @@ class _MPIEvaluationRuntime:
 
 
 class MPIWorkerError(RuntimeError):
-    """Report a worker failure that could not be serialized directly."""
+    """Report a failure in worker machinery rather than objective evaluation."""
 
 
 class MPITreeSchedule(
@@ -120,6 +188,18 @@ class MPITreeSchedule(
     leaves itself. This keeps the coordinator responsive to remote completion
     messages, allowing nested COBs to finish promptly when their own children
     are complete.
+
+    Args:
+        tree: Compiled combined-objective call tree.
+        comm: MPI communicator containing the coordinator and worker ranks.
+        mpi_debug_log: Wrap the communicator with method-level debug logging.
+
+    Attributes:
+        comm: MPI communicator, optionally wrapped for debug logging.
+        rank: Rank of the current process in comm.
+        size: Number of ranks in comm.
+        work_requests: Worker-local queue of evaluation requests.
+
     """
 
     def __init__(
@@ -129,7 +209,16 @@ class MPITreeSchedule(
         *,
         mpi_debug_log: bool = False,
     ) -> None:
-        """Initialize a prepared MPI schedule."""
+        """
+        Initialize the prepared schedule and static leaf assignments.
+
+        Args:
+            tree: Compiled combined-objective call tree.
+            comm: MPI communicator containing all participating ranks.
+            mpi_debug_log: Log communicator method calls and their results.
+
+        """
+
         super().__init__(tree)
 
         self.comm = comm
@@ -154,6 +243,14 @@ class MPITreeSchedule(
         self._leaf_assignments = self._build_leaf_assignments()
 
     def _log_func(self, msg: str) -> None:
+        """
+        Emit one communicator debug message with the local rank.
+
+        Args:
+            msg: Message produced by the communicator logging wrapper.
+
+        """
+
         logger.warning("[Rank %s] %s", self.rank, msg)
 
     def _build_leaf_assignments(self) -> dict[int, tuple[NodeId, ...]]:
@@ -162,7 +259,13 @@ class MPITreeSchedule(
 
         The current baseline uses contiguous chunks. Profile-aware placement can
         replace this policy later without changing the tree runtime.
+
+        Returns:
+            Mapping from each nonzero rank to its assigned leaf identifiers.
+            An empty mapping is returned for a single-rank communicator.
+
         """
+
         if self.size <= 1:
             return {}
 
@@ -179,6 +282,15 @@ class MPITreeSchedule(
         eval_state: EvaluationState,
         runtime: _MPIEvaluationRuntime,
     ) -> None:
+        """
+        Attach MPI runtime bookkeeping to an evaluation's root context.
+
+        Args:
+            eval_state: Evaluation state whose runtime should be recorded.
+            runtime: MPI-specific request progress for the evaluation.
+
+        """
+
         root_ctx = eval_state.contexts[self.tree.root]
         assert root_ctx is not None
         root_ctx.temp.mpi_runtime = runtime
@@ -187,6 +299,17 @@ class MPITreeSchedule(
         self,
         eval_state: EvaluationState,
     ) -> _MPIEvaluationRuntime:
+        """
+        Return MPI runtime bookkeeping from an evaluation's root context.
+
+        Args:
+            eval_state: Evaluation state whose runtime should be retrieved.
+
+        Returns:
+            MPI-specific request progress for the evaluation.
+
+        """
+
         root_ctx = eval_state.contexts[self.tree.root]
         assert root_ctx is not None
         return cast("_MPIEvaluationRuntime", root_ctx.temp.mpi_runtime)
@@ -197,7 +320,24 @@ class MPITreeSchedule(
         parameters: ParametersT,
         ctx: EvaluateContext,
     ) -> tuple[NodeOutcome, dict[str, Any]]:
-        """Evaluate one leaf on a worker and return result plus context state."""
+        """
+        Evaluate one leaf and export its worker-side context state.
+
+        Args:
+            node_id: Identifier of the leaf node to evaluate.
+            parameters: Parameter mapping for the evaluation.
+            ctx: Worker-side evaluation context for the leaf.
+
+        Returns:
+            A pair containing the raw objective value or Exception and the
+            transferable result state of the worker-side context.
+
+        Notes:
+            Ordinary Exceptions are returned for parent-level handling.
+            BaseException subclasses and context-export failures escape to the
+            worker request processor.
+
+        """
 
         objective = self.tree.nodes[node_id].objective
 
@@ -208,7 +348,19 @@ class MPITreeSchedule(
             return e, ctx.to_result_state()
 
     def process_requests(self) -> None:
-        """Process one evaluation request on a worker."""
+        """
+        Process queued evaluation requests in the worker thread.
+
+        The loop evaluates tasks sequentially on this rank and sends each raw
+        outcome to rank 0. Cancellation prevents further queued tasks from
+        starting, while shutdown terminates the thread.
+
+        Notes:
+            Failures in worker machinery are sent to rank 0 as MPIWorkerError
+            and put this worker into cancellation mode. Ordinary objective
+            Exceptions are returned by evaluate_leaf_worker instead.
+
+        """
 
         while True:
             if self.event_shutdown_worker.is_set():
@@ -265,7 +417,19 @@ class MPITreeSchedule(
                 self.work_requests.task_done()
 
     def worker_loop(self) -> None:
-        """Run the persistent worker loop on a nonzero rank."""
+        """
+        Receive coordinator commands on a nonzero rank until shutdown.
+
+        Evaluation requests are placed on a local queue consumed by a worker
+        thread. The main thread remains available for cancellation and shutdown
+        commands.
+
+        Raises:
+            RuntimeError: If called on rank 0 or if an unknown command is
+                received.
+
+        """
+
         if self.rank == 0:
             msg = "worker_loop() cannot be used on rank 0"
             raise RuntimeError(msg)
@@ -319,7 +483,28 @@ class MPITreeSchedule(
     def evaluate_leaves(
         self, runs: Sequence[EvaluationRun[ParametersT]]
     ) -> Iterator[tuple[int, NodeId, float | Exception]]:
-        """Dispatch leaf work and yield parent-facing completion events."""
+        """
+        Dispatch pending leaves and yield remote completions on rank 0.
+
+        Args:
+            runs: Successfully prepared evaluation runs.
+
+        Yields:
+            Tuples containing the position in runs, completed leaf identifier,
+            and raw node outcome. Remote completions are yielded in arrival
+            order.
+
+        Raises:
+            RuntimeError: If called on a nonzero rank.
+            MPIWorkerError: If worker machinery fails while processing a
+                request.
+
+        Notes:
+            With a single-rank communicator, leaves are evaluated through
+            SerialTreeSchedule. With multiple ranks, rank 0 coordinates only
+            and does not execute leaves.
+
+        """
 
         if self.rank != 0:
             msg = "evaluate_leaves() can only be used on rank 0"
@@ -398,12 +583,20 @@ class MPITreeSchedule(
         runs: Sequence[EvaluationRun],
     ) -> None:
         """
-        Quiesce all MPI leaf work belonging to this evaluation.
+        Quiesce MPI leaf work for a batch before aborting its lifecycles.
 
-        Running leaves are allowed to finish. Workers observe cancellation
-        between leaves and do not start further pending leaves. Late leaf
-        context states are restored on rank 0 but their numerical completions
-        are not propagated after catastrophic abort has begun.
+        Args:
+            runs: Evaluation runs whose remote work must be stopped.
+
+        Raises:
+            RuntimeError: If called on a nonzero rank.
+
+        Notes:
+            Running leaves are allowed to finish. Workers observe cancellation
+            between leaves and do not start further queued leaves. Late context
+            states are restored on rank 0, but their numerical outcomes are
+            not propagated after batch abort has begun.
+
         """
 
         if self.rank != 0:
@@ -453,7 +646,13 @@ class MPITreeSchedule(
             ctx.apply_result_state(ctx_result_state)
 
     def release_workers(self) -> None:
-        """Tell persistent worker loops to exit."""
+        """
+        Tell every persistent worker loop to exit.
+
+        The operation is idempotent. It is a no-op on nonzero ranks, with a
+        single-rank communicator, or after workers have already been released.
+
+        """
 
         if self.rank != 0 or self.size <= 1 or self._workers_released:
             return
@@ -469,12 +668,27 @@ class MPITreeSchedule(
         self._workers_released = True
 
     def close(self) -> None:
+        """Release persistent workers and mark the prepared schedule closed."""
+
         self.release_workers()
         super().close()
 
 
 class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
-    """Bla."""
+    """
+    Prepare tree schedules for a persistent MPI coordinator-worker backend.
+
+    Every participating rank must prepare the same objective tree. Rank 0 then
+    evaluates requests through the prepared schedule, while nonzero ranks enter
+    MPITreeSchedule.worker_loop and remain there until rank 0 closes the
+    schedule.
+
+    Args:
+        comm: MPI communicator containing rank 0 and all worker ranks. Defaults
+            to MPI.COMM_WORLD.
+        mpi_debug_log: Enable method-level communicator logging.
+
+    """
 
     def __init__(
         self,
@@ -482,7 +696,16 @@ class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
         *,
         mpi_debug_log: bool = False,
     ) -> None:
-        """Initialize the mpi tree scheduler."""
+        """
+        Initialize the reusable MPI scheduler configuration.
+
+        Args:
+            comm: MPI communicator containing all participating ranks. None
+                selects MPI.COMM_WORLD.
+            mpi_debug_log: Enable method-level communicator logging.
+
+        """
+
         super().__init__()
         self.comm = MPI.COMM_WORLD if comm is None else comm
         self.mpi_debug_log = mpi_debug_log
@@ -494,6 +717,25 @@ class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> MPITreeSchedule[ParametersT]:
+        """
+        Compile a combined objective into an MPI tree schedule.
+
+        Args:
+            objective: Root combined objective whose complete nested call tree
+                should be distributed.
+            profile: Optional cost profile. The current contiguous placement
+                policy ignores measured costs.
+
+        Returns:
+            Prepared MPI schedule using this scheduler's communicator.
+
+        Notes:
+            All ranks must call prepare with structurally equivalent objective
+            trees before rank 0 begins evaluation and worker ranks enter their
+            persistent loops.
+
+        """
+
         return MPITreeSchedule(
             tree=cob_to_call_tree(objective),
             comm=self.comm,
