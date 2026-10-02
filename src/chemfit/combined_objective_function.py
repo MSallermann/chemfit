@@ -430,6 +430,7 @@ class CombinedObjectiveFunction(
         with ctx.child_contexts(
             n_children=self.n_terms(),
             configurator=self.child_context_configurator,
+            recursive=False,
         ) as child_ctxs:
             terms = [
                 evaluate_weighted_term(
