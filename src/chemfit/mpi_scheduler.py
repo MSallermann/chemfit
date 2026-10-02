@@ -2,15 +2,18 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Mapping
+import threading
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from itertools import product
+from queue import Empty, Queue
 from threading import Lock
 from typing import Any, Generic, TypeVar, cast
 
 from mpi4py import MPI
 
 from chemfit.abstract_objective_function import EvaluateContext
-from chemfit.callgraph import CallTree, CombineNode, LeafNode, NodeId, cob_to_call_tree
+from chemfit.callgraph import CallTree, NodeId, cob_to_call_tree
 from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
     evaluate_weighted_term,
@@ -18,7 +21,13 @@ from chemfit.combined_objective_function import (
 from chemfit.debug_utils import log_all_methods
 from chemfit.executor_utils import AttachContextAsReturnValue
 from chemfit.scheduling import Scheduler
-from chemfit.tree_schedule import EvaluationState, TermResult, TreeScheduleBase
+from chemfit.tree_schedule import (
+    EvaluationRun,
+    EvaluationState,
+    NodeOutcome,
+    SerialTreeSchedule,
+    TreeScheduleBase,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,13 +62,14 @@ class _LeafTask:
 @dataclass(frozen=True)
 class _EvaluateRequest:
     eval_id: int
+    run_id: int
     parameters: Mapping[str, Any]
     tasks: tuple[_LeafTask, ...]
 
 
 @dataclass(frozen=True)
-class _CancelEvaluation:
-    eval_id: int
+class _CancelPending:
+    pass
 
 
 @dataclass(frozen=True)
@@ -70,22 +80,15 @@ class _Shutdown:
 @dataclass(frozen=True)
 class _LeafCompleted:
     eval_id: int
+    run_id: int
     node_id: NodeId
-    result: TermResult
-    ctx_result_state: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class _LeafFailed:
-    eval_id: int
-    node_id: NodeId
-    exception: BaseException
+    result: NodeOutcome
     ctx_result_state: dict[str, Any]
 
 
 @dataclass(frozen=True)
 class _EvaluationDone:
-    eval_id: int
+    pass
 
 
 @dataclass
@@ -132,6 +135,10 @@ class MPITreeSchedule(
         self.comm = comm
         self.rank = self.comm.Get_rank()
         self.size = self.comm.Get_size()
+        self.work_requests: Queue[_EvaluateRequest] = Queue()
+        self.event_cancel_work = threading.Event()
+        self.event_shutdown_worker = threading.Event()
+
         self._next_eval_id = 0
         self._workers_released = False
         self._evaluation_lock = Lock()
@@ -167,12 +174,7 @@ class MPITreeSchedule(
             for rank, (start, end) in zip(worker_ranks, slices, strict=True)
         }
 
-    def _new_eval_id(self) -> int:
-        eval_id = self._next_eval_id
-        self._next_eval_id += 1
-        return eval_id
-
-    def _set_mpi_runtime(
+    def set_mpi_runtime(
         self,
         eval_state: EvaluationState,
         runtime: _MPIEvaluationRuntime,
@@ -181,7 +183,7 @@ class MPITreeSchedule(
         assert root_ctx is not None
         root_ctx.temp.mpi_runtime = runtime
 
-    def _get_mpi_runtime(
+    def get_mpi_runtime(
         self,
         eval_state: EvaluationState,
     ) -> _MPIEvaluationRuntime:
@@ -189,150 +191,78 @@ class MPITreeSchedule(
         assert root_ctx is not None
         return cast("_MPIEvaluationRuntime", root_ctx.temp.mpi_runtime)
 
-    def _apply_result_state(
+    def evaluate_leaf_worker(
         self,
         node_id: NodeId,
-        ctx_result_state: dict[str, Any],
-        eval_state: EvaluationState,
-    ) -> None:
-        ctx = eval_state.contexts[node_id]
-        assert ctx is not None
-        ctx.apply_result_state(ctx_result_state)
-
-    def _make_request(
-        self,
-        *,
-        rank: int,
-        eval_id: int,
         parameters: ParametersT,
-        eval_state: EvaluationState,
-    ) -> _EvaluateRequest:
-        tasks: list[_LeafTask] = []
-
-        for node_id in self._leaf_assignments[rank]:
-            ctx = eval_state.contexts[node_id]
-            assert ctx is not None
-            tasks.append(_LeafTask(node_id=node_id, ctx=ctx))
-
-        return _EvaluateRequest(
-            eval_id=eval_id,
-            parameters=parameters,
-            tasks=tuple(tasks),
-        )
-
-    def _evaluate_worker_leaf(
-        self,
-        task: _LeafTask,
-        parameters: ParametersT,
-    ) -> _LeafCompleted | _LeafFailed:
+        ctx: EvaluateContext,
+    ) -> tuple[NodeOutcome, dict[str, Any]]:
         """Evaluate one leaf on a worker and return result plus context state."""
-        node = self.tree.nodes[task.node_id]
-        assert isinstance(node, LeafNode)
-        assert node.parent_id is not None
-        assert node.child_idx is not None
 
-        parent = self.tree.nodes[node.parent_id]
-        assert isinstance(parent, CombineNode)
+        objective = self.tree.nodes[node_id].objective
 
         try:
-            result, ctx_result_state = evaluate_weighted_term_with_ctx(
-                node.objective,
-                parent.objective.weights[node.child_idx],
-                parent.objective.exception_handler,
-                parameters,
-                node.child_idx,
-                task.ctx,
-            )
-        except BaseException as exc:
-            return _LeafFailed(
-                eval_id=-1,
-                node_id=task.node_id,
-                exception=exc,
-                ctx_result_state=task.ctx.to_result_state(),
-            )
+            result = objective(parameters, ctx)
+            return result, ctx.to_result_state()
+        except Exception as e:
+            return e, ctx.to_result_state()
 
-        return _LeafCompleted(
-            eval_id=-1,
-            node_id=task.node_id,
-            result=result,
-            ctx_result_state=ctx_result_state,
-        )
+    def process_requests(self) -> None:
+        """Process one evaluation request on a worker."""
 
-    def _poll_control(self, eval_id: int) -> tuple[bool, bool]:
-        """
-        Poll for control messages between leaf evaluations.
+        while True:
+            if self.event_shutdown_worker.is_set():
+                return
 
-        Returns ``(cancel_current_evaluation, shutdown_worker)``.
-        """
-        cancel = False
-        shutdown = False
+            if self.event_cancel_work.is_set():
+                continue
 
-        while self.comm.iprobe(source=0, tag=_COMMAND_TAG):
-            msg = self.comm.recv(source=0, tag=_COMMAND_TAG)
+            try:
+                request = self.work_requests.get_nowait()
+            except Empty:
+                continue
 
-            if isinstance(msg, _CancelEvaluation):
-                if msg.eval_id == eval_id:
-                    cancel = True
-            elif isinstance(msg, _Shutdown):
-                cancel = True
-                shutdown = True
-            elif isinstance(msg, _EvaluateRequest):
-                msg = "MPI worker received a new evaluation request while another evaluation was still active."
-                raise RuntimeError(msg)
-            else:
-                msg = f"Unknown MPI scheduler command: {msg!r}"
-                raise RuntimeError(msg)
+            try:
+                parameters = cast("ParametersT", request.parameters)
 
-        return cancel, shutdown
+                for task in request.tasks:
+                    if self.event_cancel_work.is_set():
+                        break
 
-    def _process_request(self, request: _EvaluateRequest) -> bool:
-        """
-        Process one evaluation request on a worker.
-
-        Returns True if the worker should exit after the request.
-        """
-        shutdown = False
-
-        try:
-            parameters = cast("ParametersT", request.parameters)
-
-            for task in request.tasks:
-                cancel, shutdown_now = self._poll_control(request.eval_id)
-                shutdown = shutdown or shutdown_now
-
-                if cancel:
-                    break
-
-                outcome = self._evaluate_worker_leaf(task, parameters)
-
-                if isinstance(outcome, _LeafCompleted):
-                    msg: _LeafCompleted | _LeafFailed = _LeafCompleted(
-                        eval_id=request.eval_id,
-                        node_id=outcome.node_id,
-                        result=outcome.result,
-                        ctx_result_state=outcome.ctx_result_state,
-                    )
-                else:
-                    msg = _LeafFailed(
-                        eval_id=request.eval_id,
-                        node_id=outcome.node_id,
-                        exception=outcome.exception,
-                        ctx_result_state=outcome.ctx_result_state,
+                    outcome, ctx_result_state = self.evaluate_leaf_worker(
+                        task.node_id,
+                        parameters=parameters,
+                        ctx=task.ctx,
                     )
 
-                self.comm.send(msg, dest=0, tag=_RESULT_TAG)
+                    self.comm.send(
+                        (
+                            request.run_id,
+                            task.node_id,
+                            outcome,
+                            ctx_result_state,
+                        ),
+                        dest=0,
+                        tag=_RESULT_TAG,
+                    )
 
-                if isinstance(msg, _LeafFailed):
-                    break
+            except BaseException as e:
+                # This is not an objective failure. Something went wrong in the
+                # MPI worker machinery itself, so the whole evaluation must abort.
+                # Stop this worker from starting any further work from the current batch.
+                self.event_cancel_work.set()
 
-        finally:
-            self.comm.send(
-                _EvaluationDone(request.eval_id),
-                dest=0,
-                tag=_RESULT_TAG,
-            )
+                self.comm.send(
+                    MPIWorkerError(
+                        f"Worker rank {self.rank} failed while processing "
+                        f"run {request.run_id}: {e!r}"
+                    ),
+                    dest=0,
+                    tag=_RESULT_TAG,
+                )
 
-        return shutdown
+            finally:
+                self.work_requests.task_done()
 
     def worker_loop(self) -> None:
         """Run the persistent worker loop on a nonzero rank."""
@@ -340,100 +270,132 @@ class MPITreeSchedule(
             msg = "worker_loop() cannot be used on rank 0"
             raise RuntimeError(msg)
 
+        worker_thread = threading.Thread(target=self.process_requests)
+        worker_thread.start()
+
         while True:
             msg = self.comm.recv(source=0, tag=_COMMAND_TAG)
 
             if isinstance(msg, _Shutdown):
+                self.event_shutdown_worker.set()
+                worker_thread.join()
                 return
 
-            if isinstance(msg, _CancelEvaluation):
-                # Stale cancellation received while idle.
+            if isinstance(msg, _CancelPending):
+                # cancel all pending work by draining the queue
+                self.event_cancel_work.set()
+
+                # Remove work that hasn't started.
+                while True:
+                    try:
+                        self.work_requests.get_nowait()
+                    except Empty:  # noqa: PERF203
+                        break
+                    else:
+                        self.work_requests.task_done()
+
+                # Wait for the request currently being processed, if any.
+                self.work_requests.join()
+
+                # Tell rank 0 this worker is now quiescent.
+                self.comm.send(
+                    _EvaluationDone(),
+                    dest=0,
+                    tag=_RESULT_TAG,
+                )
+
+                self.event_cancel_work.clear()
                 continue
 
             if not isinstance(msg, _EvaluateRequest):
+                self.event_shutdown_worker.set()
+                worker_thread.join()
                 err_msg = f"Unknown MPI scheduler command: {msg!r}"
                 raise RuntimeError(err_msg)
 
-            if self._process_request(msg):
-                return
+            # append work requests
+            self.work_requests.put(msg)
 
     def evaluate_leaves(
-        self,
-        parameters: ParametersT,
-        eval_state: EvaluationState,
-    ):
+        self, runs: Sequence[EvaluationRun[ParametersT]]
+    ) -> Iterator[tuple[int, NodeId, float | Exception]]:
         """Dispatch leaf work and yield parent-facing completion events."""
+
         if self.rank != 0:
             msg = "evaluate_leaves() can only be used on rank 0"
             raise RuntimeError(msg)
 
+        # Serial base-case
         if self.size == 1:
-            for node_id in self.leaf_ids:
-                yield node_id, self.evaluate_leaf(node_id, parameters, eval_state)
+            yield from SerialTreeSchedule(self.tree).evaluate_leaves(runs)
             return
 
-        eval_id = self._new_eval_id()
-        runtime = _MPIEvaluationRuntime(
-            eval_id=eval_id,
-            started_workers=set(),
-            done_workers=set(),
-        )
-        self._set_mpi_runtime(eval_state, runtime)
+        for run_idx, run in enumerate(runs):
+            eval_state = run.state
+            parameters = run.parameters
 
-        for rank in range(1, self.size):
-            request = self._make_request(
-                rank=rank,
-                eval_id=eval_id,
-                parameters=parameters,
-                eval_state=eval_state,
+            runtime = _MPIEvaluationRuntime(
+                eval_id=0,
+                started_workers=set(),
+                done_workers=set(),
             )
-            self.comm.send(request, dest=rank, tag=_COMMAND_TAG)
-            runtime.started_workers.add(rank)
+            self.set_mpi_runtime(eval_state, runtime)
+
+            for rank in range(1, self.size):
+                tasks: list[_LeafTask] = []
+
+                # build the list of tasks for each rank by checking
+                # that leaf ids are (i) pending and (ii) in the leaf assignment of that rank
+                for node_id in self.leaf_ids:
+                    if (
+                        eval_state.is_pending(node_id)
+                        and node_id in self._leaf_assignments[rank]
+                    ):
+                        ctx = eval_state.contexts[node_id]
+                        assert ctx is not None
+                        tasks.append(_LeafTask(node_id=node_id, ctx=ctx))
+
+                # once the tasks have been built, the request can be sent
+                request = _EvaluateRequest(
+                    run_id=run_idx,
+                    parameters=parameters,
+                    eval_id=runtime.eval_id,
+                    tasks=tuple(tasks),
+                )
+                runtime.eval_id += 1
+
+                # then we send the request to the rank
+                self.comm.send(request, dest=rank, tag=_COMMAND_TAG)
+                runtime.started_workers.add(rank)
 
         status = MPI.Status()
 
-        while runtime.done_workers != runtime.started_workers:
+        # as long as there are pending leaf nodes we listen for results
+        while any(
+            run.state.is_pending(node_id)
+            for run, node_id in product(runs, self.leaf_ids)
+        ):
             msg = self.comm.recv(
                 source=MPI.ANY_SOURCE,
                 tag=_RESULT_TAG,
                 status=status,
             )
-            source = status.Get_source()
 
-            if getattr(msg, "eval_id", None) != eval_id:
-                msg = (
-                    f"Received MPI result for evaluation "
-                    f"{getattr(msg, 'eval_id', None)}, expected {eval_id}."
-                )
-                raise RuntimeError(msg)
+            if isinstance(msg, MPIWorkerError):
+                raise msg
 
-            if isinstance(msg, _EvaluationDone):
-                runtime.done_workers.add(source)
-                continue
+            run_id, node_id, outcome, ctx_result_state = msg
+            assert isinstance(outcome, NodeOutcome)
 
-            if isinstance(msg, _LeafCompleted):
-                self._apply_result_state(
-                    msg.node_id,
-                    msg.ctx_result_state,
-                    eval_state,
-                )
-                yield msg.node_id, msg.result
-                continue
+            ctx = runs[run_id].state.contexts[node_id]
+            assert ctx is not None
+            ctx.apply_result_state(ctx_result_state)
 
-            if isinstance(msg, _LeafFailed):
-                self._apply_result_state(
-                    msg.node_id,
-                    msg.ctx_result_state,
-                    eval_state,
-                )
-                raise msg.exception
-
-            msg = f"Unknown MPI scheduler result: {msg!r}"
-            raise RuntimeError(msg)
+            yield run_id, node_id, outcome
 
     def cancel_pending_and_wait(
         self,
-        eval_state: EvaluationState,
+        runs: Sequence[EvaluationRun],
     ) -> None:
         """
         Quiesce all MPI leaf work belonging to this evaluation.
@@ -443,6 +405,7 @@ class MPITreeSchedule(
         context states are restored on rank 0 but their numerical completions
         are not propagated after catastrophic abort has begun.
         """
+
         if self.rank != 0:
             msg = "cancel_pending_and_wait() can only be used on rank 0"
             raise RuntimeError(msg)
@@ -450,56 +413,48 @@ class MPITreeSchedule(
         if self.size == 1:
             return
 
-        runtime = self._get_mpi_runtime(eval_state)
-        outstanding = runtime.started_workers - runtime.done_workers
-
-        cancel_requests = [
-            self.comm.isend(
-                _CancelEvaluation(runtime.eval_id),
-                dest=rank,
-                tag=_COMMAND_TAG,
-            )
-            for rank in outstanding
+        # send _CancelPending requests to all ranks
+        requests = [
+            self.comm.isend(_CancelPending(), dest=rank, tag=_COMMAND_TAG)
+            for rank in range(1, self.size)
         ]
 
+        if requests:
+            MPI.Request.Waitall(requests)
+
+        done_workers: set[int] = set()
         status = MPI.Status()
 
-        while runtime.done_workers != runtime.started_workers:
+        while len(done_workers) < self.size - 1:
             msg = self.comm.recv(
                 source=MPI.ANY_SOURCE,
                 tag=_RESULT_TAG,
                 status=status,
             )
+
             source = status.Get_source()
 
-            if getattr(msg, "eval_id", None) != runtime.eval_id:
-                msg = (
-                    "Received MPI result for evaluation "
-                    f"{getattr(msg, 'eval_id', None)}, "
-                    f"expected {runtime.eval_id} while aborting."
-                )
-                raise RuntimeError(msg)
-
             if isinstance(msg, _EvaluationDone):
-                runtime.done_workers.add(source)
+                done_workers.add(source)
                 continue
 
-            if isinstance(msg, (_LeafCompleted, _LeafFailed)):
-                self._apply_result_state(
-                    msg.node_id,
-                    msg.ctx_result_state,
-                    eval_state,
-                )
+            if isinstance(msg, MPIWorkerError):
+                # We are already aborting because of another failure.
+                # Keep quiescing the workers.
                 continue
 
-            msg = f"Unknown MPI scheduler result: {msg!r}"
-            raise RuntimeError(msg)
+            # A leaf that was already running when cancellation occurred
+            # is allowed to finish. Restore its context state, but do not
+            # propagate its numerical result after abort has begun.
+            run_id, node_id, outcome, ctx_result_state = msg
 
-        if cancel_requests:
-            MPI.Request.Waitall(cancel_requests)
+            ctx = runs[run_id].state.contexts[node_id]
+            assert ctx is not None
+            ctx.apply_result_state(ctx_result_state)
 
     def release_workers(self) -> None:
         """Tell persistent worker loops to exit."""
+
         if self.rank != 0 or self.size <= 1 or self._workers_released:
             return
 
@@ -519,15 +474,7 @@ class MPITreeSchedule(
 
 
 class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
-    """
-    Scheduler creating an MPI-backed tree schedule.
-
-    All ranks must prepare the same objective tree. Then rank 0 evaluates the
-    objective normally and nonzero ranks enter ``prepared.worker_loop()``.
-
-    This baseline intentionally supports one active evaluation at a time per
-    communicator.
-    """
+    """Bla."""
 
     def __init__(
         self,
