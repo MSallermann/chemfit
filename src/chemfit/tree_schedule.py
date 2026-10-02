@@ -1,3 +1,17 @@
+"""
+Tree-based prepared schedules for nested combined objectives.
+
+The module compiles a combined-objective hierarchy into a CallTree and tracks
+each evaluation in a separate EvaluationState. A top-down pass creates
+contexts and begins objective lifecycles, backend-specific code evaluates the
+reachable leaves, and completion events propagate bottom-up until the root
+produces an EvaluationResult.
+
+TreeScheduleBase implements the backend-independent lifecycle and propagation
+logic. Concrete schedules only need to execute leaves and quiesce outstanding
+work when a batch aborts.
+"""
+
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Generic, TypeVar
@@ -30,13 +44,16 @@ class _Pending:
     Sentinel for pending evaluations.
 
     Note:
-    We cannot use None since that has a special meaning in ChemFit already.
+        None cannot represent this state because it denotes an omitted term in
+        ChemFit.
 
     """
 
     __slots__ = ()
 
     def __repr__(self) -> str:
+        """Return the sentinel's debug representation."""
+
         return "<PENDING>"
 
 
@@ -51,13 +68,16 @@ class _Inactive:
     setup phase.
 
     Note:
-    We cannot use None since that has a special meaning in ChemFit already.
+        None cannot represent this state because it denotes an omitted term in
+        ChemFit.
 
     """
 
     __slots__ = ()
 
     def __repr__(self) -> str:
+        """Return the sentinel's debug representation."""
+
         return "<INACTIVE>"
 
 
@@ -84,13 +104,33 @@ SetupOutcome = PropagationResult
 
 @dataclass
 class EvaluationState:
+    """
+    Mutable tree state for one objective evaluation.
+
+    Args:
+        tree: Compiled objective tree evaluated by the schedule.
+        root_ctx: Context belonging to the root combined objective.
+
+    Attributes:
+        contexts: Context associated with each tree node. Contexts for
+            unreachable nodes remain None.
+        node_slots: Current execution state or completed raw outcome for every
+            node.
+        remaining_children: Number of incomplete children for every combine
+            node.
+        open_nodes: Combine nodes whose evaluation lifecycle has begun but has
+            not ended.
+
+    """
+
     contexts: list[EvaluateContext | None]
     node_slots: list[NodeSlot]
     remaining_children: list[int]
     open_nodes: set[NodeId]
 
     def __init__(self, tree: CallTree, root_ctx: EvaluateContext):
-        """Initialize the eval state."""
+        """Initialize all nodes as inactive and register the root context."""
+
         self.contexts = [None] * len(tree.nodes)
         self.contexts[tree.root] = root_ctx
         self.node_slots = [INACTIVE] * len(
@@ -103,7 +143,17 @@ class EvaluationState:
         self.open_nodes = set()
 
     def activate(self, node_id: NodeId) -> None:
-        """Mark a node as participating in this evaluation."""
+        """
+        Mark a node as participating in this evaluation.
+
+        Args:
+            node_id: Identifier of the node to mark pending.
+
+        Raises:
+            RuntimeError: If the node is already active or complete.
+
+        """
+
         if self.node_slots[node_id] is not INACTIVE:
             msg = f"Node {node_id} is already active."
             raise RuntimeError(msg)
@@ -111,7 +161,18 @@ class EvaluationState:
         self.node_slots[node_id] = PENDING
 
     def complete(self, node_id: NodeId, outcome: NodeOutcome) -> None:
-        """Store the raw outcome of a pending node."""
+        """
+        Store the raw outcome of a pending node.
+
+        Args:
+            node_id: Identifier of the node that completed.
+            outcome: Numerical value or exception produced by the node.
+
+        Raises:
+            RuntimeError: If the node is not pending.
+
+        """
+
         if self.node_slots[node_id] is not PENDING:
             msg = f"Node {node_id} is not pending."
             raise RuntimeError(msg)
@@ -119,7 +180,20 @@ class EvaluationState:
         self.node_slots[node_id] = outcome
 
     def outcome(self, node_id: NodeId) -> NodeOutcome:
-        """Return the raw outcome of a completed node."""
+        """
+        Return the raw outcome of a completed node.
+
+        Args:
+            node_id: Identifier of the completed node.
+
+        Returns:
+            Numerical value or exception produced by the node.
+
+        Raises:
+            RuntimeError: If the node is inactive or still pending.
+
+        """
+
         slot = self.node_slots[node_id]
 
         if isinstance(slot, (_Pending, _Inactive)):
@@ -129,7 +203,21 @@ class EvaluationState:
         return slot
 
     def child_completed(self, node_id: NodeId) -> bool:
-        """Record one completed child and report whether all children are complete."""
+        """
+        Record one child completion for a combine node.
+
+        Args:
+            node_id: Identifier of the parent combine node.
+
+        Returns:
+            True when every child of the node has completed.
+
+        Raises:
+            RuntimeError: If more completions are recorded than the node has
+                children.
+
+        """
+
         self.remaining_children[node_id] -= 1
 
         if self.remaining_children[node_id] < 0:
@@ -139,12 +227,32 @@ class EvaluationState:
         return self.remaining_children[node_id] == 0
 
     def is_pending(self, node_id: NodeId) -> bool:
-        """Return whether this node still needs to produce an outcome."""
+        """
+        Return whether a node still needs to produce an outcome.
+
+        Args:
+            node_id: Identifier of the node to inspect.
+
+        Returns:
+            True if the node is active and incomplete.
+
+        """
+
         return self.node_slots[node_id] is PENDING
 
 
 @dataclass
 class EvaluationRun(Generic[ParametersT_co]):
+    """
+    Associate one batch request with its parameters and tree state.
+
+    Args:
+        index: Position of the request in the original input batch.
+        parameters: Parameter mapping for the evaluation.
+        state: Mutable state of this evaluation's tree traversal.
+
+    """
+
     index: int
     parameters: ParametersT_co
     state: EvaluationState
@@ -154,8 +262,22 @@ class TreeScheduleBase(
     PreparedScheduleBase[ParametersT_contra],
     Generic[ParametersT_contra],
 ):
+    """
+    Backend-independent schedule for evaluating a compiled objective tree.
+
+    The base class owns context construction, objective lifecycles, result
+    propagation, and batch cleanup. Subclasses provide the mechanism for
+    evaluating leaf nodes and cancelling outstanding backend work.
+
+    Args:
+        tree: Compiled call tree rooted at the combined objective represented
+            by this schedule.
+
+    """
+
     def __init__(self, tree: CallTree) -> None:
         """Initialize the tree schedule from a call tree."""
+
         super().__init__()
         self.tree = tree
         self.leaf_ids = tuple(
@@ -168,7 +290,28 @@ class TreeScheduleBase(
         root_ctx: EvaluateContext,
         eval_state: EvaluationState,
     ) -> SetupOutcome:
-        """Construct the context tree, begin nested COB lifecycles and activate reachable nodes."""
+        """
+        Prepare one evaluation by traversing its combine nodes top-down.
+
+        The traversal creates child contexts, begins each reachable combined
+        objective lifecycle, and marks reachable leaves as pending.
+
+        Args:
+            parameters: Parameter mapping for the evaluation.
+            root_ctx: Context belonging to the root combined objective.
+            eval_state: Mutable tree state initialized for this evaluation.
+
+        Returns:
+            PENDING when leaf evaluation is required, or the root outcome when
+            a setup failure completes the run early.
+
+        Notes:
+            Ordinary Exceptions raised during setup are treated as node
+            outcomes and propagated through parent exception handlers.
+            BaseException subclasses escape so evaluate_many can abort every
+            lifecycle opened for the batch.
+
+        """
 
         def propagate_setup_failure(
             node_id: NodeId,
@@ -270,11 +413,17 @@ class TreeScheduleBase(
         Abort an incomplete evaluation.
 
         All combine nodes whose evaluation lifecycle has begun but has not yet
-        finished are closed bottom-up. This is cleanup for evaluations that cannot
-        complete through normal outcome propagation.
+        finished are closed bottom-up. Cleanup failures are attached as notes
+        to the original exception so they do not replace the primary failure.
 
-        This method assumes that no leaf evaluation belonging to this run is still
-        executing.
+        Args:
+            exception: Failure that caused the evaluation to abort.
+            eval_state: State of the incomplete evaluation.
+
+        Notes:
+            No leaf evaluation belonging to this run may still be executing
+            when this method is called.
+
         """
 
         def visit(node_id: NodeId) -> None:
@@ -317,10 +466,24 @@ class TreeScheduleBase(
         eval_state: EvaluationState,
     ) -> float:
         """
-        Finish a combine node, after all its terms have been computed.
+        Finish a combine node after all of its children complete.
 
-        This includes the collection of the child meta-data,
-        the reduction of the individual terms and the end of the evaluation lifecycle.
+        Child outcomes are converted into weighted terms, exceptions are
+        offered to the combined objective's handler, metadata is collected,
+        and the terms are reduced. The node's evaluation lifecycle is ended
+        whether reduction succeeds or fails.
+
+        Args:
+            node_id: Identifier of the combine node to finish.
+            eval_state: Evaluation state containing all child outcomes.
+
+        Returns:
+            Reduced numerical value produced by the combine node.
+
+        Raises:
+            BaseException: If term handling, reduction, metadata collection,
+                or lifecycle finalization fails.
+
         """
 
         # NOTE: this overall function needs to mimic the semantics of the later part of
@@ -415,9 +578,19 @@ class TreeScheduleBase(
         """
         Evaluate one leaf and return its raw outcome.
 
-        A successful leaf returns its objective value. If the leaf evaluation raises
-        an Exception, the exception itself is returned so that the parent combine
-        node can apply its own exception-handling semantics.
+        Args:
+            node_id: Identifier of the pending leaf node.
+            parameters: Parameter mapping for the evaluation.
+            eval_state: Evaluation state containing the leaf context.
+
+        Returns:
+            The objective value on success, or the raised Exception as a raw
+            outcome so the parent combine node can apply its exception handler.
+
+        Notes:
+            This method deliberately applies neither the parent weight nor the
+            parent exception handler.
+
         """
 
         # We should only invoke this on pending leaves
@@ -457,8 +630,19 @@ class TreeScheduleBase(
         When all children of a combine node have completed, that combine node is
         finished and its own raw outcome is propagated further upwards.
 
-        Returns the root outcome when this completion finishes the entire run.
-        Otherwise returns PENDING.
+        Args:
+            node_id: Identifier of the node that completed.
+            outcome: Raw numerical value or exception produced by the node.
+            eval_state: Mutable state of the corresponding evaluation.
+
+        Returns:
+            The root outcome when this completion finishes the run, otherwise
+            PENDING while another child remains incomplete.
+
+        Raises:
+            RuntimeError: If completion violates the evaluation state's node
+                or child-count invariants.
+
         """
 
         outcome_to_propagate: NodeOutcome = outcome
@@ -521,9 +705,19 @@ class TreeScheduleBase(
         runs: Sequence[EvaluationRun[ParametersT_contra]],
     ) -> Iterator[tuple[int, NodeId, NodeOutcome]]:
         """
-        Evaluate leaves and yield completion events.
+        Evaluate pending leaves for a batch of prepared runs.
 
-        The tuple is [run_id, node_id, result].
+        Args:
+            runs: Successfully prepared evaluation runs.
+
+        Yields:
+            Tuples containing the position in runs, completed node identifier,
+            and raw node outcome. Events may be yielded in completion order.
+
+        Notes:
+            Subclasses must implement this method using their execution
+            backend.
+
         """
         raise NotImplementedError
 
@@ -531,13 +725,42 @@ class TreeScheduleBase(
         self,
         runs: Sequence[EvaluationRun[ParametersT_contra]],
     ) -> None:
-        """Cancel pending leaves and wait for other leaves to complete."""
+        """
+        Cancel pending leaf work and wait until the backend is quiescent.
+
+        Args:
+            runs: Evaluation runs whose outstanding work must be stopped.
+
+        Notes:
+            This method is called before open objective lifecycles are aborted,
+            so it must not return while a leaf can still mutate result state.
+
+        """
+
         raise NotImplementedError
 
     def evaluate_many(
         self,
         requests: Sequence[EvaluationRequest[ParametersT_contra]],
     ) -> Iterator[EvaluationResult]:
+        """
+        Evaluate a batch through top-down setup and bottom-up propagation.
+
+        Args:
+            requests: Evaluation requests to prepare and execute.
+
+        Yields:
+            One indexed result for every request. Setup failures are yielded
+            before leaf completions; successful runs may otherwise complete in
+            backend-defined order.
+
+        Raises:
+            BaseException: If setup or backend execution cannot continue for
+                the batch. Outstanding leaf work is quiesced and open
+                lifecycles are aborted before the exception is re-raised.
+
+        """
+
         # 1. Perform the top-down pass for every request.
         #
         # Ordinary setup failures belong only to the corresponding evaluation.
@@ -620,10 +843,30 @@ class TreeScheduleBase(
 
 
 class SerialTreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
+    """
+    Tree schedule that evaluates every active leaf synchronously.
+
+    Args:
+        tree: Compiled call tree to evaluate.
+
+    """
+
     def evaluate_leaves(
         self,
         runs: Sequence[EvaluationRun[ParametersT]],
     ) -> Iterator[tuple[int, NodeId, NodeOutcome]]:
+        """
+        Evaluate pending leaves serially in run and tree order.
+
+        Args:
+            runs: Successfully prepared evaluation runs.
+
+        Yields:
+            Tuples containing the position in runs, completed leaf identifier,
+            and raw leaf outcome.
+
+        """
+
         for run_idx, run in enumerate(runs):
             for node_id in self.leaf_ids:
                 # only submit pending leaves
@@ -642,10 +885,19 @@ class SerialTreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
         self,
         runs: Sequence[EvaluationRun[ParametersT]],
     ) -> None:
-        """Serial execution has no outstanding leaf work to cancel."""
+        """
+        Complete the no-op cancellation step for serial execution.
+
+        Args:
+            runs: Evaluation runs being aborted. Serial execution has no
+                outstanding work by the time this method is called.
+
+        """
 
 
 class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
+    """Prepare synchronous tree schedules for combined objectives."""
+
     def prepare(
         self,
         objective: CombinedObjectiveFunction[ParametersT_contra],
@@ -653,4 +905,18 @@ class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> SerialTreeSchedule[ParametersT_contra]:
+        """
+        Compile a combined objective into a serial tree schedule.
+
+        Args:
+            objective: Root combined objective whose complete nested call tree
+                should be scheduled.
+            profile: Optional cost profile. Serial scheduling does not use
+                placement costs, so this argument is ignored.
+
+        Returns:
+            Prepared serial schedule for the objective tree.
+
+        """
+
         return SerialTreeSchedule(tree=cob_to_call_tree(objective))
