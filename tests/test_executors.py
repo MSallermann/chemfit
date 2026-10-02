@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
-from typing import TYPE_CHECKING, Any
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 from chemfit import abstract_objective_function, wrap_funcs
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_policy import ExecutorPolicy
+from chemfit.executor_scheduler import ExecutorTreeScheduler
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -25,54 +25,24 @@ def _result_or_cancel(fut: MyFuture, timeout: float | None = None):
         del fut
 
 
-class MyFuture(abstract_objective_function.FutureLike):
-    def __init__(self, func: Callable, args: Any) -> None:
-        """Initialize a future."""
-
-        self.func = func
-        self.args = args
-
-    def result(self, timeout: float | None = None):  # noqa: ARG002
-        return self.func(*self.args)
-
-    def cancel(self):
-        return True
+class MyFuture(Future):
+    """Immediately completed Future used by MyExecutor."""
 
 
-class MyExecutor(abstract_objective_function.ExecutorLike):
-    def submit(self, fn: Callable, *args) -> MyFuture:
+class MyExecutor:
+    def submit(self, fn: Callable, /, *args, **kwargs) -> MyFuture:
         print(f"Submit with args {args}")
-        return MyFuture(fn, args)
 
-    def map(
-        self,
-        fn: Callable,
-        *iterables,
-        timeout: float | None = None,
-        chunksize: int = 1,  # noqa: ARG002
-    ):
-        end_time = timeout + time.monotonic() if timeout is not None else None
+        fut = MyFuture()
 
-        fs = [self.submit(fn, *args) for args in zip(*iterables, strict=False)]
+        try:
+            result = fn(*args, **kwargs)
+        except BaseException as exc:
+            fut.set_exception(exc)
+        else:
+            fut.set_result(result)
 
-        # Yield must be hidden in closure so that the futures are submitted
-        # before the first iterator value is required.
-        def result_iterator():
-            try:
-                # reverse to keep finishing order
-                fs.reverse()
-                while fs:
-                    # Careful not to keep a reference to the popped future
-                    if timeout is None:
-                        yield _result_or_cancel(fs.pop())
-                    else:
-                        assert end_time is not None
-                        yield _result_or_cancel(fs.pop(), end_time - time.monotonic())
-            finally:
-                for future in fs:
-                    future.cancel()
-
-        return result_iterator()
+        return fut
 
 
 class MyFunctor(abstract_objective_function.ObjectiveFunctor):
@@ -100,13 +70,14 @@ def b(p: dict):
 
 
 # We create a combined objective function
-cob = CombinedObjectiveFunction([a, a, b, b], execution_policy=ExecutorPolicy())
+cob = CombinedObjectiveFunction([a, a, b, b])
 
 
 def test_executors():
     executors = [MyExecutor(), ProcessPoolExecutor(), ThreadPoolExecutor()]
 
     for executor in executors:
+        cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
         func = wrap_funcs.WrappedObjectiveFunctor(my_func)
         ctx = EvaluateContext(executor=executor)
         params = {"a": 2.0, "b": -1.0}

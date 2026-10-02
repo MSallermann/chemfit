@@ -245,15 +245,16 @@ def test_multi_energy_ob_function_fitting():
 
 
 def test_multi_energy_ob_function_fitting_mpi():
-    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+    mpi_scheduler = pytest.importorskip(
+        "chemfit.mpi_scheduler", reason="Missing mpi4py"
+    )
 
     ob = construct_objective_function(REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES)
 
-    with mpi_policy.MPIPolicy() as mpi:
-        ob.execution_policy = mpi
+    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler()) as mpi:
         if mpi.rank == 0:
             fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
             optimal_params = fitter.fit_scipy(tol=0, options={"maxiter": 50})
             print(f"{optimal_params = }")
         else:
-            mpi.worker_loop(ob)
+            mpi.worker_loop()

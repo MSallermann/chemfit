@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import math
-import random
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Executor, ThreadPoolExecutor
 from itertools import product
 from typing import TYPE_CHECKING, Any
 
@@ -15,12 +14,9 @@ except ImportError:
     loky = None
 
 from chemfit import combined_objective_function
-from chemfit.abstract_objective_function import (
-    EvaluateContext,
-    ExecutorLike,
-)
-from chemfit.executor_policy import ExecutorPolicy
-from chemfit.executor_utils import map_with_context
+from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.executor_scheduler import ExecutorTreeScheduler
+from chemfit.scheduling import EvaluationRequest
 from chemfit.wrap_funcs import to_quantity_computer
 
 if TYPE_CHECKING:
@@ -92,7 +88,7 @@ REDUCERS = [
 ]
 
 
-EXECUTORS: list[ExecutorLike] = [ThreadPoolExecutor(2)]
+EXECUTORS: list[Executor] = [ThreadPoolExecutor(2)]
 
 if loky is not None:
     EXECUTORS.append(loky.ProcessPoolExecutor(2))
@@ -138,10 +134,10 @@ def test_combined_objective_reduces_terms_serially(
 
 @pytest.mark.parametrize(("reduction", "executor"), list(product(REDUCERS, EXECUTORS)))
 def test_combined_objective_reduces_terms_with_executor(
-    reduction: combined_objective_function.Reducer, executor: ExecutorLike
+    reduction: combined_objective_function.Reducer, executor: Executor
 ):
     cob = make_cob(reduction=reduction)
-    cob.execution_policy = ExecutorPolicy(executor=executor)
+    cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
 
     ctx = EvaluateContext()
     res = cob(PARAMS, ctx)
@@ -150,16 +146,15 @@ def test_combined_objective_reduces_terms_with_executor(
 
 
 @pytest.mark.parametrize(("reduction", "executor"), list(product(REDUCERS, EXECUTORS)))
-def test_combined_objective_uses_executor_execution_policy(
-    reduction: combined_objective_function.Reducer, executor: ExecutorLike
+def test_combined_objective_uses_executor_scheduler(
+    reduction: combined_objective_function.Reducer, executor: Executor
 ):
-    policy = ExecutorPolicy(executor=executor)
     cob = combined_objective_function.CombinedObjectiveFunction(
         make_funcs(),
         make_weights(),
         reduction=reduction,
         child_context_configurator=context_configurator,
-        execution_policy=policy,
+        scheduler=ExecutorTreeScheduler(executor=executor),
     )
 
     ctx = EvaluateContext()
@@ -172,13 +167,13 @@ def test_combined_objective_uses_executor_execution_policy(
 def test_combined_objective_reduces_terms_with_mpi(
     reduction: combined_objective_function.Reducer,
 ):
-    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+    mpi_scheduler = pytest.importorskip(
+        "chemfit.mpi_scheduler", reason="Missing mpi4py"
+    )
 
     cob = make_cob(reduction=reduction)
 
-    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
-        cob.execution_policy = mpi
-
+    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
             res = cob(PARAMS, ctx)
@@ -186,14 +181,16 @@ def test_combined_objective_reduces_terms_with_mpi(
             standard_asserts(res, ctx, reduction)
 
         else:
-            mpi.worker_loop(cob)
+            mpi.worker_loop()
 
 
 @pytest.mark.parametrize("reduction", REDUCERS)
-def test_combined_objective_uses_mpi_execution_policy(
+def test_combined_objective_uses_mpi_scheduler(
     reduction: combined_objective_function.Reducer,
 ):
-    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+    mpi_scheduler = pytest.importorskip(
+        "chemfit.mpi_scheduler", reason="Missing mpi4py"
+    )
 
     cob = combined_objective_function.CombinedObjectiveFunction(
         make_funcs(),
@@ -202,16 +199,14 @@ def test_combined_objective_uses_mpi_execution_policy(
         child_context_configurator=context_configurator,
     )
 
-    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
-        cob.execution_policy = mpi
-
+    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
             res = cob(PARAMS, ctx)
 
             standard_asserts(res, ctx, reduction)
         else:
-            mpi.worker_loop(cob)
+            mpi.worker_loop()
 
 
 def test_combined_objective_exception_handlers_serial():
@@ -245,7 +240,7 @@ def test_combined_objective_exception_handlers_serial():
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)
-def test_combined_objective_exception_handlers_with_executor(executor: ExecutorLike):
+def test_combined_objective_exception_handlers_with_executor(executor: Executor):
     def func1(params: dict) -> float:  # noqa: ARG001
         return 1.0
 
@@ -254,23 +249,22 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
         raise RuntimeError(msg)
 
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
-    ob.execution_policy = ExecutorPolicy(executor=executor)
-    wrapped = ob
+    ob.set_scheduler(ExecutorTreeScheduler(executor=executor))
 
     ob.exception_handler = combined_objective_function.raising_exception_handler
     with pytest.raises(RuntimeError, match="Whoops"):
-        wrapped(PARAMS)
+        ob(PARAMS)
 
     ob.exception_handler = combined_objective_function.nan_exception_handler
     ctx = EvaluateContext()
-    res = wrapped(PARAMS, ctx)
+    res = ob(PARAMS, ctx)
     assert math.isnan(res)
     assert ctx.loss is not None
     assert math.isnan(ctx.loss)
 
     ob.exception_handler = combined_objective_function.skip_exception_handler
     ctx = EvaluateContext()
-    res = wrapped(PARAMS, ctx)
+    res = ob(PARAMS, ctx)
 
     assert math.isclose(res, func1(PARAMS))
     assert ctx.loss is not None
@@ -279,7 +273,9 @@ def test_combined_objective_exception_handlers_with_executor(executor: ExecutorL
 
 
 def test_combined_objective_exception_handlers_with_mpi():
-    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+    mpi_scheduler = pytest.importorskip(
+        "chemfit.mpi_scheduler", reason="Missing mpi4py"
+    )
 
     def func1(params: dict) -> float:  # noqa: ARG001
         return 1.0
@@ -292,21 +288,18 @@ def test_combined_objective_exception_handlers_with_mpi():
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.raising_exception_handler
 
-    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
-        ob.execution_policy = mpi
-
+    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
         if mpi.rank == 0:
             with pytest.raises(RuntimeError, match="Whoops"):
                 ob(PARAMS)
         else:
-            mpi.worker_loop(ob)
+            mpi.worker_loop()
 
     # nan
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.nan_exception_handler
 
-    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
-        ob.execution_policy = mpi
+    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
             res = ob(PARAMS, ctx)
@@ -314,14 +307,13 @@ def test_combined_objective_exception_handlers_with_mpi():
             assert ctx.loss is not None
             assert math.isnan(ctx.loss)
         else:
-            mpi.worker_loop(ob)
+            mpi.worker_loop()
 
     # skip
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.skip_exception_handler
 
-    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
-        ob.execution_policy = mpi
+    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
             res = ob(PARAMS, ctx)
@@ -330,11 +322,11 @@ def test_combined_objective_exception_handlers_with_mpi():
             assert math.isclose(ctx.loss, func1(PARAMS))
             assert ctx.meta["skipped_indices"] == [1]
         else:
-            mpi.worker_loop(ob)
+            mpi.worker_loop()
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)
-def test_aggregator(executor: ExecutorLike):
+def test_aggregator(executor: Executor):
     def custom_aggregator(
         terms: list[float],  # noqa: ARG001
         quantities: list[dict[str, Any] | None],
@@ -356,25 +348,24 @@ def test_aggregator(executor: ExecutorLike):
         reduction=custom_aggregator,
     )
 
-    cob.execution_policy = ExecutorPolicy(executor)
-    cob_wrapped = cob
+    cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
 
     ctx = EvaluateContext()
-    res = cob_wrapped(PARAMS, ctx)
+    res = cob(PARAMS, ctx)
 
     assert math.isclose(res, 8.0)
     assert ctx.meta["foo"] == "bar"
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)
-def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
+def test_executor_scheduler_matches_serial_result(executor: Executor):
     cob = make_cob()
 
     ctx_serial = EvaluateContext()
     res_serial = cob(PARAMS, ctx_serial)
 
     ctx_exec = EvaluateContext()
-    cob.execution_policy = ExecutorPolicy(executor=executor)
+    cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
     res_exec = cob(PARAMS, ctx_exec)
 
     assert np.isclose(res_exec, res_serial)
@@ -392,33 +383,33 @@ def test_executor_wrapper_matches_serial_result(executor: ExecutorLike):
 
 
 N_EVALS = 4
-EXECUTORS_OUTER: list[ExecutorLike] = [ThreadPoolExecutor(N_EVALS)]
-
-if loky is not None:
-    EXECUTORS_OUTER.append(loky.ProcessPoolExecutor(N_EVALS))
 
 
-@pytest.mark.parametrize(
-    ("executor_outer", "executor_inner"), list(product(EXECUTORS_OUTER, EXECUTORS))
-)
-def test_parallel_evaluation(
-    executor_outer: ExecutorLike, executor_inner: ExecutorLike
-):
+@pytest.mark.parametrize("executor", EXECUTORS)
+def test_executor_scheduler_evaluates_batch(executor: Executor):
+    serial_cob = make_cob()
     cob = make_cob()
-    cob.execution_policy = ExecutorPolicy(executor=executor_inner)
-    wrapped = cob
-
-    executor_outer = ThreadPoolExecutor(N_EVALS)
+    schedule = cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
 
     params_list = [
-        {"x": random.random(), "y": random.random()}  # noqa: S311
-        for _ in range(N_EVALS)
+        {"x": float(i) / N_EVALS, "y": float(N_EVALS - i) / N_EVALS}
+        for i in range(N_EVALS)
     ]
-    results_expected = [cob(p) for p in params_list]
+    results_expected = [serial_cob(p) for p in params_list]
 
     ctxs = [EvaluateContext() for _ in range(N_EVALS)]
-
-    results = map_with_context(executor_outer, wrapped, params_list, ctxs=ctxs)
+    requests = [
+        EvaluationRequest(parameters=params, ctx=ctx)
+        for params, ctx in zip(params_list, ctxs, strict=True)
+    ]
+    completed = sorted(
+        schedule.evaluate_many(requests), key=lambda result: result.index
+    )
+    results = []
+    for result in completed:
+        assert result.success
+        assert isinstance(result.value, float)
+        results.append(result.value)
 
     assert results == results_expected
 

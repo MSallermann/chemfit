@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import os
 from typing import Any
 from uuid import UUID
@@ -9,7 +8,7 @@ import pytest
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_policy import ExecutorPolicy
+from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.objective_hooks import TimingHook, UUIDHook
 
 PARAMETERS = {"x": 2.0}
@@ -33,7 +32,7 @@ class RecordingHook:
 
     def pre_eval(self, ctx: EvaluateContext) -> None:
         # Hook observations belong to the evaluation context. The executor and
-        # MPI wrappers propagate this metadata back from worker processes.
+        # MPI schedulers propagate this metadata back from worker processes.
         assert ctx.parameters is not None
         ctx.meta["pre_parameters"] = dict(ctx.parameters)
         ctx.meta["pre_loss"] = ctx.loss
@@ -64,10 +63,10 @@ def make_hooked_cob(*, failing: bool = False) -> CombinedObjectiveFunction:
     return CombinedObjectiveFunction(terms)
 
 
-def register_wrapper_hooks(wrapper: ObjectiveFunctor) -> None:
-    wrapper.register_eval_hook(RecordingHook())
-    wrapper.register_eval_hook(UUIDHook())
-    wrapper.register_eval_hook(TimingHook())
+def register_combined_hooks(objective: ObjectiveFunctor) -> None:
+    objective.register_eval_hook(RecordingHook())
+    objective.register_eval_hook(UUIDHook())
+    objective.register_eval_hook(TimingHook())
 
 
 def assert_hook_metadata(metadata: dict[str, Any], expected_loss: float) -> None:
@@ -86,7 +85,7 @@ def assert_successful_parallel_evaluation(
 ) -> None:
     expected_losses = [PARAMETERS["x"] + offset for offset in range(N_TERMS)]
 
-    # These fields were written by hooks on the outer executor/MPI wrapper.
+    # These fields were written by hooks on the combined objective.
     assert result == sum(expected_losses)
     assert ctx.loss == result
     assert_hook_metadata(ctx.meta, result)
@@ -114,10 +113,10 @@ def assert_post_hook_error(error: ObjectiveFunctor.PostEvalHookError) -> None:
 def test_objective_hooks_with_loky_process_pool():
     loky = pytest.importorskip("loky", reason="Missing loky")
     cob = make_hooked_cob()
-    register_wrapper_hooks(cob)
+    register_combined_hooks(cob)
 
     with loky.ProcessPoolExecutor(2) as executor:
-        cob.execution_policy = ExecutorPolicy(executor)
+        cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
 
         ctx = EvaluateContext()
         result = cob(PARAMETERS, ctx)
@@ -132,7 +131,7 @@ def test_post_hook_error_crosses_loky_process_boundary():
     cob = make_hooked_cob(failing=True)
 
     with loky.ProcessPoolExecutor(2) as executor:
-        cob.execution_policy = ExecutorPolicy(executor=executor)
+        cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
         # This also exercises PostEvalHookError.__reduce__: loky must serialize
         # both the aggregate error and its nested ValueError back to this process.
         with pytest.raises(ObjectiveFunctor.PostEvalHookError) as exc_info:
@@ -142,36 +141,35 @@ def test_post_hook_error_crosses_loky_process_boundary():
 
 
 def test_objective_hooks_with_mpi():
-    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+    mpi_scheduler = pytest.importorskip(
+        "chemfit.mpi_scheduler", reason="Missing mpi4py"
+    )
 
     cob = make_hooked_cob()
 
-    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
-        cob.execution_policy = mpi
-        register_wrapper_hooks(cob)
+    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+        register_combined_hooks(cob)
         if mpi.rank == 0:
             ctx = EvaluateContext()
             result = cob(PARAMETERS, ctx)
-            # Match MPIWrapperCOB's ceiling-based partitioning so this remains
-            # valid for MPI runs with a rank count other than four as well.
-            terms_per_rank = math.ceil(N_TERMS / mpi.size)
-            active_ranks = math.ceil(N_TERMS / terms_per_rank)
+            active_ranks = 1 if mpi.size == 1 else min(N_TERMS, mpi.size - 1)
             assert_successful_parallel_evaluation(
                 result,
                 ctx,
                 expected_worker_count=active_ranks,
             )
         else:
-            mpi.worker_loop(cob)
+            mpi.worker_loop()
 
 
 def test_post_hook_error_crosses_mpi_process_boundary():
-    mpi_policy = pytest.importorskip("chemfit.mpi_policy", reason="Missing mpi4py")
+    mpi_scheduler = pytest.importorskip(
+        "chemfit.mpi_scheduler", reason="Missing mpi4py"
+    )
 
     cob = make_hooked_cob(failing=True)
 
-    with mpi_policy.MPIPolicy(mpi_debug_log=False) as mpi:
-        cob.execution_policy = mpi
+    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
         if mpi.rank == 0:
             # The failing term is the last one, which runs on a worker rank in
             # the four-rank test. MPI must transport the aggregate hook error.
@@ -179,4 +177,4 @@ def test_post_hook_error_crosses_mpi_process_boundary():
                 cob(PARAMETERS)
             assert_post_hook_error(exc_info.value)
         else:
-            mpi.worker_loop(cob)
+            mpi.worker_loop()

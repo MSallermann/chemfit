@@ -149,8 +149,8 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
         for idx, req in enumerate(requests):
             parameters = req.parameters
             ctx = req.ctx
-            self.cob._begin_evaluation(parameters, ctx)  # noqa: SLF001
             try:
+                self.cob._begin_evaluation(parameters, ctx)  # noqa: SLF001
                 value = self.cob._evaluate(parameters, ctx)  # noqa: SLF001
                 ctx.loss = value
             except BaseException as e:
