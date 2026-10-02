@@ -3,8 +3,9 @@ MPI-backed tree scheduling with persistent worker ranks.
 
 Rank 0 coordinates each evaluation batch, owns the authoritative context and
 tree state, and performs nested reductions. Nonzero ranks keep persistent
-worker loops that receive statically assigned leaf tasks, evaluate objectives,
-and return raw outcomes with transferable context state.
+worker loops that receive batch-assigned leaf tasks, evaluate objectives, and
+return raw outcomes with transferable context state. At dispatch time, pending
+tasks from the full batch are distributed round-robin across worker ranks.
 
 Ordinary objective Exceptions are returned to the coordinator for parent-level
 handling. MPI protocol or worker-runtime failures instead abort the batch and
@@ -14,7 +15,6 @@ trigger coordinated cancellation before open evaluation lifecycles are closed.
 from __future__ import annotations
 
 import logging
-import math
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -36,7 +36,6 @@ from chemfit.executor_utils import AttachContextAsReturnValue
 from chemfit.scheduling import Scheduler
 from chemfit.tree_schedule import (
     EvaluationRun,
-    EvaluationState,
     NodeOutcome,
     SerialTreeSchedule,
     TreeScheduleBase,
@@ -50,35 +49,6 @@ evaluate_weighted_term_with_ctx = AttachContextAsReturnValue(evaluate_weighted_t
 
 _COMMAND_TAG = 41001
 _RESULT_TAG = 41002
-
-
-def slice_up_range(n: int, n_ranks: int):
-    """
-    Split a range into contiguous rank-local chunks.
-
-    Args:
-        n: Number of positions to distribute.
-        n_ranks: Number of chunks to produce.
-
-    Yields:
-        Start and exclusive end indices for each rank, including empty chunks
-        when there are more ranks than positions.
-
-    Raises:
-        ValueError: If n_ranks is not positive.
-
-    """
-
-    if n_ranks <= 0:
-        msg = "n_ranks must be positive"
-        raise ValueError(msg)
-
-    chunk_size = math.ceil(n / n_ranks) if n else 0
-
-    for rank in range(n_ranks):
-        start = rank * chunk_size
-        end = min(start + chunk_size, n)
-        yield start, end
 
 
 @dataclass(frozen=True)
@@ -102,14 +72,12 @@ class _EvaluateRequest:
     Group the leaf tasks assigned to one worker for one batch run.
 
     Args:
-        eval_id: Worker-local identifier for the request.
         run_id: Position of the evaluation run in the coordinator's batch.
         parameters: Parameter mapping shared by the request's leaf tasks.
         tasks: Ordered leaf tasks assigned to the receiving rank.
 
     """
 
-    eval_id: int
     run_id: int
     parameters: Mapping[str, Any]
     tasks: tuple[_LeafTask, ...]
@@ -126,46 +94,8 @@ class _Shutdown:
 
 
 @dataclass(frozen=True)
-class _LeafCompleted:
-    """
-    Represent a completed leaf response.
-
-    Args:
-        eval_id: Worker-local identifier of the originating request.
-        run_id: Position of the evaluation run in the coordinator's batch.
-        node_id: Identifier of the completed leaf node.
-        result: Raw numerical value or Exception produced by the leaf.
-        ctx_result_state: Transferable result state of the worker context.
-
-    """
-
-    eval_id: int
-    run_id: int
-    node_id: NodeId
-    result: NodeOutcome
-    ctx_result_state: dict[str, Any]
-
-
-@dataclass(frozen=True)
 class _EvaluationDone:
     """Acknowledge that a worker has become quiescent after cancellation."""
-
-
-@dataclass
-class _MPIEvaluationRuntime:
-    """
-    Track MPI request progress for one top-level evaluation.
-
-    Args:
-        eval_id: Identifier to assign to the next worker request.
-        started_workers: Ranks that received work for the evaluation.
-        done_workers: Ranks that acknowledged completion or cancellation.
-
-    """
-
-    eval_id: int
-    started_workers: set[int]
-    done_workers: set[int]
 
 
 class MPIWorkerError(RuntimeError):
@@ -187,7 +117,8 @@ class MPITreeSchedule(
     When more than one rank is available, rank 0 deliberately does not execute
     leaves itself. This keeps the coordinator responsive to remote completion
     messages, allowing nested COBs to finish promptly when their own children
-    are complete.
+    are complete. For each batch, all pending leaves across all runs are
+    assigned round-robin to the available worker ranks.
 
     Args:
         tree: Compiled combined-objective call tree.
@@ -210,7 +141,7 @@ class MPITreeSchedule(
         mpi_debug_log: bool = False,
     ) -> None:
         """
-        Initialize the prepared schedule and static leaf assignments.
+        Initialize the prepared schedule and worker coordination state.
 
         Args:
             tree: Compiled combined-objective call tree.
@@ -228,7 +159,6 @@ class MPITreeSchedule(
         self.event_cancel_work = threading.Event()
         self.event_shutdown_worker = threading.Event()
 
-        self._next_eval_id = 0
         self._workers_released = False
         self._evaluation_lock = Lock()
 
@@ -239,8 +169,6 @@ class MPITreeSchedule(
                 log_args=True,
                 log_res=True,
             )
-
-        self._leaf_assignments = self._build_leaf_assignments()
 
     def _log_func(self, msg: str) -> None:
         """
@@ -253,66 +181,51 @@ class MPITreeSchedule(
 
         logger.warning("[Rank %s] %s", self.rank, msg)
 
-    def _build_leaf_assignments(self) -> dict[int, tuple[NodeId, ...]]:
+    def _build_task_assignments(
+        self,
+        runs: Sequence[EvaluationRun[ParametersT]],
+    ) -> dict[int, list[tuple[int, NodeId]]]:
         """
-        Statically assign leaves to nonzero worker ranks.
+        Distribute all pending tasks round-robin across worker ranks.
 
-        The current baseline uses contiguous chunks. Profile-aware placement can
-        replace this policy later without changing the tree runtime.
+        Tasks are enumerated in run order and then in the call tree's leaf
+        order. Flattening the complete batch before assignment allows leaves
+        from different runs to share all workers instead of pinning each leaf
+        node to one rank.
+
+        Args:
+            runs: Successfully prepared evaluation runs whose pending leaves
+                need worker placement.
 
         Returns:
-            Mapping from each nonzero rank to its assigned leaf identifiers.
-            An empty mapping is returned for a single-rank communicator.
+            Mapping from every nonzero worker rank to its assigned pairs of
+            run position and leaf node identifier. Workers with no assigned
+            tasks map to an empty list. A communicator without worker ranks
+            produces an empty mapping.
 
         """
-
-        if self.size <= 1:
-            return {}
 
         worker_ranks = tuple(range(1, self.size))
-        slices = tuple(slice_up_range(len(self.leaf_ids), len(worker_ranks)))
 
-        return {
-            rank: tuple(self.leaf_ids[start:end])
-            for rank, (start, end) in zip(worker_ranks, slices, strict=True)
+        if not worker_ranks:
+            return {}
+
+        assignments: dict[int, list[tuple[int, NodeId]]] = {
+            rank: [] for rank in worker_ranks
         }
 
-    def set_mpi_runtime(
-        self,
-        eval_state: EvaluationState,
-        runtime: _MPIEvaluationRuntime,
-    ) -> None:
-        """
-        Attach MPI runtime bookkeeping to an evaluation's root context.
+        pending_tasks = (
+            (run_id, node_id)
+            for run_id, run in enumerate(runs)
+            for node_id in self.leaf_ids
+            if run.state.is_pending(node_id)
+        )
 
-        Args:
-            eval_state: Evaluation state whose runtime should be recorded.
-            runtime: MPI-specific request progress for the evaluation.
+        for task_idx, task in enumerate(pending_tasks):
+            rank = worker_ranks[task_idx % len(worker_ranks)]
+            assignments[rank].append(task)
 
-        """
-
-        root_ctx = eval_state.contexts[self.tree.root]
-        assert root_ctx is not None
-        root_ctx.temp.mpi_runtime = runtime
-
-    def get_mpi_runtime(
-        self,
-        eval_state: EvaluationState,
-    ) -> _MPIEvaluationRuntime:
-        """
-        Return MPI runtime bookkeeping from an evaluation's root context.
-
-        Args:
-            eval_state: Evaluation state whose runtime should be retrieved.
-
-        Returns:
-            MPI-specific request progress for the evaluation.
-
-        """
-
-        root_ctx = eval_state.contexts[self.tree.root]
-        assert root_ctx is not None
-        return cast("_MPIEvaluationRuntime", root_ctx.temp.mpi_runtime)
+        return assignments
 
     def evaluate_leaf_worker(
         self,
@@ -502,7 +415,9 @@ class MPITreeSchedule(
         Notes:
             With a single-rank communicator, leaves are evaluated through
             SerialTreeSchedule. With multiple ranks, rank 0 coordinates only
-            and does not execute leaves.
+            and does not execute leaves. Pending tasks from the complete batch
+            are assigned round-robin across worker ranks. Each rank's tasks are
+            then grouped by run so every request carries one parameter mapping.
 
         """
 
@@ -515,43 +430,36 @@ class MPITreeSchedule(
             yield from SerialTreeSchedule(self.tree).evaluate_leaves(runs)
             return
 
-        for run_idx, run in enumerate(runs):
-            eval_state = run.state
-            parameters = run.parameters
+        task_assignments = self._build_task_assignments(runs)
 
-            runtime = _MPIEvaluationRuntime(
-                eval_id=0,
-                started_workers=set(),
-                done_workers=set(),
-            )
-            self.set_mpi_runtime(eval_state, runtime)
+        for rank, assigned_tasks in task_assignments.items():
+            tasks_by_run: dict[int, list[_LeafTask]] = {}
 
-            for rank in range(1, self.size):
-                tasks: list[_LeafTask] = []
+            for run_id, node_id in assigned_tasks:
+                eval_state = runs[run_id].state
 
-                # build the list of tasks for each rank by checking
-                # that leaf ids are (i) pending and (ii) in the leaf assignment of that rank
-                for node_id in self.leaf_ids:
-                    if (
-                        eval_state.is_pending(node_id)
-                        and node_id in self._leaf_assignments[rank]
-                    ):
-                        ctx = eval_state.contexts[node_id]
-                        assert ctx is not None
-                        tasks.append(_LeafTask(node_id=node_id, ctx=ctx))
+                ctx = eval_state.contexts[node_id]
+                assert ctx is not None
 
-                # once the tasks have been built, the request can be sent
+                tasks_by_run.setdefault(run_id, []).append(
+                    _LeafTask(
+                        node_id=node_id,
+                        ctx=ctx,
+                    )
+                )
+
+            for run_id, tasks in tasks_by_run.items():
                 request = _EvaluateRequest(
-                    run_id=run_idx,
-                    parameters=parameters,
-                    eval_id=runtime.eval_id,
+                    run_id=run_id,
+                    parameters=runs[run_id].parameters,
                     tasks=tuple(tasks),
                 )
-                runtime.eval_id += 1
 
-                # then we send the request to the rank
-                self.comm.send(request, dest=rank, tag=_COMMAND_TAG)
-                runtime.started_workers.add(rank)
+                self.comm.send(
+                    request,
+                    dest=rank,
+                    tag=_COMMAND_TAG,
+                )
 
         status = MPI.Status()
 
@@ -723,8 +631,8 @@ class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
         Args:
             objective: Root combined objective whose complete nested call tree
                 should be distributed.
-            profile: Optional cost profile. The current contiguous placement
-                policy ignores measured costs.
+            profile: Optional cost profile. The current batch-wide round-robin
+                placement policy ignores measured costs.
 
         Returns:
             Prepared MPI schedule using this scheduler's communicator.
