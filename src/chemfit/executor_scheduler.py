@@ -3,18 +3,15 @@ from concurrent.futures import Executor, Future, as_completed, wait
 from typing import Any, Generic, TypeVar, cast
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.callgraph import CallTree, CombineNode, NodeId, cob_to_call_tree
+from chemfit.callgraph import CallTree, NodeId, cob_to_call_tree
 from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
-    ExceptionHandler,
-    evaluate_weighted_term,
 )
-from chemfit.executor_utils import AttachContextAsReturnValue
 from chemfit.scheduling import Scheduler
 from chemfit.tree_schedule import (
     EvaluationRun,
     EvaluationState,
-    TermResult,
+    NodeOutcome,
     TreeScheduleBase,
 )
 
@@ -22,17 +19,12 @@ ParametersT_contra = TypeVar(
     "ParametersT_contra", contravariant=True, bound=Mapping[str, Any]
 )
 
-evaluate_weighted_term_with_ctx = AttachContextAsReturnValue(evaluate_weighted_term)
+# evaluate_weighted_term_with_ctx = AttachContextAsReturnValue(evaluate_weighted_term)
 
 
 def evaluate_leaf_worker(
-    objective: ObjectiveFunctor[ParametersT_contra],
-    weight: float,
-    exception_handler: ExceptionHandler,
-    parameters: ParametersT_contra,
-    child_idx: int,
-    ctx: EvaluateContext,
-) -> tuple[float | None, dict[str, Any]]:
+    objective: ObjectiveFunctor, parameters: Mapping[str, Any], ctx: EvaluateContext
+) -> tuple[NodeOutcome, dict[str, Any]]:
     """
     Evaluate one leaf on a worker.
 
@@ -41,16 +33,14 @@ def evaluate_leaf_worker(
     of the context.
     """
 
-    result, ctx_result_state = evaluate_weighted_term_with_ctx(
-        objective,
-        weight,
-        exception_handler,
-        parameters,
-        child_idx,
-        ctx,
-    )
-
-    return result, ctx_result_state
+    try:
+        result = objective(
+            parameters,
+            ctx,
+        )
+        return result, ctx.to_result_state()
+    except Exception as e:
+        return e, ctx.to_result_state()
 
 
 class ExecutorTreeSchedule(
@@ -69,10 +59,10 @@ class ExecutorTreeSchedule(
 
     def evaluate_leaf(
         self,
-        node_id: int,  # noqa: ARG002
+        node_id: NodeId,  # noqa: ARG002
         parameters: ParametersT_contra,  # noqa: ARG002
         eval_state: EvaluationState,  # noqa: ARG002
-    ) -> TermResult:
+    ) -> NodeOutcome:
         """
         Evaluate one leaf and return the term value it contributes to its parent.
 
@@ -94,55 +84,67 @@ class ExecutorTreeSchedule(
         return root_ctx.temp.leaf_futures
 
     def evaluate_leaves(
-        self, runs: Sequence[EvaluationRun[ParametersT_contra]]
-    ) -> Iterator[tuple[int, NodeId, float | None]]:
-        future_to_leaf = {}
+        self,
+        runs: Sequence[EvaluationRun[ParametersT_contra]],
+    ) -> Iterator[tuple[int, NodeId, NodeOutcome]]:
+        future_to_leaf: dict[
+            Future[tuple[NodeOutcome, dict[str, Any]]],
+            tuple[int, NodeId],
+        ] = {}
 
+        # Initialize the future bookkeeping for every run before submitting
+        # anything. If submission fails partway through, cancellation can then
+        # safely inspect every run.
         for run in runs:
-            # 1. submit each leaf as a future and save the futures in the eval state
-            leaf_futures = []
+            self.set_leaf_futures(run.state, [])
+
+        # 1. Submit all pending leaves across all evaluations.
+        for run_idx, run in enumerate(runs):
             eval_state = run.state
             parameters = run.parameters
-
-            self.set_leaf_futures(eval_state, leaf_futures)
+            leaf_futures = self.get_leaf_futures(eval_state)
 
             for node_id in self.leaf_ids:
+                # Only leaves that were reached successfully during the top-down
+                # pass should be submitted. Leaves below a failed setup remain
+                # INACTIVE.
+                if not eval_state.is_pending(node_id):
+                    continue
+
                 leaf_node = self.tree.nodes[node_id]
-                assert leaf_node.parent_id is not None
-                parent_node = self.tree.nodes[leaf_node.parent_id]
-                assert isinstance(parent_node, CombineNode)
-                assert leaf_node.child_idx is not None
-                weight = parent_node.objective.weights[leaf_node.child_idx]
-                exception_handler = parent_node.objective.exception_handler
+
                 ctx = eval_state.contexts[node_id]
                 assert ctx is not None
 
                 future = self.executor.submit(
                     evaluate_leaf_worker,
                     objective=leaf_node.objective,
-                    weight=weight,
-                    exception_handler=exception_handler,
                     parameters=parameters,
-                    child_idx=leaf_node.child_idx,
                     ctx=ctx,
                 )
 
-                future_to_leaf[future] = (run.index, node_id)
+                leaf_futures.append(future)
+                future_to_leaf[future] = (run_idx, node_id)
 
-        # 2. yield future results in completion order
-        for fs in as_completed(future_to_leaf):
-            run_idx, node_id = future_to_leaf[fs]
+        # 2. Yield future results in completion order.
+        for future in as_completed(future_to_leaf):
+            run_idx, node_id = future_to_leaf[future]
             eval_state = runs[run_idx].state
 
-            result, ctx_result_state = fs.result()
-            eval_state.contexts[node_id].apply_result_state(ctx_result_state)
+            result, ctx_result_state = future.result()
+
+            ctx = eval_state.contexts[node_id]
+            assert ctx is not None
+            ctx.apply_result_state(ctx_result_state)
 
             yield run_idx, node_id, result
 
-    def cancel_pending_and_wait(self, eval_state: EvaluationState) -> None:
+    def cancel_pending_and_wait(self, runs: Sequence[EvaluationRun]) -> None:
         """Cancel pending leaves and wait for other leaves to complete."""
 
-        futures = self.get_leaf_futures(eval_state)
+        futures = []
+        for run in runs:
+            futures.extend(self.get_leaf_futures(run.state))
 
         # first try to cancel all leaf futures
         for fs in futures:
