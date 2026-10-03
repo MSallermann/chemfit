@@ -94,9 +94,9 @@ debugging.
 
     from chemfit.abstract_objective_function import EvaluateContext
     from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.wrap_funcs import to_objective_functor
+    from chemfit.wrap_funcs import objective
 
-    @to_objective_functor()
+    @objective()
     def term(params, a):
         return (params["x"] - a) ** 2
 
@@ -253,13 +253,13 @@ The following example is based on the actual test setup.
 
    from chemfit.abstract_objective_function import EvaluateContext
    from chemfit.combined_objective_function import CombinedObjectiveFunction
-   from chemfit.wrap_funcs import to_quantity_computer
+   from chemfit.wrap_funcs import quantity
 
    def custom_aggregator(terms, quantities, ctx):
        ctx.meta["foo"] = "bar"
        return sum(q["test"] for q in quantities)
 
-   @to_quantity_computer()
+   @quantity()
    def q1(parameters, f):
        return {"test": f * parameters["x"] + parameters["y"]}
 

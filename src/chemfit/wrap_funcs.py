@@ -69,7 +69,7 @@ class WrappedObjectiveFunctor(
         self, /, *args: Any, **kwargs: Any
     ) -> WrappedObjectiveFunctor[ParametersT_contra]:
         """
-        Return a new quantity computer with extra arguments bound.
+        Return a new objective functor with extra arguments bound.
 
         The bound arguments are passed to the wrapped function in addition
         to the usual ChemFit arguments.
@@ -80,7 +80,7 @@ class WrappedObjectiveFunctor(
             **kwargs: Keyword arguments to bind.
 
         Returns:
-            A new wrapped quantity computer with the requested arguments
+            A new wrapped objective functor with the requested arguments
             pre-applied.
 
         """
@@ -117,9 +117,9 @@ class WrappedObjectiveFunctor(
         return loss
 
 
-def to_objective_functor(
-    pass_ctx: bool = False,
+def objective(
     *,
+    pass_ctx: bool = False,
     resources: ResourceRequest | None = None,
 ) -> Callable[
     [WrappableObjFunction[ParametersT_contra]],
@@ -250,9 +250,9 @@ class WrappedQuantityComputer(
         return self.func(parameters, *self.func_args, **self.func_kwargs)
 
 
-def to_quantity_computer(
-    pass_ctx: bool = False,
+def quantity(
     *,
+    pass_ctx: bool = False,
     resources: ResourceRequest | None = None,
 ) -> Callable[
     [WrappableQuantFunction[ParametersT_contra, QuantitiesT_co]],

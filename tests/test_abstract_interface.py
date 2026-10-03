@@ -9,12 +9,12 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from pydictnest import get_nested, items_nested
 
 from chemfit import abstract_objective_function, async_helpers
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.wrap_funcs import to_quantity_computer
+from chemfit.wrap_funcs import quantity
+from pydictnest import get_nested, items_nested
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -321,7 +321,7 @@ def test_async_evaluation():
 
 
 def test_quickstart():
-    @to_quantity_computer()
+    @quantity()
     def computer(params: dict[str, float]) -> dict[str, float]:
         return {"x2": params["x"] ** 2, "y2": params["y"] ** 2}
 
@@ -340,7 +340,7 @@ def test_quickstart():
 
 
 def test_quickstart2():
-    @to_quantity_computer()
+    @quantity()
     def computer(params: dict[str, float], f: float):
         return {"fx2": f * params["x"] ** 2, "fy2": f * params["y"] ** 2}
 

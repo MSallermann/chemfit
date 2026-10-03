@@ -30,8 +30,8 @@ if TYPE_CHECKING:
     from chemfit.wrap_funcs import (
         WrappedObjectiveFunctor,
         WrappedQuantityComputer,
-        to_objective_functor,
-        to_quantity_computer,
+        objective,
+        quantity,
     )
 
     Parameters = dict[str, float]
@@ -39,22 +39,22 @@ if TYPE_CHECKING:
     Quantities = dict[str, float]
 
     # Objective wrappers preserve the concrete parameter dictionary type.
-    @to_objective_functor(resources={"cpus": 4})
-    def objective(parameters: Parameters) -> float:
+    @objective(resources={"cpus": 4})
+    def wrapped_objective(parameters: Parameters) -> float:
         return parameters["x"] ** 2
 
-    assert_type(objective, WrappedObjectiveFunctor[Parameters])
-    assert_type(objective.resources, ResourceRequest)
-    objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
+    assert_type(wrapped_objective, WrappedObjectiveFunctor[Parameters])
+    assert_type(wrapped_objective.resources, ResourceRequest)
+    wrapped_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
-    root_leaf_schedule = SerialTreeScheduler().prepare(objective)
+    root_leaf_schedule = SerialTreeScheduler().prepare(wrapped_objective)
     assert_type(root_leaf_schedule, SerialTreeSchedule[Parameters])
 
     # Context-aware callables are accepted without widening their parameters.
     def objective_with_context(parameters: Parameters, _ctx: EvaluateContext) -> float:
         return parameters["x"] ** 2
 
-    context_objective = to_objective_functor()(objective_with_context)
+    context_objective = objective()(objective_with_context)
     assert_type(context_objective, WrappedObjectiveFunctor[Parameters])
     context_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
@@ -69,7 +69,7 @@ if TYPE_CHECKING:
     async_many = async_eval_many(context_objective, [{"x": 1.0}], [EvaluateContext()])
 
     # Fitter carries the objective's parameter type through its public API.
-    fitter = Fitter(objective, {"x": 1.0})
+    fitter = Fitter(wrapped_objective, {"x": 1.0})
     assert_type(fitter, Fitter[Parameters])
     fitter.objective_function({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
@@ -96,7 +96,7 @@ if TYPE_CHECKING:
 
     # Quantity wrappers preserve both their parameter and result types. Binding
     # arguments and attaching a loss function must not erase either one.
-    @to_quantity_computer(resources={"cpus": 8, "gpus": 1})
+    @quantity(resources={"cpus": 8, "gpus": 1})
     def compute_quantities(parameters: Parameters, scale: float) -> Quantities:
         return {"x2": scale * parameters["x"] ** 2}
 
@@ -136,19 +136,19 @@ if TYPE_CHECKING:
     ) -> float | None:
         return None
 
-    combined = CombinedObjectiveFunction([objective])
+    combined = CombinedObjectiveFunction([wrapped_objective])
     assert_type(combined, CombinedObjectiveFunction[Parameters])
     combined({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     combined_with_reducer = CombinedObjectiveFunction(
-        [objective],
+        [wrapped_objective],
         reduction=reduce_values,
         exception_handler=handle_failure,
     )
     assert_type(combined_with_reducer, CombinedObjectiveFunction[Parameters])
 
     combined_with_aggregator = CombinedObjectiveFunction(
-        [objective],
+        [wrapped_objective],
         reduction=aggregate_values,
     )
     assert_type(combined_with_aggregator, CombinedObjectiveFunction[Parameters])
@@ -163,7 +163,7 @@ if TYPE_CHECKING:
         return sum(values)
 
     CombinedObjectiveFunction(
-        [objective],
+        [wrapped_objective],
         reduction=aggregator_requiring_quantities,  # pyright: ignore[reportArgumentType]
     )
 
@@ -174,13 +174,13 @@ if TYPE_CHECKING:
 
     mixed_parameter_combination = CombinedObjectiveFunction(
         [
-            objective,  # pyright: ignore[reportArgumentType]
+            wrapped_objective,  # pyright: ignore[reportArgumentType]
             incompatible_objective,
         ]
     )
 
     explicitly_typed_mixed_combination = CombinedObjectiveFunction[Parameters](
-        [objective, incompatible_objective]  # pyright: ignore[reportArgumentType]
+        [wrapped_objective, incompatible_objective]  # pyright: ignore[reportArgumentType]
     )
 
     # File-based computers connect the command callbacks' parameter type to

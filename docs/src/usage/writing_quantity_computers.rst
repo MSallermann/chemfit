@@ -15,7 +15,7 @@ Nothing prevents you from using ChemFit without them. That being said, you shoul
 
 A recommended first step is to check if you can use one of the built-in ways:
 
-1. If you already have a pure python function implementing your computation, have a look at the :py:func:`~chemfit.wrap_funcs.to_quantity_computer` decorator, which also features in the :ref:`quickstart` examples.
+1. If you already have a pure python function implementing your computation, have a look at the :py:func:`~chemfit.wrap_funcs.quantity` decorator, which also features in the :ref:`quickstart` examples.
 2. If you are using an external simulation tool, like LAMMPS for example, have a look at the :py:class:`~chemfit.file_based_computer.FileBasedQuantityComputer` and its corresponding doc page: :ref:`file_based`.
 3. If you are using ASE, try the :py:class:`~chemfit.ase_objective_function.SinglePointASEComputer` or :py:class:`~chemfit.ase_objective_function.MinimizationASEComputer` described in :ref:`ase_objective_function_api`.
 
@@ -102,9 +102,9 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
 
 .. code-block:: python
 
-    from chemfit.wrap_funcs import to_quantity_computer
+    from chemfit.wrap_funcs import quantity
 
-    @to_quantity_computer(pass_ctx=True)
+    @quantity(pass_ctx=True)
     def computer(params, ctx, f):
         ...
 
@@ -119,7 +119,7 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
 
     If ``pass_ctx==False``, all arguments except ``params`` have to be bound.
 
-If we forego the :py:func:`~chemfit.wrap_funcs.to_quantity_computer` approach and we need external parameters, they should be accepted in the constructor.
+If we forego the :py:func:`~chemfit.wrap_funcs.quantity` approach and we need external parameters, they should be accepted in the constructor.
 
 .. code-block:: python
 

@@ -16,7 +16,7 @@ from chemfit.combined_objective_function import (
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.scheduling import EvaluationRequest, Scheduler
 from chemfit.tree_schedule import SerialTreeScheduler
-from chemfit.wrap_funcs import to_quantity_computer
+from chemfit.wrap_funcs import quantity
 
 Parameters = dict[str, float]
 ContextState = dict[str, Any]
@@ -199,7 +199,7 @@ def configure_child_context(
         raise ConfigurationSetupError(msg)
 
 
-@to_quantity_computer(pass_ctx=True)
+@quantity(pass_ctx=True)
 def compute_leaf_quantities(
     parameters: Parameters,
     *,

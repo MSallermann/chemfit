@@ -168,7 +168,7 @@ class Fitter(Generic[ParametersT]):
             objective_function (Callable | ObjectiveFunctor): Objective to
                 be minimized. If a plain callable is provided, it is
                 converted to an `ObjectiveFunctor` using
-                `to_objective_functor`.
+                `objective`.
             initial_params: Nested mapping of concrete initial parameter
                 values passed to the objective.
             bounds (Mapping[str, object] | None, optional): Bounds for each
