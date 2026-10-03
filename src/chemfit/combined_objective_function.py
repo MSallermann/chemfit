@@ -99,27 +99,6 @@ def skip_exception_handler(
     return None
 
 
-def evaluate_weighted_term(
-    objective: ObjectiveFunctor[ParametersT],
-    weight: float,
-    exception_handler: ExceptionHandler,
-    parameters: ParametersT,
-    idx: int,
-    ctx: EvaluateContext,
-) -> float | None:
-    """
-    Evaluate one weighted term without retaining its combined objective.
-
-    Keeping this operation independent of the combined objective lets process
-    executors serialize term work without also serializing the execution
-    policy (and, potentially, the executor itself).
-    """
-    try:
-        return objective(parameters, ctx) * weight
-    except Exception as e:
-        return exception_handler(e, ctx, idx)
-
-
 class WrappedReducer(Aggregator):
     def __init__(self, reducer: Reducer) -> None:
         """A reducer that is wrapped in order to be used like an Aggregator."""
@@ -216,8 +195,8 @@ class CombinedObjectiveFunction(
             exception_handler: Callable used to handle exceptions raised
                 during term evaluation. It may return a replacement value or
                 ``None`` to skip the term entirely.
-            execution_policy: Strategy used to schedule term evaluations. If
-                omitted, terms are evaluated serially in index order.
+            scheduler: Scheduler used to prepare this objective for evaluation.
+                If omitted, the direct serial scheduler is used.
 
         Raises:
             AssertionError: If the number of weights does not match the
@@ -340,7 +319,7 @@ class CombinedObjectiveFunction(
 
         """
 
-        # Mutation needs to invalidated the schedule
+        # Structural mutation invalidates the prepared schedule.
         self._schedule = None
 
         # Determine how many new functions are being added
@@ -423,6 +402,14 @@ class CombinedObjectiveFunction(
             ctx,
         )
 
+    def evaluate_weighted_term(
+        self, parameters: ParametersT, idx: int, ctx: EvaluateContext
+    ):
+        try:
+            return self.objective_functions[idx](parameters, ctx) * self.weights[idx]
+        except Exception as e:
+            return self.exception_handler(e, ctx, idx)
+
     def _evaluate(
         self,
         parameters: ParametersT,
@@ -436,10 +423,7 @@ class CombinedObjectiveFunction(
             ) as child_ctxs
         ):
             terms = [
-                evaluate_weighted_term(
-                    objective,
-                    weight,
-                    self.exception_handler,
+                self.evaluate_weighted_term(
                     parameters,
                     idx,
                     child_ctx,

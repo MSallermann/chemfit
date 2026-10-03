@@ -99,6 +99,13 @@ for every concurrent evaluation.
 Nested objectives
 -----------------
 
+.. warning::
+
+   **OUTDATED IN PART:** The hook and child-context semantics in this section
+   remain current, but its execution-policy and MPI setup guidance predates
+   prepared schedulers. The ``meta.children`` wording below is also stale;
+   serialized metadata is dictionary-shaped.
+
 By default, registration affects only the given objective. To instrument a
 combined objective and its nested terms, register after building the call tree:
 
@@ -138,6 +145,12 @@ expose their child scopes by implementing ``_child_objectives()``.
 
 Parallel execution
 ------------------
+
+.. warning::
+
+   **OUTDATED:** The MPI ``worker_loop(cob)`` and execution-policy guidance in
+   this section predates the scheduler migration. The advice about hook state,
+   serialization, and storing results in ``ctx.meta`` remains current.
 
 Register hooks before submitting work to a process executor. For MPI, register
 term hooks on every rank before nonzero ranks enter ``worker_loop(cob)``; registering

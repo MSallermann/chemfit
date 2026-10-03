@@ -68,6 +68,12 @@ objectives constructed from quantity computers.
 What actually happens during evaluation
 ---------------------------------------
 
+.. warning::
+
+   **OUTDATED IN PART:** The execution-policy sentence below predates the
+   scheduler migration. The child-context, exception-handling, and reduction
+   semantics described by the rest of this section remain current.
+
 Calling a combined objective does three things.
 
 First, it spawns one child :py:class:`~chemfit.abstract_objective_function.EvaluateContext`
@@ -486,6 +492,13 @@ terms.
 
 Parallel execution
 ------------------
+
+.. warning::
+
+   **OUTDATED:** This section describes the removed execution-policy API.
+   Term-level parallelism now uses prepared schedulers, but replacement usage
+   guidance is intentionally deferred until the simplified top-level API is
+   finalized.
 
 Combined objectives are the main place where term-level parallelism makes sense.
 

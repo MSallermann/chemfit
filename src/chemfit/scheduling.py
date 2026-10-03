@@ -88,9 +88,9 @@ class EvaluationResult:
 
 #: Stable path to an objective within a nested combined-objective tree.
 #:
-#: ``()`` identifies the root combined objective. ``(1,)`` identifies its
-#: second immediate term. ``(2, 1, 0)`` identifies child 2, then child 1,
-#: then child 0.
+#: ``()`` identifies the root objective, whether it is ordinary or combined.
+#: For a combined root, ``(1,)`` identifies its second immediate term and
+#: ``(2, 1, 0)`` identifies child 2, then child 1, then child 0.
 ObjectivePath: TypeAlias = tuple[int, ...]
 
 #: Relative or absolute evaluation cost estimates keyed by objective-tree path.
@@ -109,10 +109,10 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
     """
     Reusable, objective-specific execution plan produced by a scheduler.
 
-    A prepared schedule owns state derived from a particular combined
-    objective, such as a compiled call tree, worker placement, or distributed
-    object registrations. It may be reused for multiple evaluations until it
-    is closed or the objective structure changes.
+    A prepared schedule owns state derived from a particular objective, such
+    as a compiled call tree, worker placement, or distributed object
+    registrations. It may be reused for multiple evaluations until it is
+    closed or the objective structure changes.
 
     Implementations are structural and need not inherit from
     PreparedScheduleBase as long as they provide this interface.

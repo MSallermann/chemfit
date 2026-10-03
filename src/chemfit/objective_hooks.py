@@ -47,7 +47,7 @@ class TimingHook:
     The monotonic start time is kept in ``ctx.temp`` and is therefore local to
     the current evaluation. The completed duration is written to
     ``ctx.meta[meta_key]["elapsed_seconds"]``, which allows executor and MPI
-    wrappers to propagate it back from worker processes.
+    schedulers to propagate it back from worker processes.
 
     Register both halves of the hook on an objective with::
 
