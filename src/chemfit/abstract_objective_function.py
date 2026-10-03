@@ -273,8 +273,8 @@ class EvaluateContext:
 
         """
 
-        children = self.spawn_children(n_children, configurator=configurator)
         try:
+            children = self.spawn_children(n_children, configurator=configurator)
             yield children
         finally:
             self.collect_child_meta_data(recursive)

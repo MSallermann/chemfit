@@ -9,60 +9,24 @@ lifecycles, and result ordering.
 """
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
-from concurrent.futures import Executor, Future, as_completed, wait
-from typing import Any, Generic, TypeVar, cast
+from concurrent.futures import Executor, Future, as_completed
+from typing import Any, Generic, TypeVar
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.callgraph import CallTree, NodeId, cob_to_call_tree
+from chemfit.callgraph import CallTree, LeafNode, cob_to_call_tree
 from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
 )
 from chemfit.scheduling import Scheduler
 from chemfit.tree_schedule import (
-    EvaluationRun,
-    EvaluationState,
-    NodeOutcome,
+    LeafCompletion,
+    LeafTask,
     TreeScheduleBase,
+    evaluate_leaf_task,
 )
 
 ParametersT_contra = TypeVar(
     "ParametersT_contra", contravariant=True, bound=Mapping[str, Any]
 )
-
-# evaluate_weighted_term_with_ctx = AttachContextAsReturnValue(evaluate_weighted_term)
-
-
-def evaluate_leaf_worker(
-    objective: ObjectiveFunctor, parameters: Mapping[str, Any], ctx: EvaluateContext
-) -> tuple[NodeOutcome, dict[str, Any]]:
-    """
-    Evaluate one leaf and return its outcome with transferable context state.
-
-    Args:
-        objective: Leaf objective to evaluate.
-        parameters: Parameter mapping for the evaluation.
-        ctx: Worker-side evaluation context for the leaf.
-
-    Returns:
-        A pair containing the raw objective value or Exception and the
-        serializable result state of the worker-side context.
-
-    Notes:
-        Ordinary Exceptions are returned as node outcomes so the parent
-        combined objective can apply its exception handler. BaseException
-        subclasses and failures while exporting context state escape to the
-        future.
-
-    """
-
-    try:
-        result = objective(
-            parameters,
-            ctx,
-        )
-        return result, ctx.to_result_state()
-    except Exception as e:
-        return e, ctx.to_result_state()
 
 
 class ExecutorTreeSchedule(
@@ -99,163 +63,45 @@ class ExecutorTreeSchedule(
 
         """
 
-        if not self.closed and self.owns_executor:
-            self.executor.shutdown()
-        super().close()
+        if self.closed:
+            return
 
-    def evaluate_leaf(
+        try:
+            if self.owns_executor:
+                self.executor.shutdown()
+        finally:
+            super().close()
+
+    def execute_leaf_tasks(
         self,
-        node_id: NodeId,  # noqa: ARG002
-        parameters: ParametersT_contra,  # noqa: ARG002
-        eval_state: EvaluationState,  # noqa: ARG002
-    ) -> NodeOutcome:
+        tasks: Sequence[LeafTask[ParametersT_contra]],
+    ) -> Iterator[LeafCompletion]:
         """
-        Reject direct leaf evaluation on the coordinator.
+        Submit leaf tasks and yield their completions in completion order.
 
         Args:
-            node_id: Identifier of the leaf that would be evaluated.
-            parameters: Parameter mapping for the evaluation.
-            eval_state: State containing the leaf context.
-
-        Raises:
-            RuntimeError: Always. Executor schedules must use
-                evaluate_leaf_worker through evaluate_leaves so worker context
-                state can be restored on the coordinator.
-
-        """
-
-        msg = "Use evaluate_leaf_worker instead."
-        raise RuntimeError(msg)
-
-    def set_leaf_futures(self, eval_state: EvaluationState, fs: list[Future]):
-        """
-        Attach submitted leaf futures to an evaluation's root context.
-
-        Args:
-            eval_state: Evaluation state whose futures should be recorded.
-            fs: Mutable list of futures submitted for the evaluation.
-
-        """
-
-        root_ctx: EvaluateContext = cast(
-            "EvaluateContext", eval_state.contexts[self.tree.root]
-        )
-        root_ctx.temp.leaf_futures = fs
-
-    def get_leaf_futures(self, eval_state: EvaluationState) -> list[Future]:
-        """
-        Return the leaf futures recorded for an evaluation.
-
-        Args:
-            eval_state: Evaluation state whose futures should be retrieved.
-
-        Returns:
-            Mutable list of futures submitted for the evaluation.
-
-        """
-
-        root_ctx: EvaluateContext = cast(
-            "EvaluateContext", eval_state.contexts[self.tree.root]
-        )
-        return root_ctx.temp.leaf_futures
-
-    def evaluate_leaves(
-        self,
-        runs: Sequence[EvaluationRun[ParametersT_contra]],
-    ) -> Iterator[tuple[int, NodeId, NodeOutcome]]:
-        """
-        Submit every pending leaf and yield outcomes in completion order.
-
-        Args:
-            runs: Successfully prepared evaluation runs.
+            tasks: Backend-neutral pending leaf tasks.
 
         Yields:
-            Tuples containing the position in runs, completed leaf identifier,
-            and raw node outcome.
-
-        Notes:
-            Worker context result state is applied to the corresponding
-            coordinator-side leaf context before its completion is yielded.
-            Future bookkeeping is initialized before submission so partial
-            submission failures can be cancelled safely.
+            Backend-neutral leaf completions.
 
         """
 
-        future_to_leaf: dict[
-            Future[tuple[NodeOutcome, dict[str, Any]]],
-            tuple[int, NodeId],
-        ] = {}
-
-        # Initialize the future bookkeeping for every run before submitting
-        # anything. If submission fails partway through, cancellation can then
-        # safely inspect every run.
-        for run in runs:
-            self.set_leaf_futures(run.state, [])
-
-        # 1. Submit all pending leaves across all evaluations.
-        for run_idx, run in enumerate(runs):
-            eval_state = run.state
-            parameters = run.parameters
-            leaf_futures = self.get_leaf_futures(eval_state)
-
-            for node_id in self.leaf_ids:
-                # Only leaves that were reached successfully during the top-down
-                # pass should be submitted. Leaves below a failed setup remain
-                # INACTIVE.
-                if not eval_state.is_pending(node_id):
-                    continue
-
-                leaf_node = self.tree.nodes[node_id]
-
-                ctx = eval_state.contexts[node_id]
-                assert ctx is not None
-
-                future = self.executor.submit(
-                    evaluate_leaf_worker,
-                    objective=leaf_node.objective,
-                    parameters=parameters,
-                    ctx=ctx,
+        futures: list[Future[LeafCompletion]] = []
+        for task in tasks:
+            node = self.tree.nodes[task.node_id]
+            assert isinstance(node, LeafNode)
+            futures.append(
+                self.executor.submit(
+                    evaluate_leaf_task,
+                    node.objective,
+                    task,
+                    capture_context_state=True,
                 )
+            )
 
-                leaf_futures.append(future)
-                future_to_leaf[future] = (run_idx, node_id)
-
-        # 2. Yield future results in completion order.
-        for future in as_completed(future_to_leaf):
-            run_idx, node_id = future_to_leaf[future]
-            eval_state = runs[run_idx].state
-
-            result, ctx_result_state = future.result()
-
-            ctx = eval_state.contexts[node_id]
-            assert ctx is not None
-            ctx.apply_result_state(ctx_result_state)
-
-            yield run_idx, node_id, result
-
-    def cancel_pending_and_wait(self, runs: Sequence[EvaluationRun]) -> None:
-        """
-        Cancel queued leaf futures and wait for running futures to finish.
-
-        Args:
-            runs: Evaluation runs whose submitted work must be quiesced.
-
-        Notes:
-            Future cancellation is best-effort. Work that has already started
-            is allowed to finish before this method returns.
-
-        """
-
-        futures = []
-        for run in runs:
-            futures.extend(self.get_leaf_futures(run.state))
-
-        # first try to cancel all leaf futures
-        for fs in futures:
-            assert fs is not None
-            fs.cancel()
-
-        wait(futures)
+        for future in as_completed(futures):
+            yield future.result()
 
 
 class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
@@ -302,9 +148,7 @@ class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
 
         self.executor = executor
         self.executor_factory = executor_factory
-
         super().__init__()
-        self.executor_factory = executor_factory
 
     def prepare(
         self,
