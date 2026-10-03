@@ -248,7 +248,7 @@ if TYPE_CHECKING:
     quantity_processor: QuantityProcessor[Quantities] = process_quantities
     ase_computer = ASEComputer(
         atoms_factory=atoms_factory,
-        calculator=calculator_factory,
+        calculator_factory=calculator_factory,
         quantity_processors=[quantity_processor],
     ).with_evaluator(ase_evaluator)
     assert_type(
@@ -261,7 +261,7 @@ if TYPE_CHECKING:
     # omitting processors must not make the parameter type unknown.
     default_ase_computer = ASEComputer[Parameters, dict[str, Any]](
         atoms_factory=atoms_factory,
-        calculator=calculator_factory,
+        calculator_factory=calculator_factory,
     )
     assert_type(
         default_ase_computer,

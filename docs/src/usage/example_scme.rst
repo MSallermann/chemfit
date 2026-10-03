@@ -158,12 +158,11 @@ As the loss function we use
     from chemfit.ase_objective_function import ASEComputer, PathAtomsFactory
     from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-    def make_energy_term(path, tag, e_ref):
+    def make_energy_term(path, e_ref):
 
         comp = ASEComputer(
-            calculator=calc_factory,
+            calculator_factory=calc_factory,
             atoms_factory=PathAtomsFactory(path),
-            tag=tag,
         )
 
         # Example normalization by n_atoms**2 (as in tests)
@@ -172,7 +171,7 @@ As the loss function we use
             quantity_computer=comp,
         )
 
-    terms = [make_energy_term(p, t, e) for p, t, e in zip(paths, tags, energies)]
+    terms = [make_energy_term(p, e) for p, e in zip(paths, energies)]
     ob = CombinedObjectiveFunction(terms)
 
 

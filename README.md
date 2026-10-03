@@ -103,11 +103,10 @@ def reference_energy(distance: float) -> float:
 # Turn one reference geometry into an energy quantity computer with a loss.
 def energy_term(distance: float):
     computer = ASEComputer(
-        calculator=make_calculator,
+        calculator_factory=make_calculator,
         atoms_factory=lambda: Atoms(
             "Ar2", positions=[(0.0, 0.0, 0.0), (distance, 0.0, 0.0)]
         ),
-        tag=f"distance={distance}",
     )
     return computer.with_loss(squared_error, target=reference_energy(distance))
 
