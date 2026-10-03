@@ -65,7 +65,6 @@ class EvaluateContext:
         self,
         config: SimpleNamespace | None = None,
         shared: SimpleNamespace | None = None,
-        executor: ExecutorLike | None = None,
     ):
         """
         Container for per-evaluation state.
@@ -92,9 +91,6 @@ class EvaluateContext:
                 Optional namespace for shared read-only state that may be
                 reused across related contexts, such as parent/child
                 evaluations.
-            executor:
-                Optional executor-like object that can be used by evaluation
-                code to schedule parallel work.
 
         Attributes:
             quantities (dict[str, Any] | None): Intermediate quantities
@@ -119,7 +115,6 @@ class EvaluateContext:
         """
 
         self._set_defaults(config, shared)
-        self.executor: ExecutorLike | None = executor
 
     def to_meta_data(self) -> dict[str, Any]:
         """
@@ -147,7 +142,6 @@ class EvaluateContext:
         self.config = SimpleNamespace() if config is None else config
         self.shared = SimpleNamespace() if shared is None else shared
         self.meta: dict[str, Any] = {}
-        self.executor = None
         self._children: list[EvaluateContext] = []
 
     def spawn_children(
@@ -157,7 +151,7 @@ class EvaluateContext:
         Create child contexts linked to this context.
 
         Each child receives a deep copy of ``config``, while sharing the
-        same ``shared`` namespace and executor reference as the parent.
+        same ``shared`` namespace as the parent.
 
         An ``EvaluateContext`` is intended to manage at most one batch of
         child contexts per evaluation. Calling ``spawn_children()`` again on
@@ -179,11 +173,7 @@ class EvaluateContext:
         """
 
         self._children = [
-            EvaluateContext(
-                config=copy.deepcopy(self.config),
-                shared=self.shared,
-                executor=self.executor,
-            )
+            EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
             for _ in range(n_children)
         ]
 
