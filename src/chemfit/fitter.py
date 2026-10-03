@@ -5,7 +5,6 @@ import logging
 import math
 import time
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor
 from numbers import Real
 from typing import TYPE_CHECKING, Any, Generic, cast
 
@@ -15,18 +14,17 @@ import numpy.typing as npt
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
-from chemfit.abstract_objective_function import (
-    EvaluateContext,
-    ExecutorLike,
-    ObjectiveFunctor,
-)
-from chemfit.executor_utils import map_with_context
+from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.scheduling import EvaluationRequest
+from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 from pydictnest import flatten_dict, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+
+    from chemfit.scheduling import PreparedSchedule, Scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -93,108 +91,55 @@ class FitterEvaluateContext(EvaluateContext):
         self.opt_quantities = state["opt_quantities"]
 
 
-class FitterObjectiveFunctor(ObjectiveFunctor[ParametersT], Generic[ParametersT]):
-    def __init__(
-        self,
-        wrap_me: ObjectiveFunctor[ParametersT],
-        swallow_exceptions: bool = False,
-        log_exceptions: bool = True,
-        value_bad_params: float = 1e5,
-    ):
-        """
-        Initialize a fitter-specific objective wrapper.
+class FitterEvaluationHook:
+    """Normalize successful root losses before they leave objective lifecycle."""
 
-        This wrapper sits between a raw objective and an optimizer. It adds
-        basic robustness and tracking behavior on top of the wrapped
-        objective:
-
-        - exceptions may be logged and optionally swallowed
-        - non-scalar or NaN return values are replaced by a large penalty
-        - the attached ``FitterEvaluateContext`` is updated with the number of
-          evaluations and the best loss/parameters seen so far
-
-        Args:
-            wrap_me: Underlying objective functor to evaluate.
-            swallow_exceptions: If ``True``, exceptions raised by the wrapped
-                objective are converted into a penalized objective value
-                instead of being re-raised.
-            log_exceptions: If ``True``, exceptions raised by the wrapped
-                objective are logged.
-            value_bad_params (float, optional): Threshold used to represent invalid or numerically
-                unstable parameter regions. Defaults to 1e5.
-
-        """
-
-        super().__init__()
-        self.wrap_me = wrap_me
-        self.value_bad_params = value_bad_params
-        self.swallow_exceptions: bool = swallow_exceptions
-        self.log_exceptions: bool = log_exceptions
-
-    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
-        """Follow child scopes; the wrapped objective shares this wrapper's context."""
-        return self.wrap_me._child_objectives()  # noqa: SLF001
-
-    def _create_context(self) -> FitterEvaluateContext:
-        """Create a fitter-specific default evaluation context."""
-        return FitterEvaluateContext()
-
-    def post_process_return_value(
-        self,
-        parameters: ParametersT,
-        value: float | None,
-        ctx: FitterEvaluateContext,
-    ) -> float:
-        ctx.n_evals += 1
-
-        # then we make sure that the value is a float
-        if not isinstance(value, Real):
-            logger.debug(
-                f"Objective function did not return a single float, but returned `{value}` with type {type(value)}. Clipping loss to {self.value_bad_params}"
-            )
-
-            value = float(self.value_bad_params)
-
-        if math.isnan(value):
-            logger.debug(
-                f"Objective function returned NaN. Clipping loss to {self.value_bad_params}"
-            )
-            value = self.value_bad_params
-
-        loss = float(value)
-
-        if ctx.opt_loss is None or loss < ctx.opt_loss:
-            ctx.opt_loss = loss
-            # Some supported leaves (for example NumPy arrays) are mutable.
-            # Keep the incumbent as a true snapshot of the evaluated values.
-            ctx.opt_params = copy.deepcopy(dict(parameters))
-            ctx.opt_meta = dict(ctx.meta)
-            ctx.opt_quantities = ctx.quantities
-
-        return loss
-
-    def _evaluate(self, parameters: ParametersT, ctx: EvaluateContext) -> float:
+    @staticmethod
+    def post_eval(ctx: EvaluateContext) -> None:
         if not isinstance(ctx, FitterEvaluateContext):
-            msg = "FitterObjectiveFunctor requires a FitterEvaluateContext"
-            raise TypeError(msg)
+            return
 
-        # first we try if we can get a value at all
-        try:
-            value = self.wrap_me(parameters, ctx)
-        except Exception:
-            if self.log_exceptions:
-                logger.exception(
-                    "Caught exception while evaluating objective function."
-                )
-
-            if not self.swallow_exceptions:
-                raise
-
-            value = float("nan")
-
-        return self.post_process_return_value(
-            parameters=parameters, value=value, ctx=ctx
+        value_bad_params = getattr(
+            ctx.config,
+            "_fitter_value_bad_params",
+            None,
         )
+        if value_bad_params is None:
+            return
+
+        # Failed evaluations are interpreted by Fitter after evaluate_many()
+        # returns the root Exception outcome.
+        if getattr(ctx.temp, "exception", None) is not None:
+            return
+
+        ctx.loss = _sanitize_loss(
+            ctx.loss,
+            value_bad_params=float(value_bad_params),
+        )
+
+
+_FITTER_EVALUATION_HOOK = FitterEvaluationHook()
+
+
+def _sanitize_loss(value: object, value_bad_params: float) -> float:
+    """Convert an optimizer-facing objective value to a finite float."""
+
+    if not isinstance(value, Real):
+        logger.debug(
+            "Objective function did not return a single float, but returned "
+            f"`{value}` with type {type(value)}. "
+            f"Clipping loss to {value_bad_params}"
+        )
+        return float(value_bad_params)
+
+    loss = float(value)
+    if math.isnan(loss):
+        logger.debug(
+            f"Objective function returned NaN. Clipping loss to {value_bad_params}"
+        )
+        return float(value_bad_params)
+
+    return loss
 
 
 class Fitter(Generic[ParametersT]):
@@ -209,12 +154,13 @@ class Fitter(Generic[ParametersT]):
         value_bad_params: float = 1e5,
         swallow_exceptions: bool = False,
         log_exceptions: bool = True,
+        scheduler: Scheduler[Any] | None = None,
     ) -> None:
         """
         Driver class for parameter optimization.
 
-        A `Fitter` wraps an objective (either a plain callable or an
-        `ObjectiveFunctor`) in a `FitterObjectiveFunctor` and exposes
+        A `Fitter` evaluates an objective (either a plain callable or an
+        `ObjectiveFunctor`) through a prepared scheduler and exposes
         convenience methods for running optimizations with nevergrad and
         SciPy.
 
@@ -233,9 +179,11 @@ class Fitter(Generic[ParametersT]):
                 whose optimized values lie within this relative distance of
                 their bounds will trigger a warning in `hook_post_fit`.
                 Defaults to None.
-            value_bad_params (float, optional): Threshold used by some
-                objective wrappers to represent invalid or numerically
-                unstable parameter regions. Defaults to 1e5.
+            value_bad_params (float, optional): Penalty used for invalid,
+                non-scalar, NaN, or swallowed-exception objective results.
+                Defaults to 1e5.
+            scheduler: Scheduler used to evaluate the objective. Defaults
+                to ``SerialTreeScheduler``.
 
         """
 
@@ -254,14 +202,22 @@ class Fitter(Generic[ParametersT]):
                 func=objective_function, pass_ctx=False
             )
 
-        self.objective_function = FitterObjectiveFunctor(
-            objective_function,
-            swallow_exceptions=swallow_exceptions,
-            log_exceptions=log_exceptions,
-            value_bad_params=value_bad_params,
-        )
+        self.objective_function = objective_function
+
+        # Register one stateless fitter hook on the root objective. Per-fit
+        # configuration lives on FitterEvaluateContext, so sharing an objective
+        # between fitters does not put fitter-specific state on the hook itself.
+        if (
+            _FITTER_EVALUATION_HOOK.post_eval
+            not in self.objective_function.post_eval_hooks
+        ):
+            self.objective_function.register_eval_hook(_FITTER_EVALUATION_HOOK)
 
         self.value_bad_params: float = value_bad_params
+        self.swallow_exceptions = swallow_exceptions
+        self.log_exceptions = log_exceptions
+        self._scheduler = SerialTreeScheduler() if scheduler is None else scheduler
+        self._schedule: PreparedSchedule[ParametersT] | None = None
 
         self.near_bound_tol = near_bound_tol
 
@@ -270,6 +226,69 @@ class Fitter(Generic[ParametersT]):
         self.callbacks: list[
             tuple[Callable[[int, list[FitterEvaluateContext]], None], int]
         ] = []
+
+    def _record_loss(
+        self,
+        parameters: ParametersT,
+        value: object,
+        ctx: FitterEvaluateContext,
+    ) -> float:
+        """Record one optimizer-visible evaluation result."""
+
+        loss = _sanitize_loss(value, self.value_bad_params)
+        ctx.loss = loss
+        ctx.n_evals += 1
+
+        if ctx.opt_loss is None or loss < ctx.opt_loss:
+            ctx.opt_loss = loss
+            # Some supported leaves (for example NumPy arrays) are mutable.
+            # Keep the incumbent as a true snapshot of the evaluated values.
+
+            ctx.opt_params = copy.deepcopy(dict(parameters))
+            ctx.opt_meta = copy.deepcopy(ctx.meta)
+            ctx.opt_quantities = copy.deepcopy(ctx.quantities)
+
+        return loss
+
+    def _process_evaluation_outcome(
+        self,
+        parameters: ParametersT,
+        outcome: float | Exception,
+        ctx: FitterEvaluateContext,
+    ) -> float:
+        """Convert a completed scheduler root outcome into an optimizer loss."""
+
+        if isinstance(outcome, Exception):
+            if self.log_exceptions:
+                logger.error(
+                    "Caught exception while evaluating objective function.",
+                    exc_info=(type(outcome), outcome, outcome.__traceback__),
+                )
+
+            if not self.swallow_exceptions:
+                raise outcome
+
+            return self._record_loss(
+                parameters=parameters,
+                value=float("nan"),
+                ctx=ctx,
+            )
+
+        # Root post-evaluation hooks may intentionally modify ctx.loss. Treat
+        # that context value as authoritative after a successful lifecycle.
+        value: object = ctx.loss if ctx.loss is not None else outcome
+        return self._record_loss(
+            parameters=parameters,
+            value=value,
+            ctx=ctx,
+        )
+
+    def _close_schedule(self) -> None:
+        """Close the currently prepared schedule, if any."""
+
+        if self._schedule is not None:
+            self._schedule.close()
+            self._schedule = None
 
     def register_callback(
         self, func: Callable[[int, list[FitterEvaluateContext]], None], n_steps: int
@@ -347,7 +366,6 @@ class Fitter(Generic[ParametersT]):
         self,
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
-        executor: ExecutorLike | None = None,
     ) -> None:
         """
         Initialize a user-driven optimization session.
@@ -357,6 +375,9 @@ class Fitter(Generic[ParametersT]):
         returned losses back to the optimizer, and call :meth:`tell` once per
         optimizer step. Call :meth:`finish` with the optimizer's final
         recommendation when the loop is complete.
+
+        ``num_workers`` controls the maximum candidate batch size. Actual
+        execution is delegated entirely to the configured scheduler.
         """
 
         if num_workers < 1:
@@ -365,12 +386,10 @@ class Fitter(Generic[ParametersT]):
         if contexts is not None and len(contexts) != num_workers:
             msg = "contexts must contain one context per worker"
             raise ValueError(msg)
-        self._owns_executor = num_workers != 1 and executor is None
-        if self._owns_executor:
-            executor = ThreadPoolExecutor(num_workers)
+
+        self._close_schedule()
 
         self._hook_pre_fit()
-        self._session_executor = executor
         self._session_num_workers = num_workers
         self._session_step = 0
         self.contexts = (
@@ -379,45 +398,81 @@ class Fitter(Generic[ParametersT]):
             else contexts
         )
 
+        for ctx in self.contexts:
+            ctx.config._fitter_value_bad_params = self.value_bad_params  # noqa: SLF001
+
+        self._schedule = self._scheduler.prepare(self.objective_function)
+
     def ask(
         self,
         parameters: ParametersT | list[ParametersT],
         context_index: int = 0,
     ) -> float | list[float]:
         """
-        Evaluate one candidate or a parallel batch proposed by the user.
+        Evaluate one candidate or a candidate batch through the prepared schedule.
 
         A mapping produces one loss. A list produces a list of losses in
         input order and may contain at most ``num_workers`` candidates.
+        Scheduler results may complete out of order; ``EvaluationResult.index``
+        is used to restore the original request order before returning.
         """
 
-        if not hasattr(self, "_session_num_workers"):
+        if not hasattr(self, "_session_num_workers") or self._schedule is None:
             msg = "call fitter.init() before fitter.ask()"
             raise RuntimeError(msg)
 
-        if isinstance(parameters, Mapping):
-            return self.objective_function(
-                cast("ParametersT", dict(parameters)), self.contexts[context_index]
+        is_single = isinstance(parameters, Mapping)
+
+        if is_single:
+            batch = [cast("ParametersT", dict(parameters))]
+            contexts = [self.contexts[context_index]]
+        else:
+            batch = parameters
+
+            if len(batch) > self._session_num_workers:
+                msg = "a batch cannot contain more candidates than workers"
+                raise ValueError(msg)
+            if len(batch) == 0:
+                return []
+
+            contexts = self.contexts[: len(batch)]
+
+        requests = [
+            EvaluationRequest(
+                parameters=params,
+                ctx=ctx,
             )
+            for params, ctx in zip(batch, contexts, strict=True)
+        ]
 
-        if len(parameters) > self._session_num_workers:
-            msg = "a batch cannot contain more candidates than workers"
-            raise ValueError(msg)
-        if len(parameters) == 0:
-            return []
-        if len(parameters) == 1:
-            return [self.objective_function(parameters[0], self.contexts[0])]
+        missing = object()
+        outcomes: list[float | Exception | object] = [missing] * len(requests)
 
-        if self._session_executor is None:
-            msg = "parallel evaluation requires an executor"
+        # Fully drain the batch before applying fitter exception policy. An
+        # ordinary objective Exception is a normal scheduler outcome, and the
+        # scheduler may still have other candidate work in flight.
+        for result in self._schedule.evaluate_many(requests):
+            outcomes[result.index] = result.value
+
+        if any(outcome is missing for outcome in outcomes):
+            msg = "prepared schedule did not produce a result for every request"
             raise RuntimeError(msg)
 
-        return map_with_context(
-            self._session_executor,
-            self.objective_function,
-            parameters,
-            ctxs=self.contexts[: len(parameters)],
-        )
+        losses: list[float] = []
+        for params, ctx, outcome in zip(batch, contexts, outcomes, strict=True):
+            assert outcome is not missing
+            losses.append(
+                self._process_evaluation_outcome(
+                    parameters=params,
+                    outcome=cast("float | Exception", outcome),
+                    ctx=ctx,
+                )
+            )
+
+        if is_single:
+            return losses[0]
+
+        return losses
 
     def tell(self, step: int | None = None) -> None:
         """
@@ -456,14 +511,12 @@ class Fitter(Generic[ParametersT]):
             assert best_context.opt_params is not None
             opt_params = cast("ParametersT", copy.deepcopy(best_context.opt_params))
 
-        self._hook_post_fit(opt_params)
-
-        self._dispatch_callbacks(final=True)
-
-        if self._owns_executor:
-            cast("ThreadPoolExecutor", self._session_executor).shutdown()
-
-        return opt_params
+        try:
+            self._hook_post_fit(opt_params)
+            self._dispatch_callbacks(final=True)
+            return opt_params
+        finally:
+            self._close_schedule()
 
     def _make_nevergrad_parameterization(
         self, parametrization: Mapping[str, object] | None
@@ -519,31 +572,26 @@ class Fitter(Generic[ParametersT]):
         optimizer_str: str = "NgIohTuned",
         num_workers: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
-        executor: ExecutorLike | None = None,
         parametrization: Mapping[str, object] | None = None,
-        initial_observations: (
-            Iterable[tuple[ParametersT, float | None]] | None
-        ) = None,
+        initial_observations: Iterable[tuple[ParametersT, float | None]] | None = None,
     ) -> ParametersT:
         """
         Optimize parameters using a nevergrad optimizer.
 
-        This method drives nevergrad's ask/tell interface and can evaluate
-        multiple candidate points in parallel through an ``ExecutorLike``
-        instance. One ``FitterEvaluateContext`` is used per worker so that
+        This method drives nevergrad's ask/tell interface and evaluates each
+        candidate batch through the configured scheduler. One
+        ``FitterEvaluateContext`` is used per candidate slot so that
         evaluation-side state can be tracked independently.
 
         Args:
             budget: Total number of objective evaluations to allow.
             optimizer_str: Name of the nevergrad optimizer to use. Must be a
                 key in ``ng.optimizers.registry``.
-            num_workers: Number of points to evaluate in parallel per ask/tell
-                step.
-            contexts: Optional list of per-worker fitter contexts. If
+            num_workers: Maximum number of candidates requested from Nevergrad
+                in one ask/tell step. The configured scheduler determines
+                how those candidates are executed.
+            contexts: Optional list of per-candidate-slot fitter contexts. If
                 provided, its length must equal ``num_workers``.
-            executor: Optional executor used for parallel evaluation when
-                ``num_workers > 1``. If ``None``, a ``ThreadPoolExecutor`` is
-                created.
             parametrization: Optional nested mapping of Nevergrad parameter
                 leaves. It may override any leaf in ``initial_params``; other
                 real-valued scalar leaves use ``Scalar``. All other leaf types
@@ -595,7 +643,7 @@ class Fitter(Generic[ParametersT]):
             parametrization=instru, budget=budget, num_workers=num_workers
         )
 
-        self.init(num_workers=num_workers, contexts=contexts, executor=executor)
+        self.init(num_workers=num_workers, contexts=contexts)
 
         if initial_observations is not None:
             for restart_params, restart_loss_value in initial_observations:
@@ -615,14 +663,12 @@ class Fitter(Generic[ParametersT]):
                 optimizer.suggest(flat_params)
                 asked_params = optimizer.ask()
 
-                # The recorded loss value may be changed by our wrapper
-                # Also we record the side effects on the context this way
-                post_processed_loss_value = (
-                    self.objective_function.post_process_return_value(
-                        parameters=restart_params,
-                        value=restart_loss_value,
-                        ctx=self.contexts[0],
-                    )
+                # Replay the recorded value through the same fitter-side
+                # normalization and incumbent bookkeeping used for live results.
+                post_processed_loss_value = self._record_loss(
+                    parameters=restart_params,
+                    value=restart_loss_value,
+                    ctx=self.contexts[0],
                 )
                 optimizer.tell(asked_params, post_processed_loss_value)
 

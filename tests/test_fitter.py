@@ -1,4 +1,7 @@
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from __future__ import annotations
+
+from concurrent.futures import ProcessPoolExecutor
+from functools import partial
 from typing import Any
 
 import nevergrad as ng
@@ -7,6 +10,7 @@ import pytest
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
@@ -21,7 +25,10 @@ def square_x(params: dict[str, float]) -> float:
     return params["x"] ** 2
 
 
-def square_x_with_quantities(params: dict[str, float], ctx: EvaluateContext) -> float:
+def square_x_with_quantities(
+    params: dict[str, float],
+    ctx: EvaluateContext,
+) -> float:
     ctx.quantities = {"evaluated_x": params["x"]}
     return square_x(params)
 
@@ -29,8 +36,8 @@ def square_x_with_quantities(params: dict[str, float], ctx: EvaluateContext) -> 
 def collect_progress(
     step: int,
     ctxs: list[FitterEvaluateContext],
-    progress: list,
-):
+    progress: list[dict[str, Any]],
+) -> None:
     progress.extend(
         [
             {
@@ -102,10 +109,51 @@ def test_nevergrad_callbacks_run_at_requested_interval():
         optimizer_str="OnePlusOne",
     )
 
-    assert progress
-    assert progress[-1]["n_evals"] == 4
+    assert [item["step"] for item in progress] == [2, 4]
+    assert [item["n_evals"] for item in progress] == [2, 4]
     assert progress[-1]["opt_loss"] is not None
     assert progress[-1]["opt_params"] is not None
+
+
+def test_nevergrad_callback_runs_for_final_partial_interval():
+    progress: list[dict[str, Any]] = []
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+    fitter.register_callback(
+        lambda step, ctxs: collect_progress(step, ctxs, progress),
+        n_steps=2,
+    )
+
+    fitter.fit_nevergrad(
+        budget=5,
+        optimizer_str="OnePlusOne",
+    )
+
+    assert [item["step"] for item in progress] == [2, 4, 5]
+    assert progress[-1]["n_evals"] == 5
+
+
+def test_callback_step_resets_for_each_fit_session():
+    steps: list[int] = []
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+    fitter.register_callback(
+        lambda step, _ctxs: steps.append(step),
+        n_steps=1,
+    )
+
+    for _ in range(2):
+        fitter.init()
+        fitter.ask({"x": 1.0})
+        fitter.tell()
+        fitter.finish()
+
+    assert steps == [1, 1]
+
+
+def test_register_callback_rejects_invalid_interval():
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+
+    with pytest.raises(ValueError, match="at least 1"):
+        fitter.register_callback(lambda _step, _ctxs: None, n_steps=0)
 
 
 def test_scipy_respects_bounds():
@@ -189,6 +237,7 @@ def test_seed_observations():
         bounds={"x": (0.0, 5.0)},
     )
     contexts = [FitterEvaluateContext(), FitterEvaluateContext()]
+
     opt_params = fitter.fit_nevergrad(
         budget=2,
         num_workers=2,
@@ -198,15 +247,18 @@ def test_seed_observations():
             ({"x": 10.0}, 0.0),  # invalid, should be skipped
         ],
     )
-    # replayed observations should not consume live evaluation budget
+
+    # Replayed observations should not consume live evaluation budget.
     assert n_calls == 2
-    # valid replayed point should have been used to seed incumbent state
+
+    # The valid replayed point should seed incumbent state.
     assert contexts[0].opt_loss is not None
     assert contexts[0].opt_loss <= 1.0
-    # invalid replayed point should not become incumbent
+
+    # The invalid replayed point must not become the incumbent.
     assert contexts[0].opt_params is not None
     assert 0.0 <= contexts[0].opt_params["x"] <= 5.0
-    # optimizer should still return an in-bounds result
+
     assert 0.0 <= opt_params["x"] <= 5.0
 
 
@@ -220,19 +272,37 @@ def test_nevergrad_evaluates_partial_final_batch():
 
     fitter = Fitter(objective, initial_params={"x": 1.0})
     fitter.fit_nevergrad(budget=3, num_workers=2)
+
     assert n_calls == 3
+
+
+def test_ask_requires_initialized_session():
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+
+    with pytest.raises(RuntimeError, match=r"fitter\.init"):
+        fitter.ask({"x": 1.0})
+
+
+def test_tell_requires_initialized_session():
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+
+    with pytest.raises(RuntimeError, match=r"fitter\.init"):
+        fitter.tell()
 
 
 def test_user_supplied_ask_tell_interface():
     candidates = iter([{"x": 0.0}, {"x": 2.0}, {"x": 4.0}])
     observations = []
     fitter = Fitter(lambda params: (params["x"] - 2.0) ** 2, {"x": 0.0})
+
     fitter.init()
     for params in candidates:
         loss = fitter.ask(params)
         observations.append((params, loss))
         fitter.tell()
+
     result = fitter.finish()
+
     assert result == {"x": 2.0}
     assert observations == [
         ({"x": 0.0}, 4.0),
@@ -244,30 +314,41 @@ def test_user_supplied_ask_tell_interface():
 
 def test_user_supplied_ask_tell_recommendation_and_partial_batch():
     fitter = Fitter(lambda params: params["x"] ** 2, {"x": 0.0})
-    with ThreadPoolExecutor(2) as executor:
-        fitter.init(num_workers=2, executor=executor)
-        losses = fitter.ask([{"x": 0.0}, {"x": 1.0}])
-        fitter.tell()
-        final_loss = fitter.ask([{"x": 2.0}])
-        fitter.tell()
-        result = fitter.finish({"x": 0.5})
+
+    fitter.init(num_workers=2)
+    losses = fitter.ask([{"x": 0.0}, {"x": 1.0}])
+    fitter.tell()
+    final_loss = fitter.ask([{"x": 2.0}])
+    fitter.tell()
+    result = fitter.finish({"x": 0.5})
+
     assert losses == [0.0, 1.0]
     assert final_loss == [4.0]
     assert result == {"x": 0.5}
 
 
-def test_process_pool_preserves_fitter_context_state():
+def test_executor_scheduler_preserves_fitter_context_state():
     objective = WrappedObjectiveFunctor(square_x_with_quantities, pass_ctx=True)
-    fitter = Fitter(objective, {"x": 0.0})
-    with ProcessPoolExecutor(2) as executor:
-        fitter.init(num_workers=2, executor=executor)
-        assert fitter.ask([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
-        assert fitter.ask([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
+    scheduler = ExecutorTreeScheduler(
+        executor_factory=partial(ProcessPoolExecutor, max_workers=2)
+    )
+    fitter = Fitter(
+        objective,
+        {"x": 0.0},
+        scheduler=scheduler,
+    )
+
+    fitter.init(num_workers=2)
+    assert fitter.ask([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
+    assert fitter.ask([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
+    fitter.finish()
+
     first, second = fitter.contexts
     assert first.n_evals == 2
     assert first.opt_loss == 1.0
     assert first.opt_params == {"x": 1.0}
     assert first.opt_quantities == {"evaluated_x": 1.0}
+
     assert second.n_evals == 2
     assert second.opt_loss == 9.0
     assert second.opt_params == {"x": 3.0}
@@ -275,20 +356,103 @@ def test_process_pool_preserves_fitter_context_state():
 
 
 def test_new_best_without_quantities_clears_previous_best_quantities():
-    fitter = Fitter(square_x, {"x": 0.0})
-    ctx = FitterEvaluateContext()
-    ctx.quantities = {"source": "previous best"}
-    fitter.objective_function.post_process_return_value({"x": 2.0}, 4.0, ctx)
-    ctx.quantities = None
-    fitter.objective_function.post_process_return_value({"x": 1.0}, 1.0, ctx)
+    def objective(params: dict[str, float], ctx: EvaluateContext) -> float:
+        if params["x"] == 2.0:
+            ctx.quantities = {"source": "previous best"}
+        else:
+            ctx.quantities = None
+        return params["x"] ** 2
+
+    fitter = Fitter(
+        WrappedObjectiveFunctor(objective, pass_ctx=True),
+        {"x": 0.0},
+    )
+
+    fitter.init()
+    fitter.ask({"x": 2.0})
+    fitter.ask({"x": 1.0})
+    fitter.finish()
+
+    ctx = fitter.contexts[0]
     assert ctx.opt_loss == 1.0
     assert ctx.opt_params == {"x": 1.0}
     assert ctx.opt_quantities is None
 
 
+def test_best_evaluation_state_is_deep_copied():
+    def objective(params: dict[str, Any], ctx: EvaluateContext) -> float:
+        ctx.meta["nested"] = {"values": [params["x"]]}
+        ctx.quantities = {"nested": {"values": [params["x"]]}}
+        return float(params["x"] ** 2)
+
+    fitter = Fitter(
+        WrappedObjectiveFunctor(objective, pass_ctx=True),
+        {"x": 0.0, "nested": {"values": []}},
+    )
+    params = {"x": 1.0, "nested": {"values": [1]}}
+
+    fitter.init()
+    fitter.ask(params)
+
+    ctx = fitter.contexts[0]
+    assert ctx.opt_params is not None
+    assert ctx.opt_meta is not None
+    assert ctx.opt_quantities is not None
+
+    params["nested"]["values"].append(99)
+    ctx.meta["nested"]["values"].append(99)
+    ctx.quantities["nested"]["values"].append(99)
+
+    assert ctx.opt_params["nested"]["values"] == [1]
+    assert ctx.opt_meta["nested"]["values"] == [1.0]
+    assert ctx.opt_quantities["nested"]["values"] == [1.0]
+
+    fitter.finish()
+
+
+def test_nan_loss_is_replaced_by_penalty():
+    fitter = Fitter(
+        lambda _params: float("nan"),
+        {"x": 0.0},
+        value_bad_params=123.0,
+    )
+
+    fitter.init()
+    loss = fitter.ask({"x": 0.0})
+    fitter.finish()
+
+    assert loss == 123.0
+    assert fitter.contexts[0].n_evals == 1
+    assert fitter.contexts[0].opt_loss == 123.0
+
+
+def test_swallowed_exception_becomes_penalty_and_counts_as_evaluation():
+    def objective(_params: dict[str, float]) -> float:
+        msg = "bad parameters"
+        raise ValueError(msg)
+
+    fitter = Fitter(
+        objective,
+        {"x": 0.0},
+        value_bad_params=321.0,
+        swallow_exceptions=True,
+        log_exceptions=False,
+    )
+
+    fitter.init()
+    loss = fitter.ask({"x": 1.0})
+    fitter.finish()
+
+    ctx = fitter.contexts[0]
+    assert loss == 321.0
+    assert ctx.n_evals == 1
+    assert ctx.opt_loss == 321.0
+    assert ctx.opt_params == {"x": 1.0}
+
+
 def test_initial_parameters_must_be_mapping():
     with pytest.raises(TypeError, match="must be a mapping"):
-        Fitter(lambda _params: 0.0, [1.0, 2.0])  # type: ignore
+        Fitter(lambda _params: 0.0, [1.0, 2.0])  # type: ignore[arg-type]
 
 
 def test_nevergrad_parameter_leaves():
@@ -314,9 +478,11 @@ def test_nevergrad_parameter_leaves():
             "metadata": "fixed",
         },
     )
+
     assert fitter.initial_parameters["model"] == "quadratic"
     assert fitter.initial_parameters["core"]["x"] == 1.0
     assert np.array_equal(fitter.initial_parameters["core"]["weights"], [1.0, 2.0])
+
     result = fitter.fit_nevergrad(
         budget=3,
         optimizer_str="OnePlusOne",
@@ -324,11 +490,16 @@ def test_nevergrad_parameter_leaves():
             "model": ng.p.Choice(["quadratic", "absolute"]),
             "core": {
                 "x": ng.p.Log(init=1.0, lower=0.1, upper=10.0),
-                "weights": ng.p.Array(init=[1.0, 2.0], lower=-3.0, upper=3.0),
+                "weights": ng.p.Array(
+                    init=[1.0, 2.0],
+                    lower=-3.0,
+                    upper=3.0,
+                ),
             },
             "metadata": ng.p.Constant("fixed"),
         },
     )
+
     assert result["model"] in {"quadratic", "absolute"}
     assert 0.1 <= result["core"]["x"] <= 10.0
     assert isinstance(result["core"]["weights"], np.ndarray)
@@ -349,16 +520,20 @@ def test_nevergrad_parametrization_can_be_partial():
         },
         bounds={"x": (0.0, 2.0)},
     )
+
     instrumentation = fitter._make_nevergrad_parameterization(  # noqa: SLF001
         {
             "model": {"kind": choice},
             "label": ng.p.Constant("fixed"),
         }
     )
+
     positional_parameters = instrumentation[0]
     assert isinstance(positional_parameters, ng.p.Tuple)
+
     parameter_leaves = positional_parameters[0]
     assert isinstance(parameter_leaves, ng.p.Dict)
+
     x_parameter = parameter_leaves["x"]
     assert isinstance(x_parameter, ng.p.Scalar)
     lower_bound, upper_bound = x_parameter.bounds
@@ -366,9 +541,11 @@ def test_nevergrad_parametrization_can_be_partial():
     assert upper_bound is not None
     assert np.array_equal(lower_bound, [0.0])
     assert np.array_equal(upper_bound, [2.0])
+
     model_kind_parameter = parameter_leaves["model.kind"]
     assert isinstance(model_kind_parameter, ng.p.Choice)
     assert model_kind_parameter is not choice
+
     label_parameter = parameter_leaves["label"]
     assert isinstance(label_parameter, ng.p.Constant)
     assert label_parameter.value == "fixed"
@@ -376,11 +553,13 @@ def test_nevergrad_parametrization_can_be_partial():
 
 def test_nevergrad_requires_explicit_non_numeric_leaves():
     fitter = Fitter(lambda _params: 0.0, {"model": "linear"})
+
     with pytest.raises(TypeError, match=r"ng\.p\.Constant"):
         fitter.fit_nevergrad(budget=1)
 
 
 def test_nevergrad_parametrization_requires_parameter_leaves():
     fitter = Fitter(square_x, {"x": 1.0})
+
     with pytest.raises(TypeError, match="Nevergrad parameters"):
         fitter.fit_nevergrad(budget=1, parametrization={"x": 2.0})
