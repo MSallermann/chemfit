@@ -30,6 +30,7 @@ from typing import (
 )
 
 from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.abstract_objective_function import ResourceRequest as _ResourceRequest
 
 if TYPE_CHECKING:
     from chemfit.abstract_objective_function import ObjectiveFunctor
@@ -98,13 +99,8 @@ ObjectivePath: TypeAlias = tuple[int, ...]
 #: suitable for static placement.
 SchedulingProfile: TypeAlias = Mapping[ObjectivePath, float]
 
-#: Extensible named resource request.
-#:
-#: This alias is provided for optional scheduler capabilities and future
-#: resource-aware integrations.  Core scheduling does not require schedulers to
-#: interpret these values.  Example keys might include ``"cpus"``, ``"gpus"``,
-#: ``"memory_gb"``, or backend-specific resources.
-ResourceRequest: TypeAlias = Mapping[str, float]
+#: Backend-independent static resources needed for one evaluation.
+ResourceRequest: TypeAlias = _ResourceRequest
 
 
 @runtime_checkable
