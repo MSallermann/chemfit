@@ -71,9 +71,7 @@ if TYPE_CHECKING:
     # Fitter carries the objective's parameter type through its public API.
     fitter = Fitter(objective, {"x": 1.0})
     assert_type(fitter, Fitter[Parameters])
-    fitter.objective_function(
-        {"x": "wrong"}  # pyright: ignore[reportArgumentType]
-    )
+    fitter.objective_function({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     # An unannotated lambda falls back to a dynamic dictionary, keeping the
     # common concise form usable without discarding precise function annotations.

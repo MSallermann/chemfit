@@ -202,7 +202,7 @@ class Fitter(Generic[ParametersT]):
                 func=objective_function, pass_ctx=False
             )
 
-        self.objective_function = objective_function
+        self.objective_function: ObjectiveFunctor[ParametersT] = objective_function
 
         # Register one stateless fitter hook on the root objective. Per-fit
         # configuration lives on FitterEvaluateContext, so sharing an objective
