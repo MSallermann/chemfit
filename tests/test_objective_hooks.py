@@ -28,6 +28,29 @@ class FailingObjective(ObjectiveFunctor[dict[str, float]]):
         raise ValueError(msg)
 
 
+def test_hook_object_and_direct_callbacks_are_mutually_exclusive():
+    objective = ConstantObjective()
+
+    with pytest.raises(TypeError, match="either hook or pre/post callbacks"):
+        objective.register_eval_hook(
+            hook=UUIDHook(),
+            pre=lambda _ctx: None,
+        )
+
+
+def test_direct_pre_and_post_callbacks_are_registered():
+    objective = ConstantObjective()
+    calls: list[str] = []
+    objective.register_eval_hook(
+        pre=lambda _ctx: calls.append("pre"),
+        post=lambda _ctx: calls.append("post"),
+    )
+
+    objective({"value": 3.0})
+
+    assert calls == ["pre", "post"]
+
+
 def test_uuid_hook_assigns_new_id_when_context_is_reused(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -42,7 +65,7 @@ def test_uuid_hook_assigns_new_id_when_context_is_reused(
     )
 
     objective = ConstantObjective()
-    objective.register_eval_hook(UUIDHook())
+    objective.register_eval_hook(hook=UUIDHook())
     ctx = EvaluateContext()
 
     objective({"value": 3.0}, ctx)
@@ -59,7 +82,7 @@ def test_timing_hook_records_elapsed_seconds(monkeypatch: pytest.MonkeyPatch):
     )
 
     objective = ConstantObjective()
-    objective.register_eval_hook(TimingHook())
+    objective.register_eval_hook(hook=TimingHook())
     ctx = EvaluateContext()
 
     assert objective({"value": 3.0}, ctx) == 3.0
@@ -73,7 +96,7 @@ def test_timing_hook_records_failed_evaluation(monkeypatch: pytest.MonkeyPatch):
     )
 
     objective = FailingObjective()
-    objective.register_eval_hook(TimingHook(meta_key="runtime"))
+    objective.register_eval_hook(hook=TimingHook(meta_key="runtime"))
     ctx = EvaluateContext()
 
     with pytest.raises(ValueError, match="evaluation failed"):
@@ -88,7 +111,10 @@ def test_recursive_timing_visits_nested_terms(recursive: bool):
     leaf = ConstantObjective()
     inner = CombinedObjectiveFunction([leaf, ConstantObjective()])
     objective = CombinedObjectiveFunction([inner, ConstantObjective()])
-    assert objective.register_eval_hook(TimingHook(), recursive=recursive) is objective
+    assert (
+        objective.register_eval_hook(hook=TimingHook(), recursive=recursive)
+        is objective
+    )
     ctx = EvaluateContext()
     assert objective({"value": 3.0}, ctx) == 9.0
     assert ctx.meta["timing"]["elapsed_seconds"] >= 0

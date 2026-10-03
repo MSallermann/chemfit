@@ -54,19 +54,19 @@ def make_hooked_cob(*, failing: bool = False) -> CombinedObjectiveFunction:
     terms = []
     for offset in range(N_TERMS):
         term = HookedObjective(float(offset))
-        term.register_eval_hook(RecordingHook())
-        term.register_eval_hook(UUIDHook())
-        term.register_eval_hook(TimingHook())
+        term.register_eval_hook(hook=RecordingHook())
+        term.register_eval_hook(hook=UUIDHook())
+        term.register_eval_hook(hook=TimingHook())
         if failing and offset == N_TERMS - 1:
-            term.register_eval_hook(FailingPostHook())
+            term.register_eval_hook(hook=FailingPostHook())
         terms.append(term)
     return CombinedObjectiveFunction(terms)
 
 
 def register_combined_hooks(objective: ObjectiveFunctor) -> None:
-    objective.register_eval_hook(RecordingHook())
-    objective.register_eval_hook(UUIDHook())
-    objective.register_eval_hook(TimingHook())
+    objective.register_eval_hook(hook=RecordingHook())
+    objective.register_eval_hook(hook=UUIDHook())
+    objective.register_eval_hook(hook=TimingHook())
 
 
 def assert_hook_metadata(metadata: dict[str, Any], expected_loss: float) -> None:

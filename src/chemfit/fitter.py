@@ -211,7 +211,7 @@ class Fitter(Generic[ParametersT]):
             _FITTER_EVALUATION_HOOK.post_eval
             not in self.objective_function.post_eval_hooks
         ):
-            self.objective_function.register_eval_hook(_FITTER_EVALUATION_HOOK)
+            self.objective_function.register_eval_hook(hook=_FITTER_EVALUATION_HOOK)
 
         self.value_bad_params: float = value_bad_params
         self.swallow_exceptions = swallow_exceptions
