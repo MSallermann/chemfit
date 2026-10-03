@@ -10,6 +10,7 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     ObjectiveFunctor,
     QuantityComputer,
+    ResourceRequest,
 )
 
 # These mirror the input/output directions of the abstract interfaces:
@@ -34,6 +35,7 @@ class WrappedObjectiveFunctor(
         pass_ctx: bool = False,
         func_args: tuple[Any, ...] | None = None,
         func_kwargs: dict[str, Any] | None = None,
+        resources: ResourceRequest | None = None,
     ):
         """
         Initialize a wrapped objective functor.
@@ -44,11 +46,14 @@ class WrappedObjectiveFunctor(
                 ``parameters`` and ``ctx``.
             pass_ctx: If ``True``, call ``func(parameters, ctx)``. If
                 ``False``, call ``func(parameters)``.
+            resources: Static resources required for one evaluation.
 
         """
         super().__init__()
         self.func = func
         self.pass_ctx = pass_ctx
+        if resources is not None:
+            self.resources = resources
 
         if func_args is None:
             self.func_args = ()
@@ -80,7 +85,11 @@ class WrappedObjectiveFunctor(
 
         """
         return type(self)(
-            func=self.func, pass_ctx=self.pass_ctx, func_args=args, func_kwargs=kwargs
+            func=self.func,
+            pass_ctx=self.pass_ctx,
+            func_args=args,
+            func_kwargs=kwargs,
+            resources=self.resources,
         )
 
     def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
@@ -110,6 +119,8 @@ class WrappedObjectiveFunctor(
 
 def to_objective_functor(
     pass_ctx: bool = False,
+    *,
+    resources: ResourceRequest | None = None,
 ) -> Callable[
     [WrappableObjFunction[ParametersT_contra]],
     WrappedObjectiveFunctor[ParametersT_contra],
@@ -121,6 +132,7 @@ def to_objective_functor(
         pass_ctx: If ``True``, the decorated callable is expected to accept
             ``(parameters, ctx)``. Otherwise, it is expected to accept only
             ``(parameters)``.
+        resources: Static resources required for one evaluation.
 
     Returns:
         Decorator that converts a compatible callable into a
@@ -131,7 +143,11 @@ def to_objective_functor(
     def wrap(
         func: WrappableObjFunction[ParametersT_contra],
     ) -> WrappedObjectiveFunctor[ParametersT_contra]:
-        return WrappedObjectiveFunctor(func, pass_ctx=pass_ctx)
+        return WrappedObjectiveFunctor(
+            func,
+            pass_ctx=pass_ctx,
+            resources=resources,
+        )
 
     return wrap
 
@@ -149,6 +165,7 @@ class WrappedQuantityComputer(
         pass_ctx: bool = False,
         func_args: tuple[Any, ...] | None = None,
         func_kwargs: dict[str, Any] | None = None,
+        resources: ResourceRequest | None = None,
     ):
         """
         Initialize a wrapped quantity computer.
@@ -159,12 +176,15 @@ class WrappedQuantityComputer(
                 ``parameters`` and ``ctx``.
             pass_ctx: If ``True``, call ``func(parameters, ctx)``. If
                 ``False``, call ``func(parameters)``.
+            resources: Static resources required for one computation.
 
         """
 
         super().__init__()
         self.func = func
         self.pass_ctx = pass_ctx
+        if resources is not None:
+            self.resources = resources
 
         if func_args is None:
             self.func_args = ()
@@ -196,7 +216,11 @@ class WrappedQuantityComputer(
 
         """
         return type(self)(
-            func=self.func, pass_ctx=self.pass_ctx, func_args=args, func_kwargs=kwargs
+            func=self.func,
+            pass_ctx=self.pass_ctx,
+            func_args=args,
+            func_kwargs=kwargs,
+            resources=self.resources,
         )
 
     def _compute(
@@ -228,6 +252,8 @@ class WrappedQuantityComputer(
 
 def to_quantity_computer(
     pass_ctx: bool = False,
+    *,
+    resources: ResourceRequest | None = None,
 ) -> Callable[
     [WrappableQuantFunction[ParametersT_contra, QuantitiesT_co]],
     WrappedQuantityComputer[ParametersT_contra, QuantitiesT_co],
@@ -239,6 +265,7 @@ def to_quantity_computer(
         pass_ctx: If ``True``, the decorated callable is expected to accept
             ``(parameters, ctx)``. Otherwise, it is expected to accept only
             ``(parameters)``.
+        resources: Static resources required for one computation.
 
     Returns:
         Decorator that converts a compatible callable into a
@@ -249,6 +276,10 @@ def to_quantity_computer(
     def wrap(
         func: WrappableQuantFunction[ParametersT_contra, QuantitiesT_co],
     ) -> WrappedQuantityComputer[ParametersT_contra, QuantitiesT_co]:
-        return WrappedQuantityComputer(func, pass_ctx=pass_ctx)
+        return WrappedQuantityComputer(
+            func,
+            pass_ctx=pass_ctx,
+            resources=resources,
+        )
 
     return wrap

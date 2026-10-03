@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from functools import partial
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, cast
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
 from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
@@ -361,6 +361,9 @@ QuantitiesT_co = TypeVar(
 )
 LossQuantitiesT = TypeVar("LossQuantitiesT", bound=dict[str, Any])
 
+#: Extensible static resources needed for one objective or computer evaluation.
+ResourceRequest: TypeAlias = Mapping[str, float]
+
 
 class PreEvaluationHook(Protocol):
     """Callback that runs before an objective evaluation."""
@@ -409,6 +412,19 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
 
         self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+        self._resources: dict[str, float] = {}
+
+    @property
+    def resources(self) -> ResourceRequest:
+        """Return static resources required for one evaluation."""
+
+        return self._resources
+
+    @resources.setter
+    def resources(self, value: ResourceRequest) -> None:
+        """Replace the static resource requirements for one evaluation."""
+
+        self._resources = dict(value)
 
     def _create_context(self) -> EvaluateContext:
         """Create the default context used when none is supplied."""
@@ -667,6 +683,19 @@ class QuantityComputer(Generic[ParametersT_contra, QuantitiesT_co]):
 
         """
         self.static_meta_data: dict[str, Any] = {}  # For static meta data
+        self._resources: dict[str, float] = {}
+
+    @property
+    def resources(self) -> ResourceRequest:
+        """Return static resources required for one computation."""
+
+        return self._resources
+
+    @resources.setter
+    def resources(self, value: ResourceRequest) -> None:
+        """Replace the static resource requirements for one computation."""
+
+        self._resources = dict(value)
 
     def __call__(
         self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
@@ -776,6 +805,18 @@ class QuantityComputerObjectiveFunction(
         self.quantity_computer = quantity_computer
         self.static_meta_data: dict[str, Any] = {}
         self.loss_function = loss_function
+
+    @property
+    def resources(self) -> ResourceRequest:
+        """Return the underlying quantity computer's static resources."""
+
+        return self.quantity_computer.resources
+
+    @resources.setter
+    def resources(self, value: ResourceRequest) -> None:
+        """Replace the underlying quantity computer's static resources."""
+
+        self.quantity_computer.resources = value
 
     def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """

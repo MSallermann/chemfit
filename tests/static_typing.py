@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from chemfit.abstract_objective_function import (
         EvaluateContext,
         QuantityComputerObjectiveFunction,
+        ResourceRequest,
     )
     from chemfit.ase_objective_function import (
         AtomsFactory,
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from chemfit.combined_objective_function import CombinedObjectiveFunction
     from chemfit.file_based_computer import FileBasedQuantityComputer
     from chemfit.fitter import Fitter
+    from chemfit.tree_schedule import SerialTreeSchedule, SerialTreeScheduler
     from chemfit.wrap_funcs import (
         WrappedObjectiveFunctor,
         WrappedQuantityComputer,
@@ -37,12 +39,16 @@ if TYPE_CHECKING:
     Quantities = dict[str, float]
 
     # Objective wrappers preserve the concrete parameter dictionary type.
-    @to_objective_functor()
+    @to_objective_functor(resources={"cpus": 4})
     def objective(parameters: Parameters) -> float:
         return parameters["x"] ** 2
 
     assert_type(objective, WrappedObjectiveFunctor[Parameters])
+    assert_type(objective.resources, ResourceRequest)
     objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
+
+    root_leaf_schedule = SerialTreeScheduler().prepare(objective)
+    assert_type(root_leaf_schedule, SerialTreeSchedule[Parameters])
 
     # Context-aware callables are accepted without widening their parameters.
     def objective_with_context(parameters: Parameters, _ctx: EvaluateContext) -> float:
@@ -92,7 +98,7 @@ if TYPE_CHECKING:
 
     # Quantity wrappers preserve both their parameter and result types. Binding
     # arguments and attaching a loss function must not erase either one.
-    @to_quantity_computer()
+    @to_quantity_computer(resources={"cpus": 8, "gpus": 1})
     def compute_quantities(parameters: Parameters, scale: float) -> Quantities:
         return {"x2": scale * parameters["x"] ** 2}
 
@@ -103,6 +109,7 @@ if TYPE_CHECKING:
         compute_quantities,
         WrappedQuantityComputer[Parameters, Quantities],
     )
+    assert_type(compute_quantities.resources, ResourceRequest)
     compute_quantities({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     bound_quantities = compute_quantities.bind(scale=2.0)
@@ -111,6 +118,7 @@ if TYPE_CHECKING:
         quantity_objective,
         QuantityComputerObjectiveFunction[Parameters, Quantities],
     )
+    assert_type(quantity_objective.resources, ResourceRequest)
     quantity_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     # Combined objectives preserve a common parameter type with either the
