@@ -9,12 +9,14 @@ from ase.calculators.calculator import Calculator
 from ase.units import Bohr
 
 import chemfit.kabsch as kb
-from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    QuantityComputerObjectiveFunction,
+)
 from chemfit.ase_objective_function import (
+    ASEComputer,
     AtomsFactory,
-    MinimizationASEComputer,
     PathAtomsFactory,
-    SinglePointASEComputer,
 )
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.data_utils import process_csv
@@ -77,7 +79,7 @@ def test_factories():
     atoms = Atoms()
 
     calc_factory = scme_factories.SCMECalculatorFactory(DEFAULT_PARAMS, None, None)
-    calc_factory(atoms)
+    calc_factory({}, atoms, EvaluateContext())
 
     def check_if_params_applied(params: dict):
         for k, v_in in params.get("dispersion", {}).items():
@@ -103,8 +105,8 @@ def test_factories():
 
     check_if_params_applied(DEFAULT_PARAMS)
 
-    param_applier = scme_factories.SCMEParameterApplier()
-    param_applier(atoms, INITIAL_PARAMS)
+    atoms = Atoms()
+    calc_factory(INITIAL_PARAMS, atoms, EvaluateContext())
 
     check_if_params_applied(INITIAL_PARAMS)
 
@@ -112,11 +114,8 @@ def test_factories():
 def test_single_energy_objective_function():
     ob = QuantityComputerObjectiveFunction(
         loss_function=lambda quants: (quants["energy"] - REFERENCE_ENERGIES[10]) ** 2,
-        quantity_computer=SinglePointASEComputer(
-            calc_factory=scme_factories.SCMECalculatorFactory(
-                DEFAULT_PARAMS, None, None
-            ),
-            param_applier=scme_factories.SCMEParameterApplier(),
+        quantity_computer=ASEComputer(
+            calculator=scme_factories.SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
             tag=TAGS[10],
         ),
@@ -133,22 +132,23 @@ def test_single_energy_objective_function():
 def test_dimer_distance_objective_function():
     REF_DISTANCE = 3.2
 
-    def compute_dimer_distance(calc: Calculator, atoms: Atoms):
+    def compute_dimer_distance(
+        calc: Calculator,
+        atoms: Atoms,
+        _ctx: EvaluateContext,
+    ):
         quants = calc.results
         quants["dimer_distance"] = atoms.get_distance(0, 3)
         return quants
 
     ob = QuantityComputerObjectiveFunction(
         loss_function=lambda quants: (quants["dimer_distance"] - REF_DISTANCE) ** 2,
-        quantity_computer=MinimizationASEComputer(
-            calc_factory=scme_factories.SCMECalculatorFactory(
-                DEFAULT_PARAMS, None, None
-            ),
-            param_applier=scme_factories.SCMEParameterApplier(),
+        quantity_computer=ASEComputer(
+            calculator=scme_factories.SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
             quantity_processors=[compute_dimer_distance],
             tag="dimer_distance",
-        ),
+        ).minimize(),
     )
 
     fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
@@ -164,7 +164,12 @@ def test_kabsch_objective_function():
             self.atoms_factory = atoms_factory
             self._positions_ref = None
 
-        def __call__(self, _: Calculator, atoms: Atoms) -> dict[str, Any]:
+        def __call__(
+            self,
+            _: Calculator,
+            atoms: Atoms,
+            _ctx: EvaluateContext,
+        ) -> dict[str, Any]:
             if self._positions_ref is None:
                 self._positions_ref = self.atoms_factory().positions
 
@@ -181,17 +186,14 @@ def test_kabsch_objective_function():
 
     ob = QuantityComputerObjectiveFunction(
         loss_function=lambda quants: quants["kabsch_rmsd"],
-        quantity_computer=MinimizationASEComputer(
-            calc_factory=scme_factories.SCMECalculatorFactory(
-                DEFAULT_PARAMS, None, None
-            ),
-            param_applier=scme_factories.SCMEParameterApplier(),
+        quantity_computer=ASEComputer(
+            calculator=scme_factories.SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
             quantity_processors=[
                 KabschDistance(atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]))
             ],
             tag="kabsch",
-        ),
+        ).minimize(),
     )
 
     fitter = Fitter(
@@ -212,13 +214,12 @@ def construct_objective_function(
         ob_term = QuantityComputerObjectiveFunction(
             loss_function=lambda quants, e=e: (quants["energy"] - e) ** 2
             / quants["n_atoms"] ** 2,
-            quantity_computer=SinglePointASEComputer(
-                calc_factory=scme_factories.SCMECalculatorFactory(
+            quantity_computer=ASEComputer(
+                calculator=scme_factories.SCMECalculatorFactory(
                     default_scme_params=DEFAULT_PARAMS,
                     path_to_scme_expansions=None,
                     parametrization_key=None,
                 ),
-                param_applier=scme_factories.SCMEParameterApplier(),
                 atoms_factory=PathAtomsFactory(p),
                 tag=t,
             ),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import logging
+import copy
+import functools
 import threading
 from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, runtime_checkable
 
@@ -8,6 +9,9 @@ from ase import Atoms
 from ase.calculators.calculator import Calculator
 from ase.io import read
 from ase.optimize import BFGS
+
+# Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
+from typing_extensions import Concatenate, Self  # noqa: UP035
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
@@ -18,46 +22,52 @@ from chemfit.abstract_objective_function import (
 from chemfit.utils import check_protocol
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
     from pathlib import Path
 
-logger = logging.getLogger(__name__)
-
 
 @runtime_checkable
-class CalculatorFactory(Protocol):
-    """
-    Protocol for a callable that attaches an ASE calculator to atoms.
+class CalculatorFactory(Protocol[ParametersT_contra]):
+    """Create an ASE calculator for one evaluation."""
 
-    Implementations are expected to construct or configure a calculator
-    for the given ``Atoms`` object and assign it to ``atoms.calc``.
-    """
-
-    def __call__(self, atoms: Atoms, /) -> None:
-        """Construct a calculator and overwrite `atoms.calc`."""
+    def __call__(
+        self,
+        parameters: ParametersT_contra,
+        atoms: Atoms,
+        ctx: EvaluateContext,
+        /,
+    ) -> Calculator:
+        """Return a calculator configured for ``parameters`` and ``atoms``."""
         ...
 
 
 @runtime_checkable
-class ParameterApplier(Protocol[ParametersT_contra]):
-    """Protocol for a callable that applies parameters to an ASE calculator."""
+class ASEEvaluator(Protocol[ParametersT_contra]):
+    """Run an ASE calculation before quantities are extracted."""
 
-    def __call__(self, atoms: Atoms, params: ParametersT_contra, /) -> None:
-        """Applies a parameter dictionary to `atoms.calc` in-place."""
+    def __call__(
+        self,
+        parameters: ParametersT_contra,
+        atoms: Atoms,
+        ctx: EvaluateContext,
+        /,
+    ) -> None:
+        """Evaluate ``atoms`` using the configured calculator."""
         ...
 
 
 @runtime_checkable
-class AtomsPostProcessor(Protocol):
-    """Protocol for a callable that post-processes an ASE Atoms object."""
+class AtomsSetup(Protocol):
+    """Configure the cached base atoms structure."""
 
     def __call__(self, atoms: Atoms, /) -> None:
-        """Modify the atoms in-place."""
+        """Modify ``atoms`` in place before it is cached."""
         ...
 
 
 @runtime_checkable
 class AtomsFactory(Protocol):
-    """Protocol for a function that creates an ASE Atoms object."""
+    """Create an ASE atoms object."""
 
     def __call__(self) -> Atoms:
         """Create an atoms object."""
@@ -66,27 +76,16 @@ class AtomsFactory(Protocol):
 
 @runtime_checkable
 class QuantityProcessor(Protocol[QuantitiesT_co]):
-    """
-    Protocol for a callable that extracts quantities from an ASE evaluation.
+    """Extract quantities after an ASE evaluation."""
 
-    A quantity processor is called after the calculator has evaluated an
-    ``Atoms`` object. It receives the calculator and atoms pair and
-    returns a dictionary of quantities to include in the final output.
-    """
-
-    def __call__(self, calc: Calculator, atoms: Atoms, /) -> QuantitiesT_co:
-        """
-        Extract quantities from an evaluated calculator and atoms pair.
-
-        Args:
-            calc: Calculator that has already evaluated ``atoms``.
-            atoms: Evaluated atoms object.
-
-        Returns:
-            A dictionary of extracted quantities.
-
-        """
-
+    def __call__(
+        self,
+        calc: Calculator,
+        atoms: Atoms,
+        ctx: EvaluateContext,
+        /,
+    ) -> QuantitiesT_co:
+        """Return quantities extracted from the evaluated atoms and calculator."""
         ...
 
 
@@ -103,118 +102,142 @@ class PathAtomsFactory(AtomsFactory):
                 selection must resolve to a single ``Atoms`` object.
 
         """
-
         self.path = path
         self.index = index
 
     def __call__(self) -> Atoms:
+        """Read and return one atoms object."""
         atoms = read(self.path, self.index, parallel=False)
 
         if isinstance(atoms, list):
-            msg = f"Index {self.index} selects multiple images from path {self.path}. This is not compatible with AtomsFactory."
+            msg = (
+                f"Index {self.index} selects multiple images from path "
+                f"{self.path}. This is not compatible with AtomsFactory."
+            )
             raise Exception(msg)
 
         return atoms
 
 
 class DefaultQuantityProcessor:
+    """Return the calculator results together with the atom count."""
+
     def __init__(self, filter_keys: list[str] | None = None) -> None:
         """
-        Initialize a default quantity processor, that returns all of the `results` of the calculator.
-
-        The returned quantity dictionary contains all entries from
-        ``calc.results`` plus ``"n_atoms"``. Any keys listed in
-        ``filter_keys`` are excluded from the returned dictionary.
+        Initialize the processor.
 
         Args:
-            filter_keys: Optional list of keys to exclude from the returned
-                quantity dictionary.
+            filter_keys: Optional keys to omit from the returned quantities.
 
         """
-
         self.filter_keys = filter_keys
 
-    def __call__(self, calc: Calculator, atoms: Atoms) -> dict[str, Any]:
-        res = {**calc.results, "n_atoms": len(atoms)}
+    def __call__(
+        self,
+        calc: Calculator,
+        atoms: Atoms,
+        _ctx: EvaluateContext,
+    ) -> dict[str, Any]:
+        """Return the available calculator results and atom count."""
+        result = {**calc.results, "n_atoms": len(atoms)}
         if self.filter_keys is not None:
-            [res.pop(k) for k in self.filter_keys]
-        return res
+            for key in self.filter_keys:
+                result.pop(key)
+        return result
 
 
-class SinglePointASEComputer(
+def _single_point_evaluator(
+    _parameters: object,
+    atoms: Atoms,
+    _ctx: EvaluateContext,
+) -> None:
+    """Run the default single-point calculation."""
+    assert atoms.calc is not None
+    atoms.calc.calculate(atoms)
+
+
+def _minimize_evaluator(
+    _parameters: object,
+    atoms: Atoms,
+    _ctx: EvaluateContext,
+    *,
+    fmax: float,
+    max_steps: int,
+) -> None:
+    """Relax ``atoms`` with ASE BFGS."""
+    optimizer = BFGS(atoms, logfile=None)
+    optimizer.run(fmax=fmax, steps=max_steps)
+
+
+class ASEComputer(
     QuantityComputer[ParametersT_contra, QuantitiesT_co],
     Generic[ParametersT_contra, QuantitiesT_co],
 ):
-    """
-    ASE-based quantity computer for single-point evaluations.
-
-    This class evaluates quantities for a parameterized ASE calculation
-    using an atoms factory, optional atoms post-processing, a
-    calculator factory, a parameter applier, and one or more quantity
-    processors.
-    """
+    """Compute quantities using one configurable ASE evaluation procedure."""
 
     def __init__(
         self,
-        calc_factory: CalculatorFactory,
-        param_applier: ParameterApplier[ParametersT_contra],
         atoms_factory: AtomsFactory,
-        atoms_post_processor: AtomsPostProcessor | None = None,
-        quantity_processors: list[QuantityProcessor[QuantitiesT_co]] | None = None,
+        calculator_factory: CalculatorFactory[ParametersT_contra] | None = None,
+        atoms_setups: Iterable[AtomsSetup] | None = None,
+        quantity_processors: Iterable[QuantityProcessor[QuantitiesT_co]] | None = None,
+        evaluator: ASEEvaluator[ParametersT_contra] | None = None,
         tag: str | None = None,
     ) -> None:
         """
-        Initialize the computer.
+        Initialize an ASE computer.
+
+        The base atoms object is created lazily and cached. Each evaluation
+        receives a copy of that structure, a fresh calculator, and the current
+        evaluation context. The evaluator runs before quantity extraction.
 
         Args:
-            calc_factory: Callable that attaches a calculator to an
-                ``Atoms`` object.
-            param_applier: Callable that applies a parameter dictionary to
-                the calculator attached to an ``Atoms`` object.
-            atoms_factory: Callable that creates the base ``Atoms`` object.
-            atoms_post_processor: Optional callable that modifies the base
-            atoms object before it is cached and copied for evaluation.
-            quantity_processors: Optional list of callables that extract
-                quantities from the evaluated calculator and atoms pair. If
-                ``None``, a ``DefaultQuantityProcessor`` is used.
-            tag: Optional label for this computer. If ``None``,
-                ``"tag_None"`` is used.
+            atoms_factory: Callable that creates the base atoms object.
+            calculator: Optional callable that returns a fresh calculator for
+                the current parameters, atoms, and context. It may instead be
+                configured later with :meth:`with_calculator`.
+            atoms_setups: Optional callbacks applied once to the base atoms
+                object before it is cached.
+            quantity_processors: Optional callbacks that extract quantities
+                after evaluation. The default processor returns calculator
+                results and the atom count.
+            evaluator: Evaluation procedure. Defaults to a single-point
+                calculator evaluation.
+            tag: Optional label stored in the computer's static metadata.
 
         """
-
         super().__init__()
 
-        # Make sure all the protocols are properly implemented
-        check_protocol(calc_factory, CalculatorFactory)
-        check_protocol(param_applier, ParameterApplier)
         check_protocol(atoms_factory, AtomsFactory)
-        check_protocol(atoms_post_processor, AtomsPostProcessor)
+        check_protocol(calculator_factory, CalculatorFactory)
+        check_protocol(evaluator, ASEEvaluator)
 
-        self.calc_factory = calc_factory
-        self.param_applier = param_applier
         self.atoms_factory = atoms_factory
-        self.atoms_post_processor = atoms_post_processor
+        self.calculator_factory = calculator_factory
+        self.atoms_setups = tuple(atoms_setups or ())
+        for setup in self.atoms_setups:
+            check_protocol(setup, AtomsSetup)
 
         if quantity_processors is None:
             self.quantity_processors = cast(
-                "list[QuantityProcessor[QuantitiesT_co]]",
-                [DefaultQuantityProcessor()],
+                "tuple[QuantityProcessor[QuantitiesT_co], ...]",
+                (DefaultQuantityProcessor(),),
             )
         else:
-            self.quantity_processors = quantity_processors
+            self.quantity_processors = tuple(quantity_processors)
+        for processor in self.quantity_processors:
+            check_protocol(processor, QuantityProcessor)
 
-        for qp in self.quantity_processors:
-            check_protocol(qp, QuantityProcessor)
-
+        self.evaluator = (
+            cast("ASEEvaluator[ParametersT_contra]", _single_point_evaluator)
+            if evaluator is None
+            else evaluator
+        )
         self.tag = tag or "tag_None"
 
         self._atoms: Atoms | None = None
         self._atoms_init_lock = threading.Lock()
-
-        self.static_meta_data = {
-            "tag": self.tag,
-            "type": type(self).__name__,
-        }
+        self.static_meta_data = {"tag": self.tag, "type": type(self).__name__}
 
     def __getstate__(self) -> dict[str, Any]:
         """Return pickle state without the non-pickleable initialization lock."""
@@ -227,146 +250,150 @@ class SinglePointASEComputer(
         self.__dict__.update(state)
         self._atoms_init_lock = threading.Lock()
 
-    def prepare_ctx(self, parameters: ParametersT_contra, ctx: EvaluateContext):
+    def with_atoms_setup(self, setup: AtomsSetup, /) -> Self:
         """
-        Prepare the evaluation context for a single-point calculation.
+        Return a copy with an additional base-atoms setup callback.
 
-        This method lazily creates and caches a base atoms object using
-        ``atoms_factory``. If provided, ``atoms_post_processor`` is applied
-        once to that base object before it is cached. For each evaluation,
-        the cached atoms object is copied into ``ctx.temp.atoms``, a fresh
-        calculator is attached, and the provided parameters are applied.
-        Deferred construction allows distributed backends to initialize only
-        the geometries assigned to each worker. Initialization is synchronized
-        so the same computer can also be evaluated concurrently by threads.
+        Because the callback changes construction of the cached structure, the
+        returned computer starts with a fresh atoms cache and initialization
+        lock. The source computer is unchanged.
+        """
+        check_protocol(setup, AtomsSetup)
+        new = copy.copy(self)
+        new.atoms_setups = (*self.atoms_setups, setup)
+        new._atoms = None  # noqa: SLF001
+        new._atoms_init_lock = threading.Lock()  # noqa: SLF001
+        return new
+
+    def with_calculator(
+        self,
+        calculator: Callable[
+            Concatenate[ParametersT_contra, Atoms, EvaluateContext, ...], Calculator
+        ],
+        /,
+        **kwargs: Any,
+    ) -> Self:
+        """
+        Return a copy configured with a calculator factory.
+
+        Additional keyword-only arguments are bound to ``calculator``. This
+        operation does not invalidate an initialized base-atoms cache.
+        """
+        check_protocol(calculator, CalculatorFactory)
+        new = copy.copy(self)
+        new.calculator_factory = cast(
+            "CalculatorFactory[ParametersT_contra]",
+            functools.partial(calculator, **kwargs),
+        )
+        return new
+
+    def with_processor(
+        self,
+        processor: Callable[
+            Concatenate[Calculator, Atoms, EvaluateContext, ...], QuantitiesT_co
+        ],
+        /,
+        **kwargs: Any,
+    ) -> Self:
+        """
+        Return a copy with an additional quantity processor.
+
+        Additional keyword-only arguments are bound to ``processor``. This
+        operation does not invalidate an initialized base-atoms cache.
+        """
+        check_protocol(processor, QuantityProcessor)
+        bound_processor = cast(
+            "QuantityProcessor[QuantitiesT_co]",
+            functools.partial(processor, **kwargs),
+        )
+        new = copy.copy(self)
+        new.quantity_processors = (
+            *self.quantity_processors,
+            bound_processor,
+        )
+        return new
+
+    def with_evaluator(
+        self,
+        evaluator: Callable[
+            Concatenate[ParametersT_contra, Atoms, EvaluateContext, ...], None
+        ],
+        /,
+        **kwargs: Any,
+    ) -> Self:
+        """
+        Return a copy configured with an ASE evaluation procedure.
+
+        Additional keyword-only arguments are bound to ``evaluator``. Exactly
+        one evaluator is active; this method replaces the previous evaluator
+        without invalidating the base-atoms cache.
+        """
+        check_protocol(evaluator, ASEEvaluator)
+        new = copy.copy(self)
+        new.evaluator = cast(
+            "ASEEvaluator[ParametersT_contra]",
+            functools.partial(evaluator, **kwargs),
+        )
+        return new
+
+    def minimize(self, fmax: float = 1e-5, max_steps: int = 2000) -> Self:
+        """
+        Return a copy configured to relax atoms with ASE BFGS.
 
         Args:
-            parameters: Parameter dictionary for the current evaluation.
-            ctx: Evaluation context to populate.
+            fmax: Force convergence threshold passed to ``BFGS.run``.
+            max_steps: Maximum optimization steps passed to ``BFGS.run``.
 
         """
+        return self.with_evaluator(
+            _minimize_evaluator,
+            fmax=fmax,
+            max_steps=max_steps,
+        )
 
+    def prepare_ctx(
+        self,
+        parameters: ParametersT_contra,
+        ctx: EvaluateContext,
+    ) -> None:
+        """
+        Populate the evaluation context with copied atoms and a calculator.
+
+        The base structure is initialized at most once per process, including
+        under concurrent thread evaluation. Each evaluation receives a copy,
+        while calculator construction remains evaluation-local.
+        """
         atoms = self._atoms
         if atoms is None:
-            # Several optimizer workers may evaluate this computer before its
-            # base geometry exists. Initialize it once, then publish only the
-            # fully post-processed object to the other workers.
             with self._atoms_init_lock:
                 atoms = self._atoms
                 if atoms is None:
                     atoms = self.atoms_factory()
-                    if self.atoms_post_processor is not None:
-                        self.atoms_post_processor(atoms)
+                    for setup in self.atoms_setups:
+                        setup(atoms)
                     self._atoms = atoms
 
-        # Since the calculation may change the internal state of the calculator
-        # we create a new calculator and a new atoms object in the context
         ctx.temp.atoms = atoms.copy()
-        self.calc_factory(ctx.temp.atoms)
-        self.param_applier(ctx.temp.atoms, parameters)
+        if self.calculator_factory is None:
+            msg = (
+                "ASEComputer requires a calculator. Configure one with "
+                "with_calculator()."
+            )
+            raise RuntimeError(msg)
+        ctx.temp.atoms.calc = self.calculator_factory(parameters, ctx.temp.atoms, ctx)
 
     def _compute(
         self,
         parameters: ParametersT_contra,
         ctx: EvaluateContext,
     ) -> QuantitiesT_co:
-        """
-        Compute quantities from a single-point ASE evaluation.
-
-        This implementation prepares the evaluation context, runs the
-        calculator on the atoms object, and merges the outputs of all
-        configured quantity processors.
-
-        Args:
-            parameters: Mapping of parameter names to parameter values.
-            ctx: Evaluation context for the current call.
-
-        Returns:
-            A dictionary containing the merged quantities returned by the
-            configured quantity processors.
-
-        """
-
+        """Prepare, evaluate, and extract quantities from an ASE calculation."""
         self.prepare_ctx(parameters, ctx)
+        atoms = ctx.temp.atoms
+        self.evaluator(parameters, atoms, ctx)
 
-        assert ctx.temp.atoms.calc is not None
-        ctx.temp.atoms.calc.calculate(ctx.temp.atoms)
-
-        quants: dict[str, Any] = {}
-        for qp in self.quantity_processors:
-            quants.update(qp(ctx.temp.atoms.calc, ctx.temp.atoms))
-
-        return cast("QuantitiesT_co", quants)
-
-
-class MinimizationASEComputer(
-    SinglePointASEComputer[ParametersT_contra, QuantitiesT_co],
-    Generic[ParametersT_contra, QuantitiesT_co],
-):
-    """
-    ASE-based quantity computer using a locally optimized structure.
-
-    This computer evaluates quantities after performing a local geometry
-    optimization using the ASE BFGS optimizer. Quantities are extracted
-    from the relaxed structure using the configured quantity processors.
-    """
-
-    def __init__(
-        self, dt: float = 1e-2, fmax: float = 1e-5, max_steps: int = 2000, **kwargs
-    ) -> None:
-        """
-        Initialize a MinimizationASEComputer.
-
-        All additional keyword arguments are forwarded to
-        ``SinglePointASEComputer.__init__``.
-
-        Args:
-            dt: Relaxation step-size parameter retained for compatibility
-                with earlier implementations. Currently unused.
-            fmax: Force convergence criterion passed to the optimizer.
-            max_steps: Maximum number of optimization steps.
-            **kwargs: Additional keyword arguments forwarded to the parent
-                initializer.
-
-        """
-
-        self.dt = dt
-        self.fmax = fmax
-        self.max_steps = max_steps
-        super().__init__(**kwargs)
-
-    def _compute(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext
-    ) -> QuantitiesT_co:
-        """
-        Compute quantities after local geometry optimization.
-
-        This method prepares the evaluation context, performs a geometry
-        optimization using ASE's BFGS optimizer, and extracts quantities
-        from the relaxed structure using the configured quantity
-        processors.
-
-        Args:
-            parameters: Mapping of parameter names to parameter values.
-            ctx: Evaluation context for the current call.
-
-        Returns:
-            A dictionary containing the merged quantities returned by the
-            configured quantity processors.
-
-        Side Effects:
-            - Creates and stores an ``Atoms`` object in ``ctx.temp.atoms``.
-            - Attaches a fresh calculator to the atoms object.
-
-        """
-
-        self.prepare_ctx(parameters, ctx)
-
-        optimizer = BFGS(ctx.temp.atoms, logfile=None)
-        optimizer.run(fmax=self.fmax, steps=self.max_steps)
-
-        quants: dict[str, Any] = {}
-        for qp in self.quantity_processors:
-            quants.update(qp(ctx.temp.atoms.calc, ctx.temp.atoms))
-
-        return cast("QuantitiesT_co", quants)
+        assert atoms.calc is not None
+        quantities: dict[str, Any] = {}
+        for processor in self.quantity_processors:
+            quantities.update(processor(atoms.calc, atoms, ctx))
+        return cast("QuantitiesT_co", quantities)

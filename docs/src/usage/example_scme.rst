@@ -131,7 +131,7 @@ While it is completely possible to supply your own factory functions, we will us
 
 .. code-block:: python
 
-    from chemfit.scme_factories import SCMECalculatorFactory, SCMEParameterApplier
+    from chemfit.scme_factories import SCMECalculatorFactory
 
     calc_factory = SCMECalculatorFactory(
                         default_scme_params=default_params,
@@ -139,14 +139,11 @@ While it is completely possible to supply your own factory functions, we will us
                         parametrization_key=None
                     )
 
-    param_applier = SCMEParameterApplier()
-
-
 Instantiating the objective function
 ******************************************************
 
 
-For each configuration, we now instantiate a :py:func:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction` from a :py:func:`~chemfit.ase_objective_function.SinglePointASEComputer` and combine them in a
+For each configuration, we now instantiate a :py:func:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction` from an :py:class:`~chemfit.ase_objective_function.ASEComputer` and combine them in a
 :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
 As the loss function we use
@@ -158,14 +155,13 @@ As the loss function we use
 .. code-block:: python
 
     from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
-    from chemfit.ase_objective_function import SinglePointASEComputer, PathAtomsFactory
+    from chemfit.ase_objective_function import ASEComputer, PathAtomsFactory
     from chemfit.combined_objective_function import CombinedObjectiveFunction
 
     def make_energy_term(path, tag, e_ref):
 
-        comp = SinglePointASEComputer(
-            calc_factory=calc_factory,
-            param_applier=param_applier,
+        comp = ASEComputer(
+            calculator=calc_factory,
             atoms_factory=PathAtomsFactory(path),
             tag=tag,
         )

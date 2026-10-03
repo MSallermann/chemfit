@@ -17,7 +17,7 @@ A recommended first step is to check if you can use one of the built-in ways:
 
 1. If you already have a pure python function implementing your computation, have a look at the :py:func:`~chemfit.wrap_funcs.quantity` decorator, which also features in the :ref:`quickstart` examples.
 2. If you are using an external simulation tool, like LAMMPS for example, have a look at the :py:class:`~chemfit.external_computer.ExternalQuantityComputer` and its corresponding doc page: :ref:`external_computer`.
-3. If you are using ASE, try the :py:class:`~chemfit.ase_objective_function.SinglePointASEComputer` or :py:class:`~chemfit.ase_objective_function.MinimizationASEComputer` described in :ref:`ase_objective_function_api`.
+3. If you are using ASE, try the :py:class:`~chemfit.ase_objective_function.ASEComputer` described in :ref:`ase_objective_function_api`.
 
 If none of the built-in computers are to your taste, think about sub-classing them.
 

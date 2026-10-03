@@ -70,7 +70,7 @@ from ase import Atoms
 from ase.calculators.lj import LennardJones
 
 from chemfit.abstract_objective_function import EvaluateContext
-from chemfit.ase_objective_function import SinglePointASEComputer
+from chemfit.ase_objective_function import ASEComputer
 from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
     mean_reducer,
@@ -80,15 +80,13 @@ from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.fitter_callbacks import log_progress
 
 
-# Each evaluation receives a copied geometry and a fresh ASE calculator.
-def attach_calculator(atoms: Atoms) -> None:
-    atoms.calc = LennardJones(rc=100.0)
-
-
-# Candidate parameters are applied immediately before ASE evaluates the atoms.
-def apply_parameters(atoms: Atoms, parameters: dict[str, float]) -> None:
-    assert atoms.calc is not None
-    atoms.calc.set(**parameters)
+# Each evaluation receives a copied geometry and a fresh configured calculator.
+def make_calculator(
+    parameters: dict[str, float],
+    _atoms: Atoms,
+    _ctx: EvaluateContext,
+) -> LennardJones:
+    return LennardJones(rc=100.0, **parameters)
 
 
 # Quantity computers and loss functions remain separate and reusable.
@@ -104,9 +102,8 @@ def reference_energy(distance: float) -> float:
 
 # Turn one reference geometry into an energy quantity computer with a loss.
 def energy_term(distance: float):
-    computer = SinglePointASEComputer(
-        calc_factory=attach_calculator,
-        param_applier=apply_parameters,
+    computer = ASEComputer(
+        calculator=make_calculator,
         atoms_factory=lambda: Atoms(
             "Ar2", positions=[(0.0, 0.0, 0.0), (distance, 0.0, 0.0)]
         ),
