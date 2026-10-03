@@ -333,10 +333,10 @@ def make_objective() -> CombinedObjectiveFunction[Parameters]:
         ),
         offset=-1.0,
     )
-    root.register_eval_hook(LifecycleHook(), recursive=True)
-    level_three.register_eval_hook(ConditionalSetupFailureHook(1.0, "level_three"))
-    level_three.register_eval_hook(ConditionalPostFailureHook())
-    root.register_eval_hook(ConditionalSetupFailureHook(3.0, "root"))
+    root.register_eval_hook(hook=LifecycleHook(), recursive=True)
+    level_three.register_eval_hook(hook=ConditionalSetupFailureHook(1.0, "level_three"))
+    level_three.register_eval_hook(hook=ConditionalPostFailureHook())
+    root.register_eval_hook(hook=ConditionalSetupFailureHook(3.0, "root"))
     return root
 
 

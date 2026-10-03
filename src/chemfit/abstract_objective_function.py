@@ -450,24 +450,33 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         return ()
 
     def register_eval_hook(
-        self, hook: EvaluationHook, *, recursive: bool = False
+        self,
+        *,
+        hook: EvaluationHook | None = None,
+        pre: Callable[[EvaluateContext], None] | None = None,
+        post: Callable[[EvaluateContext], None] | None = None,
+        recursive: bool = False,
     ) -> Self:
         """
-        Register an evaluation hook.
+        Register evaluation callbacks on this objective.
 
-        A hook may implement ``pre_eval``, ``post_eval``, or both. Implemented
-        callbacks are invoked in registration order for their respective
-        evaluation phase.
+        Pass either a hook object implementing ``pre_eval`` and/or
+        ``post_eval``, or pass the callbacks directly through ``pre`` and
+        ``post``. At least one callback is required. Registered callbacks are
+        invoked in registration order for their respective evaluation phase.
 
         Args:
-            hook: Object implementing at least one of
+            hook: Optional object implementing at least one of
                 :class:`PreEvaluationHook` or :class:`PostEvaluationHook`.
+                Cannot be combined with ``pre`` or ``post``.
+            pre: Optional callback invoked before objective evaluation.
+            post: Optional callback invoked after objective evaluation.
             recursive: Also register on descendant objectives in the call tree.
                 Defaults to registering only on this objective.
 
         Raises:
-            TypeError: If the hook implements neither callback, or if an
-                implemented callback is not callable.
+            TypeError: If a hook object is combined with direct callbacks, no
+                callback is supplied, or a supplied callback is not callable.
 
         Note:
             If contexts are reused, pre-evaluation hooks may observe state from
@@ -496,8 +505,16 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             be serializable.
 
         """
-        pre_eval = getattr(hook, "pre_eval", None)
-        post_eval = getattr(hook, "post_eval", None)
+        if hook is not None and (pre is not None or post is not None):
+            msg = "pass either hook or pre/post callbacks, not both"
+            raise TypeError(msg)
+
+        if hook is not None:
+            pre_eval = getattr(hook, "pre_eval", None)
+            post_eval = getattr(hook, "post_eval", None)
+        else:
+            pre_eval = pre
+            post_eval = post
 
         if pre_eval is None and post_eval is None:
             msg = "evaluation hook must implement pre_eval() or post_eval()"

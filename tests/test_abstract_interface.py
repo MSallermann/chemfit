@@ -71,28 +71,28 @@ def test_objective_functor_hooks_run_in_registration_order():
     ctx.meta["hook_calls"] = []
 
     objective.register_eval_hook(
-        _PreHook(
+        hook=_PreHook(
             lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
                 ("pre-1", hook_ctx.parameters, hook_ctx.loss)
             )
         )
     )
     objective.register_eval_hook(
-        _PreHook(
+        hook=_PreHook(
             lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
                 ("pre-2", hook_ctx.parameters, hook_ctx.loss)
             )
         )
     )
     objective.register_eval_hook(
-        _PostHook(
+        hook=_PostHook(
             lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
                 ("post-1", hook_ctx.loss, hook_ctx.temp.exception)
             )
         )
     )
     objective.register_eval_hook(
-        _PostHook(
+        hook=_PostHook(
             lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
                 ("post-2", hook_ctx.loss, hook_ctx.temp.exception)
             )
@@ -118,15 +118,15 @@ def test_objective_functor_collects_all_post_hook_exceptions():
         raise ValueError(message)
 
     objective.register_eval_hook(
-        _PostHook(functools.partial(fail, message="first failure"))
+        hook=_PostHook(functools.partial(fail, message="first failure"))
     )
     objective.register_eval_hook(
-        _PostHook(
+        hook=_PostHook(
             lambda hook_ctx: hook_ctx.meta["hook_calls"].append("successful hook")
         )
     )
     objective.register_eval_hook(
-        _PostHook(functools.partial(fail, message="second failure"))
+        hook=_PostHook(functools.partial(fail, message="second failure"))
     )
 
     with pytest.raises(
@@ -180,8 +180,8 @@ def test_evaluation_exception_remains_primary_when_post_hook_fails():
         assert hook_ctx.temp.exception is evaluation_error
 
     objective = FailingFunctor()
-    objective.register_eval_hook(_PostHook(failing_hook))
-    objective.register_eval_hook(_PostHook(observing_hook))
+    objective.register_eval_hook(hook=_PostHook(failing_hook))
+    objective.register_eval_hook(hook=_PostHook(observing_hook))
 
     with pytest.raises(ValueError, match="evaluation failed") as exc_info:
         objective({"a": 2.0}, ctx)

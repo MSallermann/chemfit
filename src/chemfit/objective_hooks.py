@@ -16,7 +16,7 @@ class UUIDHook:
     metadata and propagated across executor and MPI process boundaries.
     Register this one-sided hook with::
 
-        objective.register_eval_hook(UUIDHook())
+        objective.register_eval_hook(hook=UUIDHook())
     """
 
     def __init__(self, meta_key: str = "evaluation_id") -> None:
@@ -51,7 +51,7 @@ class TimingHook:
 
     Register both halves of the hook on an objective with::
 
-        objective.register_eval_hook(TimingHook())
+        objective.register_eval_hook(hook=TimingHook())
 
     Timing is also recorded when the objective raises, because post-evaluation
     hooks run during exception unwinding.
@@ -59,7 +59,7 @@ class TimingHook:
     To time a combined objective and all its terms, register once after building
     the objective tree::
 
-        objective.register_eval_hook(TimingHook(), recursive=True)
+        objective.register_eval_hook(hook=TimingHook(), recursive=True)
 
     This uses one shared hook instance, with timing state kept in each context.
     Do not also register a second timing hook on those same evaluation scopes.
