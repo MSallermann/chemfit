@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # (finish/fit outputs), so its parameter type must remain invariant.  The
 # default keeps concise unannotated lambdas and heterogeneous nested dicts
 # usable; an annotated objective still determines a more precise type.
-ParametersT = TypeVar("ParametersT", bound=dict[str, Any], default=dict[str, Any])
+ParametersT = TypeVar("ParametersT", bound=Mapping[str, Any], default=dict[str, Any])
 
 
 class FitterEvaluateContext(EvaluateContext):
@@ -89,6 +89,9 @@ class FitterEvaluateContext(EvaluateContext):
         self.opt_params = state["opt_params"]
         self.opt_meta = state["opt_meta"]
         self.opt_quantities = state["opt_quantities"]
+
+
+CallbackT = Callable[[int, list[FitterEvaluateContext]], None]
 
 
 class FitterEvaluationHook:
@@ -290,9 +293,7 @@ class Fitter(Generic[ParametersT]):
             self._schedule.close()
             self._schedule = None
 
-    def register_callback(
-        self, func: Callable[[int, list[FitterEvaluateContext]], None], n_steps: int
-    ) -> None:
+    def register_callback(self, func: CallbackT, n_steps: int) -> None:
         """
         Register a callback to be executed during optimization.
 
