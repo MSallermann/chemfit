@@ -59,9 +59,29 @@ class MPIWorkerError(RuntimeError):
 
 @dataclass(frozen=True)
 class _WorkerFailure:
-    """Carry an escaping worker BaseException back to the coordinator."""
+    """Serializable description of a catastrophic worker failure."""
 
-    exception: BaseException
+    rank: int
+    exception_type: str
+    message: str
+
+
+def _describe_worker_failure(
+    rank: int,
+    exception: BaseException,
+) -> _WorkerFailure:
+    """Convert an arbitrary worker failure into a pickle-safe payload."""
+
+    try:
+        message = str(exception)
+    except BaseException:
+        message = "<exception message could not be formatted>"
+
+    return _WorkerFailure(
+        rank=rank,
+        exception_type=type(exception).__qualname__,
+        message=message,
+    )
 
 
 class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
@@ -137,6 +157,37 @@ class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
             capture_context_state=True,
         )
 
+    def _send_worker_result(
+        self,
+        result: LeafCompletion | _WorkerFailure,
+    ) -> bool:
+        """Send a result while remaining responsive to coordinator shutdown."""
+
+        request = self.comm.isend(result, dest=0, tag=_RESULT_TAG)
+        while not request.Test():
+            if not self.comm.Iprobe(source=0, tag=_COMMAND_TAG):
+                continue
+
+            command = self.comm.recv(source=0, tag=_COMMAND_TAG)
+            if not isinstance(command, _Shutdown):
+                request.Cancel()
+                request.Free()
+                msg = (
+                    f"Worker rank {self.rank} received {command!r} while "
+                    "sending a result"
+                )
+                raise MPIWorkerError(msg)
+
+            # Do not wait for rank 0 to receive a large result after it has
+            # requested shutdown. Completing the local cancellation keeps the
+            # serialized send buffer alive for as long as MPI requires it,
+            # without adding an acknowledgement or batch-recovery protocol.
+            request.Cancel()
+            request.Wait()
+            return False
+
+        return True
+
     def worker_loop(self) -> None:
         """Receive and execute task batches until rank 0 requests shutdown."""
 
@@ -157,24 +208,29 @@ class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
                 continue
 
             if not isinstance(command, _EvaluateRequest):
-                error = MPIWorkerError(
-                    f"Worker rank {self.rank} received unknown command: {command!r}"
+                msg = f"Worker rank {self.rank} received unknown command: {command!r}"
+                failure = _WorkerFailure(
+                    rank=self.rank,
+                    exception_type=MPIWorkerError.__qualname__,
+                    message=msg,
                 )
-                self.comm.send(error, dest=0, tag=_RESULT_TAG)
+                if not self._send_worker_result(failure):
+                    return
                 failed = True
                 continue
 
-            try:
-                for task in command.tasks:
+            for task in command.tasks:
+                try:
                     completion = self._evaluate_worker_task(task)
-                    self.comm.send(completion, dest=0, tag=_RESULT_TAG)
-            except BaseException as exception:
-                self.comm.send(
-                    _WorkerFailure(exception),
-                    dest=0,
-                    tag=_RESULT_TAG,
-                )
-                failed = True
+                except BaseException as exception:
+                    failure = _describe_worker_failure(self.rank, exception)
+                    if not self._send_worker_result(failure):
+                        return
+                    failed = True
+                    break
+
+                if not self._send_worker_result(completion):
+                    return
 
     def execute_leaf_tasks(
         self,
@@ -210,9 +266,11 @@ class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
             message = self.comm.recv(source=MPI.ANY_SOURCE, tag=_RESULT_TAG)
 
             if isinstance(message, _WorkerFailure):
-                raise message.exception
-            if isinstance(message, MPIWorkerError):
-                raise message
+                msg = (
+                    f"Worker rank {message.rank} failed with "
+                    f"{message.exception_type}: {message.message}"
+                )
+                raise MPIWorkerError(msg)
             if not isinstance(message, LeafCompletion):
                 msg = f"Unknown MPI scheduler result: {message!r}"
                 raise MPIWorkerError(msg)
