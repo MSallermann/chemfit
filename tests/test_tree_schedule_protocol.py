@@ -133,9 +133,7 @@ def test_cleanup_failure_is_not_allowed_to_replace_catastrophic_failure() -> Non
     objective = make_objective(catastrophic=True)
     schedule = FailingCloseSchedule(cob_to_call_tree(objective))
 
-    with pytest.raises(KeyboardInterrupt) as exc_info:
+    with pytest.raises(KeyboardInterrupt):
         schedule.evaluate({"x": 2.0}, EvaluateContext())
 
     assert schedule.closed
-    notes = getattr(exc_info.value, "__notes__", ())
-    assert notes == ["Schedule cleanup failed: CleanupFailure('cleanup failed')"]

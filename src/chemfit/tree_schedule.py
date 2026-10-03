@@ -748,7 +748,8 @@ class TreeScheduleBase(
         try:
             self.close()
         except BaseException as cleanup_exception:
-            exception.add_note(f"Schedule cleanup failed: {cleanup_exception!r}")
+            if hasattr(exception, "add_note"):  # add_note was only introduced in 3.11
+                exception.add_note(f"Schedule cleanup failed: {cleanup_exception!r}")
         finally:
             # A backend close implementation may itself fail before delegating
             # to PreparedScheduleBase.close(). Catastrophic failure still makes
