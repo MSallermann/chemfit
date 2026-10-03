@@ -182,7 +182,6 @@ class ASEComputer(
         atoms_setups: Iterable[AtomsSetup] | None = None,
         quantity_processors: Iterable[QuantityProcessor[QuantitiesT_co]] | None = None,
         evaluator: ASEEvaluator[ParametersT_contra] | None = None,
-        tag: str | None = None,
     ) -> None:
         """
         Initialize an ASE computer.
@@ -193,17 +192,16 @@ class ASEComputer(
 
         Args:
             atoms_factory: Callable that creates the base atoms object.
-            calculator: Optional callable that returns a fresh calculator for
-                the current parameters, atoms, and context. It may instead be
-                configured later with :meth:`with_calculator`.
+            calculator_factory: Optional callable that returns a fresh
+                calculator for the current parameters, atoms, and context. It
+                may instead be configured later with :meth:`with_calculator`.
             atoms_setups: Optional callbacks applied once to the base atoms
                 object before it is cached.
             quantity_processors: Optional callbacks that extract quantities
-                after evaluation. The default processor returns calculator
-                results and the atom count.
+                after evaluation. If omitted or empty, a default processor
+                returns calculator results and the atom count.
             evaluator: Evaluation procedure. Defaults to a single-point
                 calculator evaluation.
-            tag: Optional label stored in the computer's static metadata.
 
         """
         super().__init__()
@@ -228,11 +226,9 @@ class ASEComputer(
             if evaluator is None
             else evaluator
         )
-        self.tag = tag or "tag_None"
 
         self._atoms: Atoms | None = None
         self._atoms_init_lock = threading.Lock()
-        self.static_meta_data = {"tag": self.tag, "type": type(self).__name__}
 
     def __getstate__(self) -> dict[str, Any]:
         """Return pickle state without the non-pickleable initialization lock."""
@@ -294,7 +290,9 @@ class ASEComputer(
         Return a copy with an additional quantity processor.
 
         Additional keyword-only arguments are bound to ``processor``. This
-        operation does not invalidate an initialized base-atoms cache.
+        operation does not invalidate an initialized base-atoms cache. Adding
+        the first explicit processor replaces the implicit default-processor
+        fallback.
         """
         check_protocol(processor, QuantityProcessor)
         bound_processor = cast(

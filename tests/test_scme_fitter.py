@@ -36,7 +36,7 @@ PATH_TO_CSV = [
     Path(__file__).parent / "test_configurations_scme/energies.csv",
     Path(__file__).parent / "test_configurations_scme/energies2.csv",
 ]
-REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)
+REFERENCE_CONFIGS, _, REFERENCE_ENERGIES = process_csv(PATH_TO_CSV)
 
 DEFAULT_PARAMS = {
     "dispersion": {
@@ -119,7 +119,6 @@ def test_single_energy_objective_function():
                 DEFAULT_PARAMS, None, None
             ),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
-            tag=TAGS[10],
         ),
     )
 
@@ -151,7 +150,6 @@ def test_dimer_distance_objective_function():
             ),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
             quantity_processors=[compute_dimer_distance],
-            tag="dimer_distance",
         ).minimize(),
     )
 
@@ -198,7 +196,6 @@ def test_kabsch_objective_function():
             quantity_processors=[
                 KabschDistance(atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]))
             ],
-            tag="kabsch",
         ).minimize(),
     )
 
@@ -211,12 +208,10 @@ def test_kabsch_objective_function():
     print(f"{optimal_params = }")
 
 
-def construct_objective_function(
-    paths: list[Path], tags: list[str], energies: list[float]
-):
+def construct_objective_function(paths: list[Path], energies: list[float]):
     ob_list = []
 
-    for p, t, e in zip(paths, tags, energies, strict=False):
+    for p, e in zip(paths, energies, strict=False):
         ob_term = QuantityComputerObjectiveFunction(
             loss_function=lambda quants, e=e: (quants["energy"] - e) ** 2
             / quants["n_atoms"] ** 2,
@@ -227,7 +222,6 @@ def construct_objective_function(
                     parametrization_key=None,
                 ),
                 atoms_factory=PathAtomsFactory(p),
-                tag=t,
             ),
         )
 
@@ -238,7 +232,7 @@ def construct_objective_function(
 
 def test_multi_energy_ob_function_fitting():
     ob = construct_objective_function(
-        paths=REFERENCE_CONFIGS, tags=TAGS, energies=REFERENCE_ENERGIES
+        paths=REFERENCE_CONFIGS, energies=REFERENCE_ENERGIES
     )
 
     print(ob(INITIAL_PARAMS))
@@ -256,7 +250,7 @@ def test_multi_energy_ob_function_fitting_mpi():
         "chemfit.mpi_scheduler", reason="Missing mpi4py"
     )
 
-    ob = construct_objective_function(REFERENCE_CONFIGS, TAGS, REFERENCE_ENERGIES)
+    ob = construct_objective_function(REFERENCE_CONFIGS, REFERENCE_ENERGIES)
 
     with ob.set_scheduler(mpi_scheduler.MPITreeScheduler()) as mpi:
         if mpi.rank == 0:

@@ -23,9 +23,7 @@ def loss_function(quants: dict[str, Any], e_ref: float) -> float:
 
 def lj_ob_term(r: float, eps: float, sigma: float):
     return ASEComputer(
-        atoms_factory=LJAtomsFactory(r),
-        calculator_factory=construct_lj,
-        tag="lj_{r}",
+        atoms_factory=LJAtomsFactory(r), calculator_factory=construct_lj
     ).with_loss(loss_function, e_ref=e_lj(r, eps, sigma))
 
 
@@ -164,7 +162,7 @@ def test_fluent_configuration_preserves_or_invalidates_atoms_cache():
     minimized_copy = base.minimize()
 
     calculator_copy(parameters)
-    processor_copy(parameters)
+    assert processor_copy(parameters) == {"extra": 1.0}
     evaluator_copy(parameters)
 
     assert atoms_factory.calls == 1

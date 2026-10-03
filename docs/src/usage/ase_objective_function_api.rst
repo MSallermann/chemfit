@@ -31,7 +31,7 @@ Minimal example
 
    computer = ASEComputer(
        atoms_factory=PathAtomsFactory("geometry.xyz"),
-       calculator=make_calculator,
+       calculator_factory=make_calculator,
    )
 
    quantities = computer({"epsilon": 1.0, "sigma": 1.0})
@@ -173,20 +173,35 @@ Pass processors to the constructor when they define the complete result:
 
    computer = ASEComputer(
        atoms_factory=PathAtomsFactory("dimer.xyz"),
-       calculator=make_calculator,
+       calculator_factory=make_calculator,
        quantity_processors=[extract_distance],
    )
 
-If ``quantity_processors`` is omitted,
-:py:class:`~chemfit.ase_objective_function.DefaultQuantityProcessor` is used.
-When an explicit iterable is supplied, it replaces that default.
+If ``quantity_processors`` is omitted or empty,
+:py:class:`~chemfit.ase_objective_function.DefaultQuantityProcessor` is used as
+an evaluation-time fallback. As soon as an explicit processor is registered,
+only the explicitly configured processors run.
 
 Use :py:meth:`~chemfit.ase_objective_function.ASEComputer.with_processor` to
-append another processor to a configured computer:
+append a processor to a configured computer:
 
 .. code-block:: python
 
    computer = computer.with_processor(extract_distance)
+
+On a computer with no explicit processors, this first registration replaces
+the implicit default fallback. To retain the default quantities alongside
+custom ones, register the default explicitly:
+
+.. code-block:: python
+
+   from chemfit.ase_objective_function import DefaultQuantityProcessor
+
+   computer = (
+       computer
+       .with_processor(DefaultQuantityProcessor())
+       .with_processor(extract_distance)
+   )
 
 Processor results are merged in order with ``dict.update()``, so later
 processors can replace values produced by earlier processors.
