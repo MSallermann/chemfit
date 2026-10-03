@@ -16,11 +16,11 @@ if TYPE_CHECKING:
         ResourceRequest,
     )
     from chemfit.ase_objective_function import (
+        ASEComputer,
+        ASEEvaluator,
         AtomsFactory,
         CalculatorFactory,
-        ParameterApplier,
         QuantityProcessor,
-        SinglePointASEComputer,
     )
     from chemfit.async_helpers import async_eval_many, async_eval_one
     from chemfit.combined_objective_function import CombinedObjectiveFunction
@@ -218,44 +218,54 @@ if TYPE_CHECKING:
 
     # ASE protocol assignments check each callback independently. Constructing
     # the computer must then preserve the parameter and quantity types.
-    def apply_parameters(_atoms: Any, _parameters: Parameters, /) -> None:
-        return None
-
-    def make_calculator(_atoms: Any) -> None:
-        return None
+    def make_calculator(
+        _parameters: Parameters,
+        _atoms: Any,
+        _ctx: EvaluateContext,
+    ) -> Any:
+        return object()
 
     def make_atoms() -> Any:
         return None
 
-    def process_quantities(_calculator: Any, _atoms: Any) -> Quantities:
+    def evaluate_atoms(
+        _parameters: Parameters,
+        _atoms: Any,
+        _ctx: EvaluateContext,
+    ) -> None:
+        return None
+
+    def process_quantities(
+        _calculator: Any,
+        _atoms: Any,
+        _ctx: EvaluateContext,
+    ) -> Quantities:
         return {"value": 1.0}
 
-    parameter_applier: ParameterApplier[Parameters] = apply_parameters
-    calculator_factory: CalculatorFactory = make_calculator
+    calculator_factory: CalculatorFactory[Parameters] = make_calculator
+    ase_evaluator: ASEEvaluator[Parameters] = evaluate_atoms
     atoms_factory: AtomsFactory = make_atoms
     quantity_processor: QuantityProcessor[Quantities] = process_quantities
-    ase_computer = SinglePointASEComputer(
-        calc_factory=calculator_factory,
-        param_applier=parameter_applier,
+    ase_computer = ASEComputer(
         atoms_factory=atoms_factory,
+        calculator=calculator_factory,
         quantity_processors=[quantity_processor],
-    )
+    ).with_evaluator(ase_evaluator)
     assert_type(
         ase_computer,
-        SinglePointASEComputer[Parameters, Quantities],
+        ASEComputer[Parameters, Quantities],
     )
     ase_computer({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     # The default ASE quantity processor produces a heterogeneous dictionary;
     # omitting processors must not make the parameter type unknown.
-    default_ase_computer = SinglePointASEComputer(
-        calc_factory=calculator_factory,
-        param_applier=parameter_applier,
+    default_ase_computer = ASEComputer[Parameters, dict[str, Any]](
         atoms_factory=atoms_factory,
+        calculator=calculator_factory,
     )
     assert_type(
         default_ase_computer,
-        SinglePointASEComputer[Parameters, dict[str, Any]],
+        ASEComputer[Parameters, dict[str, Any]],
     )
 
     def default_ase_loss(quantities: dict[str, Any]) -> float:

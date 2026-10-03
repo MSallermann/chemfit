@@ -1,6 +1,9 @@
 import numpy as np
 from ase import Atoms
+from ase.calculators.calculator import Calculator
 from ase.calculators.lj import LennardJones
+
+from chemfit.abstract_objective_function import EvaluateContext
 
 
 def e_lj(r: float, eps: float, sigma: float) -> float:
@@ -17,12 +20,13 @@ class LJAtomsFactory:
         return Atoms(positions=[self.p0, self.p1])
 
 
-def construct_lj(atoms: Atoms):
-    atoms.calc = LennardJones(rc=2000)
-
-
-def apply_params_lj(atoms: Atoms, params: dict[str, float]):
-    assert atoms.calc is not None
-    assert atoms.calc is not None
-    atoms.calc.parameters.sigma = params["sigma"]
-    atoms.calc.parameters.epsilon = params["epsilon"]
+def construct_lj(
+    parameters: dict[str, float],
+    _atoms: Atoms,
+    _ctx: EvaluateContext,
+) -> Calculator:
+    return LennardJones(
+        rc=2000,
+        sigma=parameters["sigma"],
+        epsilon=parameters["epsilon"],
+    )
