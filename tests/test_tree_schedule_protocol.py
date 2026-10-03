@@ -5,7 +5,7 @@ from collections.abc import Iterator, Sequence
 import pytest
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.callgraph import CallTree, cob_to_call_tree
+from chemfit.callgraph import CallTree, CombineNode, cob_to_call_tree
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.scheduling import EvaluationRequest
 from chemfit.tree_schedule import (
@@ -75,6 +75,75 @@ class FailingCloseSchedule(SerialTreeSchedule[Parameters]):
         raise CleanupFailure(msg)
 
 
+class ParameterLeaf(ObjectiveFunctor[Parameters]):
+    """Return the parameter selected at construction time."""
+
+    def __init__(self, name: str) -> None:
+        """Store the parameter name read during evaluation."""
+
+        super().__init__()
+        self.name = name
+
+    def _evaluate(self, parameters: Parameters, ctx: EvaluateContext) -> float:
+        """Return one parameter value."""
+
+        del ctx
+        return parameters[self.name]
+
+
+class StructuralComposite(ObjectiveFunctor[Parameters]):
+    """Minimal composite used to verify structural protocol scheduling."""
+
+    def __init__(self, failure_phase: str | None = None) -> None:
+        """Create two children and optionally fail one composite phase."""
+
+        super().__init__()
+        self.children = (ParameterLeaf("x"), ParameterLeaf("y"))
+        self.failure_phase = failure_phase
+
+    def child_objectives(self) -> Sequence[ObjectiveFunctor[Parameters]]:
+        """Return the immediate children."""
+
+        return self.children
+
+    def begin_composite_evaluation(
+        self,
+        parameters: Parameters,
+        ctx: EvaluateContext,
+    ) -> Sequence[EvaluateContext]:
+        """Create one context per child or fail setup."""
+
+        del parameters
+        if self.failure_phase == "begin":
+            msg = "structural composite begin failed"
+            raise RuntimeError(msg)
+        ctx.meta["began"] = True
+        return ctx.spawn_children(len(self.children))
+
+    def finish_composite_evaluation(
+        self,
+        child_outcomes: Sequence[float | Exception],
+        ctx: EvaluateContext,
+    ) -> float:
+        """Add child results or fail completion."""
+
+        if self.failure_phase == "finish":
+            msg = "structural composite finish failed"
+            raise RuntimeError(msg)
+        assert all(isinstance(outcome, float) for outcome in child_outcomes)
+        value = sum(outcome for outcome in child_outcomes if isinstance(outcome, float))
+        ctx.loss = value
+        ctx.meta["finished"] = True
+        return value
+
+    def _evaluate(self, parameters: Parameters, ctx: EvaluateContext) -> float:
+        """Reject direct leaf-style evaluation of this composite."""
+
+        del parameters, ctx
+        msg = "composite must not execute as a leaf"
+        raise AssertionError(msg)
+
+
 def make_objective(*, catastrophic: bool = False) -> CombinedObjectiveFunction:
     """Build a two-leaf objective used by the protocol tests."""
 
@@ -112,6 +181,32 @@ def test_base_expands_tasks_and_restores_completion_contexts() -> None:
         assert all(
             child["meta"]["completed_by"] == "recording-backend" for child in children
         )
+
+
+def test_structural_composite_is_scheduled_as_a_combine_node() -> None:
+    """Recognize and evaluate a composite without a concrete COB type check."""
+
+    objective = StructuralComposite()
+    schedule = SerialTreeScheduler().prepare(objective)
+    ctx = EvaluateContext()
+
+    assert isinstance(schedule.tree.nodes[schedule.tree.root], CombineNode)
+    assert schedule.evaluate({"x": 2.0, "y": 3.0}, ctx) == 5.0
+    assert ctx.meta == {"began": True, "finished": True}
+
+
+@pytest.mark.parametrize("failure_phase", ["begin", "finish"])
+def test_structural_composite_phase_failure_is_an_evaluation_outcome(
+    failure_phase: str,
+) -> None:
+    """Return ordinary composite phase failures without poisoning a schedule."""
+
+    schedule = SerialTreeScheduler().prepare(StructuralComposite(failure_phase))
+
+    with pytest.raises(RuntimeError, match=f"{failure_phase} failed"):
+        schedule.evaluate({"x": 2.0, "y": 3.0}, EvaluateContext())
+
+    assert not schedule.closed
 
 
 def test_catastrophic_leaf_failure_closes_schedule_and_prevents_reuse() -> None:

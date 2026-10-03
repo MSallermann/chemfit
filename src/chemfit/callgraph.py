@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any, TypeAlias
 
 from chemfit.abstract_objective_function import ObjectiveFunctor
-from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.scheduling import SchedulableCompositeObjective
 
 NodeId: TypeAlias = int
 
@@ -20,7 +20,7 @@ class CombineNode:
     id: NodeId
     parent_id: NodeId | None
     child_idx: int | None
-    objective: CombinedObjectiveFunction[Any]
+    objective: SchedulableCompositeObjective[Any]
     children: tuple[NodeId, ...]
 
 
@@ -37,7 +37,7 @@ def build_nodes_from_objective(
     objective: ObjectiveFunctor[Any],
     nodes: list[CallNode] | None = None,
 ) -> list[CallNode]:
-    """Build call-tree nodes for an ordinary or combined objective."""
+    """Build call-tree nodes for an ordinary or composite objective."""
 
     if nodes is None:
         nodes = []
@@ -51,10 +51,7 @@ def build_nodes_from_objective(
         node_id = len(nodes)
 
         # if the current node is a leaf, we simply append it to the node list and return
-        if not isinstance(
-            objective,
-            CombinedObjectiveFunction,
-        ):
+        if not isinstance(objective, SchedulableCompositeObjective):
             nodes.append(
                 LeafNode(
                     node_id,
@@ -65,9 +62,8 @@ def build_nodes_from_objective(
             )
             return node_id
 
-        # If the current node is a combined objective function, we
-        # first append it to the list, to reserve this node's position so that
-        # ID == its list index.
+        # Reserve a composite node's position before recursively adding its
+        # children so that every node ID remains equal to its list index.
         nodes.append(
             CombineNode(
                 node_id,
@@ -80,10 +76,8 @@ def build_nodes_from_objective(
 
         # Then we figure out its children by recursion
         children = tuple(
-            add_objective(term, parent_id=node_id, child_idx=cid)
-            for cid, term in zip(
-                range(objective.n_terms()), objective.objective_functions, strict=True
-            )
+            add_objective(term, parent_id=node_id, child_idx=child_idx)
+            for child_idx, term in enumerate(objective.child_objectives())
         )
 
         # Finally, we can replace the temporary node with a fresh one, now that child IDs are known.
@@ -156,7 +150,7 @@ def print_call_tree(tree: CallTree) -> None:
 
 
 def objective_to_call_tree(objective: ObjectiveFunctor[Any]) -> CallTree:
-    """Compile an ordinary or combined objective into a call tree."""
+    """Compile an ordinary or composite objective into a call tree."""
 
     return CallTree(0, tuple(build_nodes_from_objective(objective)))
 
