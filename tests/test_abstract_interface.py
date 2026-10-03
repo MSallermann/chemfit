@@ -202,6 +202,38 @@ def loss3(q: dict[str, float], p: dict[str, float]):
     return q["res"] + p["b"]
 
 
+def test_loss_function_type_error_is_not_reinterpreted_as_arity_mismatch():
+    def broken_loss(_quantities: dict[str, float]) -> float:
+        msg = "loss calculation failed"
+        raise TypeError(msg)
+
+    objective = MyComputer().with_loss(broken_loss)
+
+    with pytest.raises(TypeError, match="loss calculation failed"):
+        objective({"a": 2.0, "b": 3.0})
+
+
+def test_loss_function_signature_is_validated_during_construction():
+    def invalid_loss() -> float:
+        return 0.0
+
+    with pytest.raises(TypeError, match="must accept \\(quantities\\)"):
+        MyComputer().with_loss(invalid_loss)  # pyright: ignore[reportArgumentType]
+
+
+def test_optional_second_loss_argument_prefers_quantities_only():
+    def optional_parameters_loss(
+        quantities: dict[str, float],
+        parameters: dict[str, float] | None = None,
+    ) -> float:
+        assert parameters is None
+        return quantities["res"]
+
+    objective = MyComputer().with_loss(optional_parameters_loss)
+
+    assert objective({"a": 2.0, "b": 3.0}) == 1.0
+
+
 def test():
     my_func = MyFunctor()
 
