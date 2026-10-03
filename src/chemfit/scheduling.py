@@ -23,11 +23,12 @@ from typing import (
     Any,
     Generic,
     Protocol,
-    Self,
     TypeAlias,
     TypeVar,
     runtime_checkable,
 )
+
+from typing_extensions import Self
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.abstract_objective_function import ResourceRequest as _ResourceRequest
