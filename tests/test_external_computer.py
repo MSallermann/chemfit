@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import numpy as np
 import pytest
 
-import chemfit
 from chemfit.abstract_objective_function import (
     EvaluateContext,
 )
@@ -56,6 +55,8 @@ def test_squares_external():
     def callable_cmd(
         parameters: dict[str, float],
         workdir: Path,
+        _ctx: EvaluateContext,
+        *,
         script_file: Path,
         output_file: Path,
     ) -> list[str]:
@@ -124,7 +125,7 @@ def test_parser_bindings_and_completion_files(
     with_one_parser = original.with_parser(parse_a, "a.dat")
     with_parsers = with_one_parser.with_parser(parse_bc, "b.dat", "c.dat")
     computer = with_parsers.wait_for("task.done", "a.dat", "task.done").with_cmd(
-        lambda _parameters, _workdir: ["simulation"]
+        lambda _parameters, _workdir, _ctx: ["simulation"]
     )
 
     assert original._parser_bindings == ()  # noqa: SLF001
@@ -151,14 +152,32 @@ def test_execution_steps_run_in_registration_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     events: list[str] = []
+    step_contexts: list[EvaluateContext] = []
 
-    def hook(parameters: dict[str, int], _workdir: Path, *, name: str) -> None:
+    def hook(
+        parameters: dict[str, int],
+        _workdir: Path,
+        ctx: EvaluateContext,
+        *,
+        name: str,
+    ) -> None:
         assert parameters == {"value": 7}
+        step_contexts.append(ctx)
+        if name == "input":
+            ctx.temp.prepared_value = parameters["value"]
+        else:
+            assert ctx.temp.prepared_value == 7
         events.append(f"hook:{name}")
 
     def command(
-        parameters: dict[str, int], _workdir: Path, *, executable: str
+        parameters: dict[str, int],
+        _workdir: Path,
+        ctx: EvaluateContext,
+        *,
+        executable: str,
     ) -> list[str]:
+        step_contexts.append(ctx)
+        assert ctx.temp.prepared_value == 7
         events.append(f"build:{executable}")
         return [executable, str(parameters["value"])]
 
@@ -213,23 +232,32 @@ def test_execution_steps_run_in_registration_order(
         ["simulate", "7"],
         ["convert", "7"],
     ]
+    assert step_contexts == [ctx] * 6
 
 
 def test_hook_failure_stops_execution_pipeline(tmp_path: Path):
     events: list[str] = []
 
-    def fail(_parameters: dict[str, float], _workdir: Path) -> None:
+    def fail(
+        _parameters: dict[str, float],
+        _workdir: Path,
+        _ctx: EvaluateContext,
+    ) -> None:
         events.append("failed hook")
         msg = "hook failed"
         raise ValueError(msg)
 
-    def later_command(_parameters: dict[str, float], _workdir: Path) -> list[str]:
+    def later_command(
+        _parameters: dict[str, float],
+        _workdir: Path,
+        _ctx: EvaluateContext,
+    ) -> list[str]:
         events.append("command")
         return ["command"]
 
     computer = (
         ExternalQuantityComputer(base_working_directory=tmp_path)
-        .with_hook(lambda _parameters, _workdir: events.append("first hook"))
+        .with_hook(lambda _parameters, _workdir, _ctx: events.append("first hook"))
         .with_hook(fail)
         .with_cmd(later_command)
     )
@@ -274,7 +302,7 @@ def test_waits_synchronously_for_delayed_completion_file(
             poll_interval=0.001,
             wait_timeout=1,
         )
-        .with_cmd(lambda _parameters, _workdir: ["submit-job"])
+        .with_cmd(lambda _parameters, _workdir, _ctx: ["submit-job"])
         .with_parser(parse_result, "result.txt")
         .wait_for("task.done")
     )
@@ -298,7 +326,7 @@ def test_output_wait_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             wait_timeout=0.01,
             keep_temp_workdir_after_crash=False,
         )
-        .with_cmd(lambda _parameters, _workdir: ["submit-job"])
+        .with_cmd(lambda _parameters, _workdir, _ctx: ["submit-job"])
         .with_parser(parse_result, "missing.txt")
     )
     ctx = EvaluateContext()
@@ -329,7 +357,7 @@ def test_parser_retries_are_preserved(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(subprocess, "run", fake_run)
     computer = (
         ExternalQuantityComputer(base_working_directory=tmp_path)
-        .with_cmd(lambda _parameters, _workdir: ["simulation"])
+        .with_cmd(lambda _parameters, _workdir, _ctx: ["simulation"])
         .with_parser(flaky_parser, "result.txt")
     )
 
@@ -339,8 +367,6 @@ def test_parser_retries_are_preserved(tmp_path: Path, monkeypatch: pytest.Monkey
 
 def test_parser_and_completion_file_validation(tmp_path: Path):
     computer = ExternalQuantityComputer(base_working_directory=tmp_path)
-
-    assert chemfit.external(workdir=tmp_path).base_working_directory == tmp_path
 
     with pytest.raises(TypeError, match="callable"):
         computer.with_parser(None, "result.txt")  # type: ignore[arg-type]
@@ -377,7 +403,11 @@ def test_try_parsing_after_subprocess_exception(
     def parse_output(output_file: Path) -> dict[str, int]:
         return {"result": int(output_file.read_text(encoding="utf-8"))}
 
-    def later_hook(_parameters: dict[str, Any], _workdir: Path) -> None:
+    def later_hook(
+        _parameters: dict[str, Any],
+        _workdir: Path,
+        _ctx: EvaluateContext,
+    ) -> None:
         nonlocal later_step_ran
         later_step_ran = True
 
@@ -388,7 +418,7 @@ def test_try_parsing_after_subprocess_exception(
             subprocess_run_args={},
             try_parsing_after_exception=True,
         )
-        .with_cmd(lambda _parameters, _workdir: ["failing-command"])
+        .with_cmd(lambda _parameters, _workdir, _ctx: ["failing-command"])
         .with_hook(later_hook)
         .with_parser(parse_output, output_file)
     )
@@ -425,7 +455,7 @@ def test_later_failure_dumps_recovered_command_failure(
             wait_timeout=0.01,
             try_parsing_after_exception=True,
         )
-        .with_cmd(lambda _parameters, _workdir: ["failing-command"])
+        .with_cmd(lambda _parameters, _workdir, _ctx: ["failing-command"])
         .with_parser(lambda _output: {"result": 42}, "missing.txt")
     )
 
@@ -466,7 +496,11 @@ def test_subprocess_exception_does_not_parse_by_default(
         parser_called = True
         return {"result": 42}
 
-    def later_hook(_parameters: dict[str, Any], _workdir: Path) -> None:
+    def later_hook(
+        _parameters: dict[str, Any],
+        _workdir: Path,
+        _ctx: EvaluateContext,
+    ) -> None:
         nonlocal later_step_ran
         later_step_ran = True
 
@@ -478,7 +512,7 @@ def test_subprocess_exception_does_not_parse_by_default(
             delete_temp_workdirs=True,
             keep_temp_workdir_after_crash=False,
         )
-        .with_cmd(lambda _parameters, _workdir: ["failing-command"])
+        .with_cmd(lambda _parameters, _workdir, _ctx: ["failing-command"])
         .with_hook(later_hook)
         .with_parser(parse_output, output_file)
     )

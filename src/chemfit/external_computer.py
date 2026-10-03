@@ -35,8 +35,8 @@ def _subprocess_output_to_text(output: bytes | str) -> str:
     return output
 
 
-CommandType = Callable[[ParametersT, Path], list[str]]
-HookType = Callable[[ParametersT, Path], None]
+CommandType = Callable[[ParametersT, Path, EvaluateContext], list[str]]
+HookType = Callable[[ParametersT, Path, EvaluateContext], None]
 
 
 @dataclass(frozen=True)
@@ -259,11 +259,11 @@ class ExternalQuantityComputer(
 
             if isinstance(step, _HookStep):
                 ctx.temp.current_step_type = "hook"
-                step.hook(parameters, ctx.temp.workdir)
+                step.hook(parameters, ctx.temp.workdir, ctx)
                 continue
 
             ctx.temp.current_step_type = "command"
-            cmd = step.command(parameters, ctx.temp.workdir)
+            cmd = step.command(parameters, ctx.temp.workdir, ctx)
             ctx.temp.commands.append(cmd)
 
             try:
@@ -333,7 +333,7 @@ class ExternalQuantityComputer(
 
     def with_hook(
         self,
-        hook: Callable[Concatenate[ParametersT, Path, ...], None],
+        hook: Callable[Concatenate[ParametersT, Path, EvaluateContext, ...], None],
         /,
         **kwargs: Any,
     ) -> Self:
@@ -341,16 +341,18 @@ class ExternalQuantityComputer(
         Return a copy with a hook appended to the execution pipeline.
 
         The provided ``hook`` callable may accept additional keyword arguments
-        beyond ``(parameters, workdir)``. These are bound via ``kwargs`` and the
-        resulting callable is executed at this position in the pipeline.
+        beyond ``(parameters, workdir, ctx)``. These are bound via ``kwargs``
+        and the resulting callable is executed at this position in the
+        pipeline.
 
         This is a convenience wrapper around ``functools.partial`` that avoids
         requiring users to manually construct partial functions.
 
         Args:
             hook: Callable executed at this position in the pipeline. Must accept
-                ``(parameters: Mapping[str, object], workdir: Path, ...)`` where any
-                additional arguments are keyword-only.
+                ``(parameters: Mapping[str, object], workdir: Path,
+                ctx: EvaluateContext, ...)`` where any additional arguments
+                are keyword-only.
             **kwargs: Keyword arguments to bind to ``hook``.
 
         Returns:
@@ -359,7 +361,7 @@ class ExternalQuantityComputer(
         Example:
             >>> from chemfit.external_computer import ExternalQuantityComputer
             >>> computer = ExternalQuantityComputer(base_working_directory="workdir")
-            >>> def write_input(parameters, workdir, *, template_path):
+            >>> def write_input(parameters, workdir, ctx, *, template_path):
             ...     ...
             >>> computer2 = computer.with_hook(
             ...     write_input,
@@ -380,7 +382,9 @@ class ExternalQuantityComputer(
 
     def with_cmd(
         self,
-        command: Callable[Concatenate[ParametersT, Path, ...], list[str]],
+        command: Callable[
+            Concatenate[ParametersT, Path, EvaluateContext, ...], list[str]
+        ],
         /,
         **kwargs: Any,
     ) -> Self:
@@ -388,16 +392,18 @@ class ExternalQuantityComputer(
         Return a copy with a command appended to the execution pipeline.
 
         The provided ``command`` may accept additional keyword arguments
-        beyond ``(parameters, workdir)``. These are bound via ``kwargs`` and the
-        resulting callable is executed at this position in the pipeline.
+        beyond ``(parameters, workdir, ctx)``. These are bound via ``kwargs``
+        and the resulting callable is executed at this position in the
+        pipeline.
 
         This is a convenience wrapper around ``functools.partial`` that avoids
         requiring users to manually construct partial functions.
 
         Args:
             command: Callable used to construct the command. Must accept
-                ``(parameters: Mapping[str, object], workdir: Path, ...)`` where any
-                additional arguments are keyword-only.
+                ``(parameters: Mapping[str, object], workdir: Path,
+                ctx: EvaluateContext, ...)`` where any additional arguments
+                are keyword-only.
             **kwargs: Keyword arguments to bind to ``command``.
 
         Returns:
@@ -406,7 +412,7 @@ class ExternalQuantityComputer(
         Example:
             >>> from chemfit.external_computer import ExternalQuantityComputer
             >>> computer = ExternalQuantityComputer(base_working_directory="workdir")
-            >>> def command(parameters, workdir, *, executable):
+            >>> def command(parameters, workdir, ctx, *, executable):
             ...     return [executable, "input.dat"]
             >>> computer2 = computer.with_cmd(
             ...     command,
