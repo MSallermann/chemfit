@@ -13,8 +13,8 @@ This is the standard way to integrate external simulation codes into ChemFit.
 An external computer is constructed from three pieces:
 
 - a function that builds the command
-- a list of expected output files
-- a function that parses those files
+- one or more parser functions
+- the output file or files consumed by each parser
 
 Minimal example
 -----------------
@@ -38,8 +38,8 @@ the parameter dictionary and the temporary working directory. Each evaluation
 runs in its own isolated working directory.
 
 All files created by the external command should be written relative to this
-working directory. The paths specified in ``output_files`` are interpreted
-relative to it as well.
+working directory. Paths registered through ``with_parser()`` or ``wait_for()``
+are interpreted relative to it as well.
 
 .. note::
 
@@ -64,19 +64,16 @@ For our example, we could define such a parser like so:
 
     import numpy as np
 
-    def my_output_parser(output_files: list[Path]) -> dict[str, Any]:
-        """Parse the output files and retrieve the quantities."""
-        f = output_files[0]
-        data = np.loadtxt(f)
+    def my_output_parser(output_file: Path) -> dict[str, Any]:
+        """Parse the output file and retrieve its quantities."""
+        data = np.loadtxt(output_file)
         return {"y": data[:, 0], "x": data[:, 1]}
 
 .. note::
 
-    As you can see :py:func:`my_output_parser` *has* to accept a list of output files.
-    In this simple example, we do not have to worry about this, since we know there will only ever be one output file.
-
-    The reason for the list is that the :py:class:`~chemfit.external_computer.ExternalQuantityComputer` may specify multiple output files and, in fact, multiple parsers.
-    All output files are passed to all parsers, and their outputs are merged.
+    A parser receives only the files registered with it. For a parser that
+    consumes multiple files, pass each filename to ``with_parser()`` in the
+    same order as the parser's positional arguments.
 
 We will also need the following loss function
 
@@ -91,14 +88,12 @@ Now we're ready to wire everything up:
 
 .. code-block:: python
 
+    from chemfit.external_computer import ExternalQuantityComputer
+
     ob = (
-        ExternalQuantityComputer(
-            output_files=["output.txt"],
-            output_parsers=[my_output_parser],
-            base_working_directory=".",
-            delete_temp_workdirs=True,
-        )
+        ExternalQuantityComputer(base_working_directory=".")
         .with_cmd(callable_cmd, script_file=script_file, output_file="output.txt")
+        .with_parser(my_output_parser, "output.txt")
         .with_loss(loss_function, ref_y=ref_quantities["y"])
     )
 
@@ -116,12 +111,10 @@ Each evaluation runs in an isolated working directory.
 A single call performs the following steps:
 
 1. create a temporary working directory
-2. run ``presubmit_hook`` (if provided)
-3. build the command via ``executable_cmd``
-4. execute it using :py:func:`subprocess.run`
-5. wait until all expected output files exist
-6. parse them using ``output_parsers``
-7. return the resulting quantity dictionary
+2. execute every hook and command in registration order
+3. wait until all parser inputs and completion files exist
+4. invoke each registered parser with its resolved input paths
+5. return the resulting quantity dictionary
 
 The working directory is removed after evaluation unless configured otherwise.
 
@@ -132,62 +125,93 @@ Customization points
 The behavior is controlled entirely through callables.
 
 
-Command construction
-^^^^^^^^^^^^^^^^^^^^
+Commands and hooks
+^^^^^^^^^^^^^^^^^^
 
-``executable_cmd`` receives the parameter dictionary and the current workdir and must
-return a command (list of strings):
+A command callable receives the parameter dictionary and current working
+directory and returns a command as a list of strings:
 
 .. code-block:: python
 
-   def executable_cmd(parameters : dict[str,Any], workdir : Path):
+   def run_simulation(parameters: dict[str, Any], workdir: Path):
        return ["my_program", "--x", str(parameters["x"])]
 
-This function is called for every evaluation.
-
-
-Output files
-^^^^^^^^^^^^
-
-``output_files`` defines which files must exist before parsing begins.
+Register commands with ``with_cmd()``. Register ordinary Python setup or
+file-processing functions with ``with_hook()``. Calls to these fluent methods
+define the exact execution order:
 
 .. code-block:: python
 
-   output_files = [Path("energy.txt"), Path("forces.txt")]
+   computer = (
+       computer
+       .with_hook(write_input, template="input.template")
+       .with_cmd(preprocess)
+       .with_hook(modify_preprocessed_input)
+       .with_cmd(run_simulation)
+       .with_hook(postprocess_files)
+       .with_cmd(convert_output)
+   )
 
-All paths must be **relative to the working directory**.
+Each step completes before the next begins. Additional keyword arguments passed
+to ``with_hook()`` or ``with_cmd()`` are bound to that callable.
+
+
+Parser inputs and completion files
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Register a parser together with the relative paths it consumes:
+
+.. code-block:: python
+
+   computer = computer.with_parser(parse_energy, "energy.txt")
+   computer = computer.with_parser(parse_forces, "forces.txt", "stress.txt")
+
+The parser input files are automatically watched before parsing begins. Add a
+completion marker that is not consumed by a parser with ``wait_for()``:
+
+.. code-block:: python
+
+   computer = computer.wait_for("task.done")
+
+All registered paths must be **relative to the working directory**.
 
 
 Output parsing
 ^^^^^^^^^^^^^^
 
-``output_parsers`` receives the list of output file paths and returns a
-dictionary of quantities:
+Each parser receives its resolved output paths as positional arguments and
+returns a dictionary of quantities:
 
 .. code-block:: python
 
-   def output_parsers(paths):
-       energy = float(paths[0].read_text())
-       return {"energy": energy}
+   def parse_results(log: Path, forces: Path):
+       return {
+           "energy": read_energy(log),
+           "forces": read_forces(forces),
+       }
+
+   computer = computer.with_parser(parse_results, "run.log", "forces.dat")
+
+Parser results are merged in registration order.
 
 
-Presubmit hook
---------------
+Hooks
+-----
 
-If input files need to be written before execution, use ``presubmit_hook``:
+Hooks are useful whenever Python code must run between external commands. For
+example, an input-writing hook can run before the first command:
 
 .. code-block:: python
 
-   def presubmit_hook(parameters:dict[str,Any], workdir:Path):
-       with open("input.txt", "w") as f:
-           f.write(str(parameters["x"]))
+   def write_input(parameters: dict[str, Any], workdir: Path):
+       (workdir / "input.txt").write_text(str(parameters["x"]))
 
-This runs inside the working directory before the command is executed.
+The hook receives the evaluation parameters and temporary working directory.
 
 Example: generating an input file
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-A common use of ``presubmit_hook`` is to generate input files from a template.
+A common use of ``with_hook()`` is to generate input files from a template.
 
 .. code-block:: python
 
@@ -210,26 +234,23 @@ This can then be attached to the computer:
 .. code-block:: python
 
    computer = (
-       ExternalQuantityComputer(
-           output_files=[Path("output.txt")],
-           output_parsers=[my_output_parser],
-       )
-       .with_presubmit(
+       ExternalQuantityComputer(base_working_directory=".")
+       .with_hook(
            write_input,
            template_path=Path("template.in"),
            output_name="input.in",
        )
        .with_cmd(callable_cmd, script_file="square.py", output_file="output.txt")
+       .with_parser(my_output_parser, "output.txt")
    )
 
-The presubmit hook runs inside the working directory before the command
-is executed. This makes it the right place to prepare all input files
-needed by the external program.
+The hook completes before the following command begins. Hooks can also be
+inserted between commands to inspect or modify intermediate files.
 
 .. hint::
 
     Using a template engine such as ``Jinja`` to generate input files can be
-    a very powerful option in the ``presubmit_hook``, especially when many
+    a very powerful option in an input-writing hook, especially when many
     files need to be configured or share common structure.
 
 Important rules
@@ -238,7 +259,8 @@ Important rules
 Output files must be relative
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-All paths in ``output_files`` must be relative to the working directory.
+All paths passed to ``with_parser()`` and ``wait_for()`` must be relative to
+the working directory.
 
 Using absolute paths breaks isolation and can lead to incorrect results
 when running in parallel.
@@ -261,10 +283,13 @@ Scheduler caveat
 Some commands (e.g. ``srun`` or ``sbatch``) return before the computation
 has finished.
 
-In that case, output files may appear before the job is done.
+In that case, the next pipeline step begins after the submission command
+returns; ChemFit does not wait for the remote job between steps. Express remote
+dependencies through the external scheduler or a wrapper script. Output polling
+begins after every registered execution step has run.
 
-A common solution is to write a ``done`` file and include it in
-``output_files``.
+A common solution is to write a ``done`` file and register it with
+``wait_for("done")``.
 
 
 Debugging and failure handling
@@ -277,18 +302,24 @@ For debugging, you can keep them:
 .. code-block:: python
 
    computer = ExternalQuantityComputer(
-       ...,
+       base_working_directory="runs",
        keep_temp_workdir_after_crash=True,
    )
 
-To inspect failures, you can also enable dump files:
+To inspect failures, enable evaluation-level dump files:
 
 .. code-block:: python
 
    computer = ExternalQuantityComputer(
-       ...,
+       base_working_directory="runs",
        write_dump_file_after_crash=True,
    )
+
+A dump records the final exception, current execution step, commands executed
+so far, and the other temporary context state. When the final exception is a
+:py:class:`subprocess.CalledProcessError`, its command, return code, standard
+output, and standard error are included when available. Hook, output-waiting,
+and parser failures therefore produce diagnostics as well as command failures.
 
 Parsing output from a failed command
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -302,15 +333,17 @@ after :py:func:`subprocess.run` raises
 .. code-block:: python
 
    computer = ExternalQuantityComputer(
-       ...,
+       base_working_directory="runs",
        try_parsing_after_exception=True,
    )
 
 The default is ``False``, so a non-zero exit status normally fails the
 evaluation without parsing. When enabled, the evaluation succeeds only if all
 configured output files appear within ``wait_timeout`` and every parser
-succeeds. The subprocess failure is logged as a warning, and dump-file settings
-still apply.
+succeeds. The subprocess failure is logged and recorded in ``ctx.temp``, but a
+successful evaluation does not produce a crash dump. If output waiting or
+parsing subsequently fails, the single final dump also includes the earlier
+command-failure record.
 
 Enable this only when a non-zero exit status is known to leave complete,
 trustworthy output. It can otherwise turn a failed calculation into an
@@ -319,7 +352,9 @@ apparently successful result based on partial files.
 During execution, useful information is stored in the context, including:
 
 - the working directory
-- the executed command
+- all executed commands, in ``ctx.temp.commands``
+- the current execution step during a failure
+- a recoverable command failure, when applicable
 - the output files
 
 
@@ -333,30 +368,27 @@ The constructor exposes additional options:
 - ``poll_interval`` - how often file existence is checked
 - ``subprocess_run_args`` - arguments passed to ``subprocess.run``
 - ``delete_temp_workdirs`` - whether to remove directories after success
-- ``write_dump_file_after_crash`` - whether to write subprocess diagnostics
+- ``write_dump_file_after_crash`` - whether to write evaluation diagnostics
 - ``keep_temp_workdir_after_crash`` - whether to retain failed work directories
 - ``try_parsing_after_exception`` - whether to parse output after a non-zero exit
 
 
-Subclassing
------------
+Command wrappers
+----------------
 
 In most cases, constructing a
 :py:class:`~chemfit.external_computer.ExternalQuantityComputer`
 with callables is sufficient.
 
-Subclassing is useful when the execution flow itself needs to change.
-
-A typical example is adding a scheduler wrapper such as ``srun``:
+Commands can be wrapped without subclassing. For example, a command builder can
+add ``srun`` to another command:
 
 .. code-block:: python
 
-   class SrunComputer(ExternalQuantityComputer):
-       def build_cmd(self, parameters, ctx):
-           base_cmd = super().build_cmd(parameters, ctx)
-           return ["srun", *base_cmd]
+   def with_srun(parameters, workdir, *, command):
+       return ["srun", *command(parameters, workdir)]
 
-This pattern is used when command construction depends on runtime context.
+   computer = computer.with_cmd(with_srun, command=run_simulation)
 
 
 Summary
