@@ -22,8 +22,8 @@ from typing import Any, Generic, TypeVar
 
 from mpi4py import MPI
 
-from chemfit.callgraph import CallTree, LeafNode, cob_to_call_tree
-from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.abstract_objective_function import ObjectiveFunctor
+from chemfit.callgraph import CallTree, LeafNode, objective_to_call_tree
 from chemfit.debug_utils import log_all_methods
 from chemfit.scheduling import Scheduler
 from chemfit.tree_schedule import (
@@ -93,7 +93,7 @@ class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
     ``LeafCompletion`` values.
 
     Args:
-        tree: Compiled combined-objective call tree.
+        tree: Compiled ordinary or combined objective call tree.
         comm: MPI communicator containing the coordinator and worker ranks.
         mpi_debug_log: Wrap the communicator with method-level debug logging.
 
@@ -305,7 +305,7 @@ class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
 
 
 class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
-    """Prepare persistent MPI schedules for combined-objective trees."""
+    """Prepare persistent MPI schedules for objective call trees."""
 
     def __init__(
         self,
@@ -321,7 +321,7 @@ class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
 
     def prepare(
         self,
-        objective: CombinedObjectiveFunction[ParametersT],
+        objective: ObjectiveFunctor[ParametersT],
         /,
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
@@ -329,7 +329,7 @@ class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
         """Compile an objective tree and bind it to the MPI communicator."""
 
         return MPITreeSchedule(
-            tree=cob_to_call_tree(objective),
+            tree=objective_to_call_tree(objective),
             comm=self.comm,
             mpi_debug_log=self.mpi_debug_log,
         )
