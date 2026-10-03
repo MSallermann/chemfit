@@ -58,6 +58,13 @@ independent contributions.
 Independent terms and parallelism
 ==================================
 
+.. warning::
+
+    **OUTDATED:** The execution-policy description in this section predates
+    prepared schedulers. The independence and context model remains current,
+    but the mechanism for selecting serial, executor, or MPI execution does
+    not.
+
 A key design principle of ChemFit is that objective terms are evaluated
 independently.
 

@@ -50,6 +50,11 @@ Please open an issue [here](https://github.com/MSallermann/chemfit/issues).
 
 # Quick start: fit a Lennard-Jones potential
 
+> [!WARNING]
+> **OUTDATED:** This example uses the removed execution-policy API for
+> term-level parallelism. It is retained as a marker until the simplified
+> top-level API is finalized; do not copy its `ExecutorPolicy` setup.
+
 This complete example recovers the Lennard-Jones parameters
 `epsilon = sigma = 1` from three reference dimer energies. It demonstrates ASE
 integration, separated quantity and loss functions, a combined objective,

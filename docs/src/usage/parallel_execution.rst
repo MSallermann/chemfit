@@ -3,6 +3,13 @@
 Parallel Execution
 ====================
 
+.. warning::
+
+   **OUTDATED:** This page predates the scheduler migration. In particular,
+   its manual batch-evaluation recommendations and all ``ExecutorPolicy`` and
+   ``MPIPolicy`` examples should not be treated as current API guidance. The
+   page is retained for revision after the simplified top-level API is chosen.
+
 There are two ways in which parallel execution enters the picture while dealing with
 a ChemFit objective function:
 

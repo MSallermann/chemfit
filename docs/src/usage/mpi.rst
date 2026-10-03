@@ -4,6 +4,13 @@
 Running with MPI
 ==================
 
+.. warning::
+
+   **OUTDATED:** This entire page documents the removed ``MPIPolicy``
+   protocol, including its setup, partitioning model, and ``worker_loop``
+   signature. It is retained for revision after the simplified top-level API
+   is chosen.
+
 The MPI integration in ChemFit parallelizes the evaluation of a
 :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
 across MPI ranks. Each rank evaluates a slice of the combined objective's

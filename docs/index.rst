@@ -137,6 +137,12 @@ where :math:`f` is an external parameter and then we combine them into an overal
 The :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be customized in many ways.
 Details can be found in the dedicated :ref:`combined_objective_functions` page.
 
+.. warning::
+
+    **OUTDATED:** The following term-parallelism example uses the removed
+    execution-policy API. It is retained as a marker until the simplified
+    top-level API is finalized.
+
 The evaluation of the terms of a :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be parallelized in two alternate ways:
 
 1. Executors which implement the :class:`~chemfit.abstract_objective_function.ExecutorLike` interface. For example from `concurrent.futures`.

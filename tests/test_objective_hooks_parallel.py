@@ -12,7 +12,7 @@ from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.objective_hooks import TimingHook, UUIDHook
 
 PARAMETERS = {"x": 2.0}
-# With four MPI ranks, four terms ensure that every rank evaluates a term.
+# With four MPI ranks, four terms provide work for all three worker ranks.
 N_TERMS = 4
 
 

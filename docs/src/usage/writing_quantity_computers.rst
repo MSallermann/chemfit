@@ -25,6 +25,12 @@ If none of the built-in computers are to your taste, think about sub-classing th
 Let's cook
 ********************
 
+.. warning::
+
+    **OUTDATED IN PART:** The final prose in this section uses attribute
+    notation for ``ctx.meta``. The example itself is correct: ``ctx.meta`` is
+    a dictionary and metadata entries use item access.
+
 For a completely fresh QuantityComputer, derive from the :py:class:`~chemfit.abstract_objective_function.QuantityComputer` base class and implement the :py:meth:`~chemfit.abstract_objective_function.QuantityComputer._compute` method. That's it.
 
 The ``_compute`` method should accept exactly two arguments: A dictionary of parameters of type :py:class:`dict[str,Any]` and an :py:class:`~chemfit.abstract_objective_function.EvaluateContext`.
@@ -194,6 +200,13 @@ evaluations of a given computer, such as:
 ctx.config
 ====================
 
+.. warning::
+
+    **OUTDATED:** The examples in this subsection treat ``ctx.config`` as a
+    mapping with ``.get(...)``. It is currently a ``SimpleNamespace`` and
+    therefore uses attribute access. The per-evaluation CPU/GPU guidance also
+    predates static ``resources`` annotations on objectives and computers.
+
 ``ctx.config`` provides configuration information to the computation.
 It should be treated as **read-only**.
 
@@ -234,6 +247,12 @@ parallel settings, different calls may:
 ctx.shared
 ====================
 
+.. warning::
+
+    **OUTDATED:** The cache example treats ``ctx.shared`` as a mapping with
+    ``.setdefault(...)``. It is currently a ``SimpleNamespace`` and therefore
+    uses attribute access.
+
 ``ctx.shared`` allows controlled sharing of state across multiple
 evaluations.
 
@@ -270,6 +289,13 @@ Example (simple cache):
 ===================================
 External parameters vs ctx.config
 ===================================
+
+.. warning::
+
+    **OUTDATED IN PART:** The conceptual distinction remains useful, but the
+    resource-related examples predate static ``resources`` annotations.
+    Resource requirements are structural metadata rather than
+    parameter-dependent context configuration.
 
 Both external parameters (passed via ``bind`` or the constructor) and
 ``ctx.config`` can influence the behavior of a quantity computer, but
@@ -329,6 +355,12 @@ Summary
 Calling computers from within computers
 ******************************************
 
+.. warning::
+
+    **OUTDATED IN PART:** The child-context model in this section remains
+    current, but its execution-policy and manual executor guidance predates
+    prepared schedulers.
+
 .. note::
 
     This section is for fairly advanced use and is particularly relevant when
@@ -364,6 +396,12 @@ The benefit of this approach is two-fold
 =============================================================
 Child-parent relationships for the different context fields
 =============================================================
+
+.. warning::
+
+    **OUTDATED IN PART:** The propagation model below remains current, but the
+    ``ctx.config`` and ``ctx.shared`` examples use mapping methods even though
+    both fields are currently ``SimpleNamespace`` instances.
 
 When creating child contexts via
 :py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`,
@@ -426,6 +464,14 @@ thread-safe.
 ===================================
 Configuring child contexts
 ===================================
+
+.. warning::
+
+    **OUTDATED IN PART:** The child-configurator concept remains current, but
+    the example assigning ``child_ctx.config["worker_id"]`` uses the obsolete
+    mapping-style interface. ``ctx.config`` is currently a ``SimpleNamespace``.
+    The resource-distribution wording also predates static ``resources``
+    annotations and prepared scheduler placement.
 
 Besides the number of children,
 :py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`

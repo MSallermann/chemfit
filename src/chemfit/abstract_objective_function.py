@@ -44,7 +44,7 @@ class ChildContextConfigurator(Protocol):
     The configurator is called once for each child context immediately
     after the parent context has spawned them. It may mutate the child
     context or the parent context in place to configure child-specific
-    evaluation behavior, metadata, or resource usage.
+    evaluation behavior or metadata.
 
     The ``idx_child_ctx`` argument is the absolute index of the current
     child within the spawned batch.
@@ -88,9 +88,9 @@ class EvaluateContext:
                 children inherit parent defaults but can be configured
                 independently
             shared:
-                Optional namespace for shared read-only state that may be
-                reused across related contexts, such as parent/child
-                evaluations.
+                Optional namespace for state shared by related contexts, such
+                as parent/child evaluations. Mutable contents require
+                synchronization when contexts can execute concurrently.
 
         Attributes:
             quantities (dict[str, Any] | None): Intermediate quantities
