@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.combined_objective_function import CombinedObjectiveFunction
@@ -12,7 +12,7 @@ class LeafNode:
     id: NodeId
     parent_id: NodeId | None
     child_idx: int | None
-    objective: ObjectiveFunctor
+    objective: ObjectiveFunctor[Any]
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class CombineNode:
     id: NodeId
     parent_id: NodeId | None
     child_idx: int | None
-    objective: CombinedObjectiveFunction
+    objective: CombinedObjectiveFunction[Any]
     children: tuple[NodeId, ...]
 
 
@@ -33,15 +33,19 @@ class CallTree:
     nodes: tuple[CallNode, ...]
 
 
-def build_nodes_from_cob(
-    cob: CombinedObjectiveFunction,
+def build_nodes_from_objective(
+    objective: ObjectiveFunctor[Any],
     nodes: list[CallNode] | None = None,
 ) -> list[CallNode]:
+    """Build call-tree nodes for an ordinary or combined objective."""
+
     if nodes is None:
         nodes = []
 
     def add_objective(
-        objective: ObjectiveFunctor, parent_id: NodeId | None, child_idx: NodeId | None
+        objective: ObjectiveFunctor[Any],
+        parent_id: NodeId | None,
+        child_idx: NodeId | None,
     ) -> NodeId:
         # the id of the current node is simply its position in the node list
         node_id = len(nodes)
@@ -95,8 +99,17 @@ def build_nodes_from_cob(
         return node_id
 
     # On the first invocation we add the root node, so parent_id is None
-    add_objective(cob, parent_id=None, child_idx=None)
+    add_objective(objective, parent_id=None, child_idx=None)
     return nodes
+
+
+def build_nodes_from_cob(
+    cob: ObjectiveFunctor[Any],
+    nodes: list[CallNode] | None = None,
+) -> list[CallNode]:
+    """Build nodes through the legacy generalized-builder entry point."""
+
+    return build_nodes_from_objective(cob, nodes)
 
 
 def print_call_tree(tree: CallTree) -> None:
@@ -142,5 +155,13 @@ def print_call_tree(tree: CallTree) -> None:
     visit(tree.root, is_root=True)
 
 
-def cob_to_call_tree(cob: CombinedObjectiveFunction) -> CallTree:
-    return CallTree(0, tuple(build_nodes_from_cob(cob)))
+def objective_to_call_tree(objective: ObjectiveFunctor[Any]) -> CallTree:
+    """Compile an ordinary or combined objective into a call tree."""
+
+    return CallTree(0, tuple(build_nodes_from_objective(objective)))
+
+
+def cob_to_call_tree(cob: ObjectiveFunctor[Any]) -> CallTree:
+    """Compile an objective while preserving the legacy entry point."""
+
+    return objective_to_call_tree(cob)

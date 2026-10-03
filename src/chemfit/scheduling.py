@@ -1,7 +1,7 @@
 """
 Public interfaces for preparing and executing objective evaluations.
 
-A Scheduler turns a combined objective into an objective-specific
+A Scheduler turns an objective functor into an objective-specific
 PreparedSchedule. Prepared schedules accept batches of EvaluationRequest
 objects and yield EvaluationResult objects as individual evaluations finish.
 Results carry their input index, so a backend may emit them in completion
@@ -32,7 +32,7 @@ from typing import (
 from chemfit.abstract_objective_function import EvaluateContext
 
 if TYPE_CHECKING:
-    from chemfit.combined_objective_function import CombinedObjectiveFunction
+    from chemfit.abstract_objective_function import ObjectiveFunctor
 
 ParametersT_co = TypeVar("ParametersT_co", bound=Mapping[str, object], covariant=True)
 ParametersT_contra = TypeVar(
@@ -288,10 +288,10 @@ PreparedScheduleT_co = TypeVar(
 @runtime_checkable
 class Scheduler(Protocol[PreparedScheduleT_co]):
     """
-    Factory for prepared combined-objective execution plans.
+    Factory for prepared objective execution plans.
 
     A scheduler describes reusable backend configuration or scheduling policy.
-    Calling prepare binds that configuration to one combined objective and
+    Calling prepare binds that configuration to one objective and
     returns a PreparedSchedule containing objective-specific state.
 
     The protocol is structural. Implementations need not inherit from a
@@ -301,7 +301,7 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
     def prepare(
         self,
-        objective: CombinedObjectiveFunction[ParametersT],
+        objective: ObjectiveFunctor[ParametersT],
         /,
         *,
         profile: SchedulingProfile | None = None,
@@ -310,10 +310,10 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
         Prepare an objective-specific plan for repeated evaluations.
 
         Args:
-            objective: Root combined objective to prepare. Preparation covers
-                its complete nested call tree. Scheduler settings attached to
-                nested combined objectives do not apply while they are
-                executed through this root plan.
+            objective: Root objective to prepare. For a combined objective,
+                preparation covers its complete nested call tree. Scheduler
+                settings attached to nested combined objectives do not apply
+                while they are executed through this root plan.
             profile: Optional measured or user-supplied cost profile keyed by
                 nested objective path. Implementations may ignore the profile
                 if they do not perform cost-aware placement.

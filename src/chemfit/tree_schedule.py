@@ -1,11 +1,11 @@
 """
-Tree-based prepared schedules for nested combined objectives.
+Tree-based prepared schedules for objective functors.
 
-The module compiles a combined-objective hierarchy into a CallTree and tracks
-each evaluation in a separate EvaluationState. A top-down pass creates
-contexts and begins objective lifecycles, backend-specific code evaluates the
-reachable leaves, and completion events propagate bottom-up until the root
-produces an EvaluationResult.
+The module compiles an ordinary or combined objective into a CallTree and
+tracks each evaluation in a separate EvaluationState. A top-down pass creates
+contexts and begins combined-objective lifecycles, backend-specific code
+evaluates the reachable leaves, and completion events propagate bottom-up
+until the root produces an EvaluationResult.
 
 TreeScheduleBase implements the backend-independent lifecycle and propagation
 logic. Concrete schedules only need to execute backend-neutral LeafTask values,
@@ -22,9 +22,8 @@ from chemfit.callgraph import (
     CombineNode,
     LeafNode,
     NodeId,
-    cob_to_call_tree,
+    objective_to_call_tree,
 )
-from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.scheduling import (
     EvaluationRequest,
     EvaluationResult,
@@ -109,7 +108,7 @@ class EvaluationState:
 
     Args:
         tree: Compiled objective tree evaluated by the schedule.
-        root_ctx: Context belonging to the root combined objective.
+        root_ctx: Context belonging directly to the root objective.
 
     Attributes:
         contexts: Context associated with each tree node. Contexts for
@@ -327,8 +326,8 @@ class TreeScheduleBase(
     the mechanism for executing backend-neutral leaf tasks.
 
     Args:
-        tree: Compiled call tree rooted at the combined objective represented
-            by this schedule.
+        tree: Compiled ordinary or combined objective call tree represented by
+            this schedule.
 
     """
 
@@ -348,14 +347,16 @@ class TreeScheduleBase(
         eval_state: EvaluationState,
     ) -> SetupOutcome:
         """
-        Prepare one evaluation by traversing its combine nodes top-down.
+        Prepare an evaluation by activating its root and traversing top-down.
 
-        The traversal creates child contexts, begins each reachable combined
-        objective lifecycle, and marks reachable leaves as pending.
+        An ordinary root leaf is marked pending with ``root_ctx`` directly.
+        For a combined root, the traversal creates child contexts, begins each
+        reachable combined-objective lifecycle, and marks its reachable leaves
+        as pending.
 
         Args:
             parameters: Parameter mapping for the evaluation.
-            root_ctx: Context belonging to the root combined objective.
+            root_ctx: Context belonging directly to the root objective.
             eval_state: Mutable tree state initialized for this evaluation.
 
         Returns:
@@ -465,10 +466,12 @@ class TreeScheduleBase(
 
             return PENDING
 
-        return visit(
-            combine_ctx=root_ctx,
-            node_id=self.tree.root,
-        )
+        root = self.tree.nodes[self.tree.root]
+        if isinstance(root, LeafNode):
+            eval_state.activate(root.id)
+            return PENDING
+
+        return visit(combine_ctx=root_ctx, node_id=root.id)
 
     def finish_combine_node(
         self,
@@ -658,10 +661,9 @@ class TreeScheduleBase(
                 outcome_to_propagate,
             )
 
-            # propagate_completion() is only called for nodes that have a parent.
-            # The root itself is finished internally below and is never propagated.
             parent_id = node.parent_id
-            assert parent_id is not None
+            if parent_id is None:
+                return outcome_to_propagate
 
             # One more child of the parent has completed.
             # The parent cannot be finished until all of its children have completed.
@@ -870,21 +872,20 @@ class SerialTreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
 
 
 class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
-    """Prepare synchronous tree schedules for combined objectives."""
+    """Prepare synchronous tree schedules for objective functors."""
 
     def prepare(
         self,
-        objective: CombinedObjectiveFunction[ParametersT_contra],
+        objective: ObjectiveFunctor[ParametersT_contra],
         /,
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> SerialTreeSchedule[ParametersT_contra]:
         """
-        Compile a combined objective into a serial tree schedule.
+        Compile an objective functor into a serial tree schedule.
 
         Args:
-            objective: Root combined objective whose complete nested call tree
-                should be scheduled.
+            objective: Root ordinary or combined objective to schedule.
             profile: Optional cost profile. Serial scheduling does not use
                 placement costs, so this argument is ignored.
 
@@ -893,4 +894,4 @@ class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
 
         """
 
-        return SerialTreeSchedule(tree=cob_to_call_tree(objective))
+        return SerialTreeSchedule(tree=objective_to_call_tree(objective))

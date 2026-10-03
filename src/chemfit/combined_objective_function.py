@@ -138,7 +138,7 @@ class WrappedReducer(Aggregator):
 
 
 class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
-    def __init__(self, cob: CombinedObjectiveFunction[ParametersT]) -> None:
+    def __init__(self, cob: ObjectiveFunctor[ParametersT]) -> None:
         """Initialize the serial schedule."""
         super().__init__()
         self.cob = cob
@@ -165,14 +165,15 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
 class SerialScheduler(Scheduler[SerialSchedule[Any]]):
     def prepare(
         self,
-        objective: CombinedObjectiveFunction[ParametersT],
+        objective: ObjectiveFunctor[ParametersT],
         /,
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> SerialSchedule[ParametersT]:
-        for term in objective.objective_functions:
-            if isinstance(term, CombinedObjectiveFunction):
-                term.prepare()
+        if isinstance(objective, CombinedObjectiveFunction):
+            for term in objective.objective_functions:
+                if isinstance(term, CombinedObjectiveFunction):
+                    term.prepare()
 
         return SerialSchedule(objective)
 
@@ -427,11 +428,13 @@ class CombinedObjectiveFunction(
         parameters: ParametersT,
         ctx: EvaluateContext,
     ) -> float:
-        with ctx.child_contexts(
-            n_children=self.n_terms(),
-            configurator=self.child_context_configurator,
-            recursive=False,
-        ) as child_ctxs:
+        with (
+            ctx.child_contexts(
+                n_children=self.n_terms(),
+                configurator=self.child_context_configurator,
+                recursive=False,  # <- in general nested COBs should manage child ctx retrieval
+            ) as child_ctxs
+        ):
             terms = [
                 evaluate_weighted_term(
                     objective,

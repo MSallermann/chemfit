@@ -1,7 +1,7 @@
 """
-Executor-backed tree scheduling for combined-objective evaluations.
+Executor-backed tree scheduling for objective-functor evaluations.
 
-ExecutorTreeScheduler prepares a combined-objective call tree and binds it to
+ExecutorTreeScheduler prepares an objective call tree and binds it to
 either a caller-provided executor or an executor created by a factory. Leaf
 objectives are submitted as independent futures, while TreeScheduleBase
 retains responsibility for nested reduction, exception handling, evaluation
@@ -12,10 +12,8 @@ from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Executor, Future, as_completed
 from typing import Any, Generic, TypeVar
 
-from chemfit.callgraph import CallTree, LeafNode, cob_to_call_tree
-from chemfit.combined_objective_function import (
-    CombinedObjectiveFunction,
-)
+from chemfit.abstract_objective_function import ObjectiveFunctor
+from chemfit.callgraph import CallTree, LeafNode, objective_to_call_tree
 from chemfit.scheduling import Scheduler
 from chemfit.tree_schedule import (
     LeafCompletion,
@@ -36,7 +34,7 @@ class ExecutorTreeSchedule(
     Evaluate tree leaves concurrently through an Executor.
 
     Args:
-        tree: Compiled combined-objective call tree.
+        tree: Compiled ordinary or combined objective call tree.
         executor: Executor used to submit leaf evaluations.
         owns_executor: Whether closing this schedule should shut down the
             executor.
@@ -152,17 +150,16 @@ class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
 
     def prepare(
         self,
-        objective: CombinedObjectiveFunction[ParametersT_contra],
+        objective: ObjectiveFunctor[ParametersT_contra],
         /,
         *,
         profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> ExecutorTreeSchedule[ParametersT_contra]:
         """
-        Compile a combined objective and bind it to an executor.
+        Compile an objective functor and bind it to an executor.
 
         Args:
-            objective: Root combined objective whose complete nested call tree
-                should be scheduled.
+            objective: Root ordinary or combined objective to schedule.
             profile: Optional cost profile. The executor backend currently
                 ignores static placement costs.
 
@@ -181,7 +178,7 @@ class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
             owns_executor = True
 
         return ExecutorTreeSchedule(
-            tree=cob_to_call_tree(objective),
+            tree=objective_to_call_tree(objective),
             executor=executor,
             owns_executor=owns_executor,
         )
