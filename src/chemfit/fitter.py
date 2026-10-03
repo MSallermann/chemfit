@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Fitter both consumes candidates (ask/fit inputs) and returns parameters
+# Fitter both consumes candidates (evaluate/fit inputs) and returns parameters
 # (finish/fit outputs), so its parameter type must remain invariant.  The
 # default keeps concise unannotated lambdas and heterogeneous nested dicts
 # usable; an annotated objective still determines a more precise type.
@@ -371,8 +371,8 @@ class Fitter(Generic[ParametersT]):
         Initialize a user-driven optimization session.
 
         After initialization the user owns the optimization loop: obtain
-        candidates from an optimizer, pass them to :meth:`ask`, feed the
-        returned losses back to the optimizer, and call :meth:`tell` once per
+        candidates from an optimizer, pass them to :meth:`evaluate`, feed the
+        returned losses back to the optimizer, and call :meth:`step` once per
         optimizer step. Call :meth:`finish` with the optimizer's final
         recommendation when the loop is complete.
 
@@ -403,7 +403,7 @@ class Fitter(Generic[ParametersT]):
 
         self._schedule = self._scheduler.prepare(self.objective_function)
 
-    def ask(
+    def evaluate(
         self,
         parameters: ParametersT | list[ParametersT],
         context_index: int = 0,
@@ -418,7 +418,7 @@ class Fitter(Generic[ParametersT]):
         """
 
         if not hasattr(self, "_session_num_workers") or self._schedule is None:
-            msg = "call fitter.init() before fitter.ask()"
+            msg = "call fitter.init() before fitter.evaluate()"
             raise RuntimeError(msg)
 
         is_single = isinstance(parameters, Mapping)
@@ -474,7 +474,7 @@ class Fitter(Generic[ParametersT]):
 
         return losses
 
-    def tell(self, step: int | None = None) -> None:
+    def step(self, step: int | None = None) -> None:
         """
         Notify ChemFit that the user completed an optimizer step.
 
@@ -484,7 +484,7 @@ class Fitter(Generic[ParametersT]):
         """
 
         if not hasattr(self, "_session_step"):
-            msg = "call fitter.init() before fitter.tell()"
+            msg = "call fitter.init() before fitter.step()"
             raise RuntimeError(msg)
 
         if step is None:
@@ -687,13 +687,13 @@ class Fitter(Generic[ParametersT]):
                 )
                 for parameters in flat_params
             ]
-            asked_losses = self.ask(nested_params)
+            asked_losses = self.evaluate(nested_params)
             assert isinstance(asked_losses, list)
 
             for params, loss in zip(asked_params, asked_losses, strict=True):
                 optimizer.tell(params, loss)
 
-            self.tell()
+            self.step()
 
         recommendation = optimizer.provide_recommendation()
         args, _ = recommendation.value
@@ -771,12 +771,12 @@ class Fitter(Generic[ParametersT]):
                     dict(zip(self._keys, x, strict=False)), dict_factory=dict[str, Any]
                 ),
             )
-            loss = self.ask(parameters)
+            loss = self.evaluate(parameters)
             assert isinstance(loss, float)
             return loss
 
         def callback_scipy(_intermediate_result: OptimizeResult):
-            self.tell()
+            self.step()
 
         res = minimize(
             f_scipy, x0, method=method, bounds=bounds, **kwargs, callback=callback_scipy

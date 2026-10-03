@@ -142,8 +142,8 @@ def test_callback_step_resets_for_each_fit_session():
 
     for _ in range(2):
         fitter.init()
-        fitter.ask({"x": 1.0})
-        fitter.tell()
+        fitter.evaluate({"x": 1.0})
+        fitter.step()
         fitter.finish()
 
     assert steps == [1, 1]
@@ -276,30 +276,30 @@ def test_nevergrad_evaluates_partial_final_batch():
     assert n_calls == 3
 
 
-def test_ask_requires_initialized_session():
+def test_evaluate_requires_initialized_session():
     fitter = Fitter(square_x, initial_params={"x": 1.0})
 
     with pytest.raises(RuntimeError, match=r"fitter\.init"):
-        fitter.ask({"x": 1.0})
+        fitter.evaluate({"x": 1.0})
 
 
-def test_tell_requires_initialized_session():
+def test_step_requires_initialized_session():
     fitter = Fitter(square_x, initial_params={"x": 1.0})
 
     with pytest.raises(RuntimeError, match=r"fitter\.init"):
-        fitter.tell()
+        fitter.step()
 
 
-def test_user_supplied_ask_tell_interface():
+def test_user_supplied_evaluate_step_interface():
     candidates = iter([{"x": 0.0}, {"x": 2.0}, {"x": 4.0}])
     observations = []
     fitter = Fitter(lambda params: (params["x"] - 2.0) ** 2, {"x": 0.0})
 
     fitter.init()
     for params in candidates:
-        loss = fitter.ask(params)
+        loss = fitter.evaluate(params)
         observations.append((params, loss))
-        fitter.tell()
+        fitter.step()
 
     result = fitter.finish()
 
@@ -312,14 +312,14 @@ def test_user_supplied_ask_tell_interface():
     assert fitter.contexts[0].n_evals == 3
 
 
-def test_user_supplied_ask_tell_recommendation_and_partial_batch():
+def test_user_supplied_evaluate_step_recommendation_and_partial_batch():
     fitter = Fitter(lambda params: params["x"] ** 2, {"x": 0.0})
 
     fitter.init(num_workers=2)
-    losses = fitter.ask([{"x": 0.0}, {"x": 1.0}])
-    fitter.tell()
-    final_loss = fitter.ask([{"x": 2.0}])
-    fitter.tell()
+    losses = fitter.evaluate([{"x": 0.0}, {"x": 1.0}])
+    fitter.step()
+    final_loss = fitter.evaluate([{"x": 2.0}])
+    fitter.step()
     result = fitter.finish({"x": 0.5})
 
     assert losses == [0.0, 1.0]
@@ -339,8 +339,8 @@ def test_executor_scheduler_preserves_fitter_context_state():
     )
 
     fitter.init(num_workers=2)
-    assert fitter.ask([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
-    assert fitter.ask([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
+    assert fitter.evaluate([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
+    assert fitter.evaluate([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
     fitter.finish()
 
     first, second = fitter.contexts
@@ -369,8 +369,8 @@ def test_new_best_without_quantities_clears_previous_best_quantities():
     )
 
     fitter.init()
-    fitter.ask({"x": 2.0})
-    fitter.ask({"x": 1.0})
+    fitter.evaluate({"x": 2.0})
+    fitter.evaluate({"x": 1.0})
     fitter.finish()
 
     ctx = fitter.contexts[0]
@@ -392,7 +392,7 @@ def test_best_evaluation_state_is_deep_copied():
     params = {"x": 1.0, "nested": {"values": [1]}}
 
     fitter.init()
-    fitter.ask(params)
+    fitter.evaluate(params)
 
     ctx = fitter.contexts[0]
     assert ctx.opt_params is not None
@@ -418,7 +418,7 @@ def test_nan_loss_is_replaced_by_penalty():
     )
 
     fitter.init()
-    loss = fitter.ask({"x": 0.0})
+    loss = fitter.evaluate({"x": 0.0})
     fitter.finish()
 
     assert loss == 123.0
@@ -440,7 +440,7 @@ def test_swallowed_exception_becomes_penalty_and_counts_as_evaluation():
     )
 
     fitter.init()
-    loss = fitter.ask({"x": 1.0})
+    loss = fitter.evaluate({"x": 1.0})
     fitter.finish()
 
     ctx = fitter.contexts[0]
