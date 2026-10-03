@@ -6,11 +6,11 @@ from typing import Any
 
 import pytest
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.callgraph import LeafNode, cob_to_call_tree, objective_to_call_tree
+from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.scheduling import EvaluationRequest
 from chemfit.tree_schedule import SerialTreeScheduler
+from chemfit.wrap_funcs import to_objective_functor
 
 Parameters = dict[str, Any]
 
@@ -19,66 +19,33 @@ class OrdinaryLeafError(RuntimeError):
     """Ordinary per-evaluation failure raised by a root leaf."""
 
 
-class RootLeaf(ObjectiveFunctor[Parameters]):
-    """Record root-context state and return one requested value."""
+@to_objective_functor(pass_ctx=True)
+def root_leaf(parameters: Parameters, ctx: EvaluateContext):
+    """Evaluate one root-leaf request."""
+    delay = float(parameters.get("delay", 0.0))
+    if delay:
+        time.sleep(delay)
 
-    def _evaluate(self, parameters: Parameters, ctx: EvaluateContext) -> float:
-        """Evaluate one root-leaf request."""
+    ctx.meta["context_identity"] = id(ctx)
+    ctx.meta["label"] = parameters.get("label")
+    ctx.quantities = {"value": float(parameters["value"])}
 
-        delay = float(parameters.get("delay", 0.0))
-        if delay:
-            time.sleep(delay)
+    if parameters.get("record_mpi_rank"):
+        from mpi4py import MPI  # noqa: PLC0415
 
-        ctx.meta["context_identity"] = id(ctx)
-        ctx.meta["label"] = parameters.get("label")
-        ctx.quantities = {"value": float(parameters["value"])}
+        ctx.meta["worker_rank"] = MPI.COMM_WORLD.Get_rank()
 
-        if parameters.get("record_mpi_rank"):
-            from mpi4py import MPI  # noqa: PLC0415
+    if parameters.get("fail"):
+        msg = f"root leaf failed for {parameters['value']}"
+        raise OrdinaryLeafError(msg)
 
-            ctx.meta["worker_rank"] = MPI.COMM_WORLD.Get_rank()
-
-        if parameters.get("fail"):
-            msg = f"root leaf failed for {parameters['value']}"
-            raise OrdinaryLeafError(msg)
-
-        return float(parameters["value"])
-
-
-def test_call_tree_uses_the_ordinary_objective_as_its_root_leaf() -> None:
-    """An ordinary root is not wrapped in a synthetic combined objective."""
-
-    objective = RootLeaf()
-
-    for tree in (objective_to_call_tree(objective), cob_to_call_tree(objective)):
-        assert tree.root == 0
-        assert len(tree.nodes) == 1
-        assert isinstance(tree.nodes[tree.root], LeafNode)
-        assert tree.nodes[tree.root].objective is objective
-        assert tree.nodes[tree.root].parent_id is None
-
-
-def test_serial_tree_scheduler_evaluates_one_root_leaf_in_supplied_context() -> None:
-    """Singleton evaluation uses the supplied context without a child layer."""
-
-    objective = RootLeaf()
-    parameters: Parameters = {"value": 4.5, "label": "single"}
-    ctx = EvaluateContext()
-
-    with SerialTreeScheduler().prepare(objective) as schedule:
-        result = schedule.evaluate(parameters, ctx)
-
-    assert result == 4.5
-    assert ctx.parameters is parameters
-    assert ctx.loss == 4.5
-    assert ctx.quantities == {"value": 4.5}
-    assert ctx.meta == {"context_identity": id(ctx), "label": "single"}
+    return float(parameters["value"])
 
 
 def test_serial_tree_scheduler_evaluates_many_root_leaf_runs() -> None:
     """Each request becomes an independent task for the same root node."""
 
-    objective = RootLeaf()
+    objective = root_leaf
     parameters = [
         {"value": value, "label": f"run-{idx}"}
         for idx, value in enumerate((1.0, 2.0, 3.0))
@@ -109,7 +76,7 @@ def test_serial_tree_scheduler_evaluates_many_root_leaf_runs() -> None:
 def test_root_leaf_exception_is_an_ordinary_evaluation_outcome() -> None:
     """An Exception from a root leaf does not poison its prepared schedule."""
 
-    objective = RootLeaf()
+    objective = root_leaf
     ctx = EvaluateContext()
 
     with SerialTreeScheduler().prepare(objective) as schedule:
@@ -128,7 +95,7 @@ def test_root_leaf_exception_is_an_ordinary_evaluation_outcome() -> None:
 def test_executor_yields_root_leaf_runs_in_completion_order() -> None:
     """Executor scheduling parallelizes runs even with one distinct leaf."""
 
-    objective = RootLeaf()
+    objective = root_leaf
     parameter_batch: list[Parameters] = [
         {"value": 10.0, "delay": 0.20},
         {"value": 20.0, "delay": 0.00},
@@ -165,7 +132,7 @@ def test_mpi_distributes_root_leaf_runs_across_workers() -> None:
     if mpi.COMM_WORLD.Get_size() < 4:
         pytest.skip("requires one coordinator and at least three workers")
 
-    objective = RootLeaf()
+    objective = root_leaf
     with mpi_scheduler.MPITreeScheduler().prepare(objective) as schedule:
         if schedule.rank != 0:
             schedule.worker_loop()
