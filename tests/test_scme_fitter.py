@@ -115,7 +115,9 @@ def test_single_energy_objective_function():
     ob = QuantityComputerObjectiveFunction(
         loss_function=lambda quants: (quants["energy"] - REFERENCE_ENERGIES[10]) ** 2,
         quantity_computer=ASEComputer(
-            calculator=scme_factories.SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+            calculator_factory=scme_factories.SCMECalculatorFactory(
+                DEFAULT_PARAMS, None, None
+            ),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
             tag=TAGS[10],
         ),
@@ -144,7 +146,9 @@ def test_dimer_distance_objective_function():
     ob = QuantityComputerObjectiveFunction(
         loss_function=lambda quants: (quants["dimer_distance"] - REF_DISTANCE) ** 2,
         quantity_computer=ASEComputer(
-            calculator=scme_factories.SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+            calculator_factory=scme_factories.SCMECalculatorFactory(
+                DEFAULT_PARAMS, None, None
+            ),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
             quantity_processors=[compute_dimer_distance],
             tag="dimer_distance",
@@ -187,7 +191,9 @@ def test_kabsch_objective_function():
     ob = QuantityComputerObjectiveFunction(
         loss_function=lambda quants: quants["kabsch_rmsd"],
         quantity_computer=ASEComputer(
-            calculator=scme_factories.SCMECalculatorFactory(DEFAULT_PARAMS, None, None),
+            calculator_factory=scme_factories.SCMECalculatorFactory(
+                DEFAULT_PARAMS, None, None
+            ),
             atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]),
             quantity_processors=[
                 KabschDistance(atoms_factory=PathAtomsFactory(REFERENCE_CONFIGS[10]))
@@ -215,7 +221,7 @@ def construct_objective_function(
             loss_function=lambda quants, e=e: (quants["energy"] - e) ** 2
             / quants["n_atoms"] ** 2,
             quantity_computer=ASEComputer(
-                calculator=scme_factories.SCMECalculatorFactory(
+                calculator_factory=scme_factories.SCMECalculatorFactory(
                     default_scme_params=DEFAULT_PARAMS,
                     path_to_scme_expansions=None,
                     parametrization_key=None,
