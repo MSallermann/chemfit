@@ -15,8 +15,10 @@ from chemfit.abstract_objective_function import (
 from chemfit.scheduling import (
     EvaluationRequest,
     EvaluationResult,
+    NodeOutcome,
     PreparedSchedule,
     PreparedScheduleBase,
+    SchedulableCompositeObjective,
     Scheduler,
     SchedulingProfile,
 )
@@ -158,7 +160,10 @@ class SerialScheduler(Scheduler[SerialSchedule[Any]]):
 
 
 class CombinedObjectiveFunction(
-    ObjectiveFunctor[ParametersT], Generic[ParametersT], allow_custom_call=True
+    ObjectiveFunctor[ParametersT],
+    SchedulableCompositeObjective[ParametersT],
+    Generic[ParametersT],
+    allow_custom_call=True,
 ):
     def __init__(
         self,
@@ -282,9 +287,78 @@ class CombinedObjectiveFunction(
 
         return schedule
 
-    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
-        """Return the objective terms evaluated in child contexts."""
+    def child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
+        """Return the immediate objective terms in evaluation order."""
+
         return tuple(self.objective_functions)
+
+    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
+        """Return child objectives for recursive objective operations."""
+
+        return self.child_objectives()
+
+    def begin_composite_evaluation(
+        self,
+        parameters: ParametersT,
+        ctx: EvaluateContext,
+    ) -> Sequence[EvaluateContext]:
+        """Begin the lifecycle and create configured child contexts."""
+
+        try:
+            self._begin_evaluation(parameters, ctx)
+            child_contexts = ctx.spawn_children(
+                self.n_terms(),
+                self.child_context_configurator,
+            )
+        except Exception as exception:
+            self._end_evaluation(ctx, exception)
+
+            # A nested failed setup is later serialized by its parent. Match
+            # direct serial evaluation by materializing any contexts that the
+            # failed configurator managed to create. Root failures deliberately
+            # leave their partial child batch unmaterialized.
+            if getattr(ctx.temp, "_is_composite_child", False):
+                ctx.collect_child_meta_data(recursive=True)
+            raise
+
+        for child_ctx in child_contexts:
+            child_ctx.temp._is_composite_child = True  # noqa: SLF001
+
+        return child_contexts
+
+    def finish_composite_evaluation(
+        self,
+        child_outcomes: Sequence[NodeOutcome],
+        ctx: EvaluateContext,
+    ) -> float:
+        """Interpret child outcomes, reduce them, and end the lifecycle."""
+
+        try:
+            terms: list[float | None] = []
+            try:
+                for idx, (outcome, child_ctx) in enumerate(
+                    zip(child_outcomes, ctx._children, strict=True)  # noqa: SLF001
+                ):
+                    if isinstance(outcome, Exception):
+                        term = self.exception_handler(outcome, child_ctx, idx)
+                    else:
+                        try:
+                            term = outcome * self.weights[idx]
+                        except Exception as exception:
+                            term = self.exception_handler(exception, child_ctx, idx)
+                    terms.append(term)
+            finally:
+                ctx.collect_child_meta_data(recursive=False)
+
+            value = self._reduce_terms(terms, ctx)
+            ctx.loss = value
+        except BaseException as exception:
+            self._end_evaluation(ctx, exception)
+            raise
+        else:
+            self._end_evaluation(ctx, None)
+
+        return value
 
     def n_terms(self) -> int:
         """Return the number of objective terms."""

@@ -4,8 +4,8 @@ MPI execution for backend-neutral tree-schedule leaf tasks.
 Rank 0 expands evaluation runs into :class:`~chemfit.tree_schedule.LeafTask`
 values through ``TreeScheduleBase`` and distributes those tasks round-robin.
 Worker ranks evaluate their assigned tasks and return backend-neutral
-``LeafCompletion`` values. Tree propagation, reductions, exception handling,
-context restoration, and objective lifecycles remain coordinator concerns.
+``LeafCompletion`` values. Tree activation, completion propagation, context
+restoration, and calls into composite-owned semantics remain coordinator work.
 
 Ordinary objective exceptions are carried in completions. A failure in MPI or
 worker machinery is catastrophic: the coordinator closes the prepared
@@ -93,7 +93,7 @@ class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
     ``LeafCompletion`` values.
 
     Args:
-        tree: Compiled ordinary or combined objective call tree.
+        tree: Compiled ordinary or composite objective call tree.
         comm: MPI communicator containing the coordinator and worker ranks.
         mpi_debug_log: Wrap the communicator with method-level debug logging.
 

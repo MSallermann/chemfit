@@ -1,15 +1,16 @@
 """
 Tree-based prepared schedules for objective functors.
 
-The module compiles an ordinary or combined objective into a CallTree and
+The module compiles an ordinary or composite objective into a CallTree and
 tracks each evaluation in a separate EvaluationState. A top-down pass creates
-contexts and begins combined-objective lifecycles, backend-specific code
+contexts and begins composite-objective lifecycles, backend-specific code
 evaluates the reachable leaves, and completion events propagate bottom-up
 until the root produces an EvaluationResult.
 
-TreeScheduleBase implements the backend-independent lifecycle and propagation
-logic. Concrete schedules only need to execute backend-neutral LeafTask values,
-return LeafCompletion values, and clean up their resources when closed.
+TreeScheduleBase implements backend-independent activation and propagation.
+Composite objectives own their lifecycle semantics. Concrete schedules only
+need to execute backend-neutral LeafTask values, return LeafCompletion values,
+and clean up their resources when closed.
 """
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -27,6 +28,7 @@ from chemfit.callgraph import (
 from chemfit.scheduling import (
     EvaluationRequest,
     EvaluationResult,
+    NodeOutcome,
     PreparedScheduleBase,
     Scheduler,
 )
@@ -83,14 +85,6 @@ class _Inactive:
 INACTIVE = _Inactive()
 
 
-# A TermResult is the value consumed by CombinedObjectiveFunction._reduce_terms.
-# None is valid here because an exception handler may choose to omit a term.
-TermResult = float | None
-
-# A node itself always produces either a numerical value or an Exception.
-# None is therefore deliberately not part of NodeOutcome.
-NodeOutcome = float | Exception
-
 # Per-node execution state. Nodes begin INACTIVE, become PENDING when they are
 # reachable for this run, and are finally replaced by their raw NodeOutcome.
 NodeSlot = NodeOutcome | _Pending | _Inactive
@@ -115,7 +109,7 @@ class EvaluationState:
             unreachable nodes remain None.
         node_slots: Current execution state or completed raw outcome for every
             node.
-        remaining_children: Number of incomplete children for every combine
+        remaining_children: Number of incomplete children for every composite
             node.
 
     """
@@ -199,10 +193,10 @@ class EvaluationState:
 
     def child_completed(self, node_id: NodeId) -> bool:
         """
-        Record one child completion for a combine node.
+        Record one child completion for a composite node.
 
         Args:
-            node_id: Identifier of the parent combine node.
+            node_id: Identifier of the parent composite node.
 
         Returns:
             True when every child of the node has completed.
@@ -326,7 +320,7 @@ class TreeScheduleBase(
     the mechanism for executing backend-neutral leaf tasks.
 
     Args:
-        tree: Compiled ordinary or combined objective call tree represented by
+        tree: Compiled ordinary or composite objective call tree represented by
             this schedule.
 
     """
@@ -350,8 +344,8 @@ class TreeScheduleBase(
         Prepare an evaluation by activating its root and traversing top-down.
 
         An ordinary root leaf is marked pending with ``root_ctx`` directly.
-        For a combined root, the traversal creates child contexts, begins each
-        reachable combined-objective lifecycle, and marks its reachable leaves
+        For a composite root, the traversal creates child contexts, begins each
+        reachable composite-objective lifecycle, and marks its reachable leaves
         as pending.
 
         Args:
@@ -365,7 +359,7 @@ class TreeScheduleBase(
 
         Notes:
             Ordinary Exceptions raised during setup are treated as node
-            outcomes and propagated through parent exception handlers.
+            outcomes and propagated through parent composite semantics.
             BaseException subclasses escape so evaluate_many can poison and
             close the schedule. Partially completed lifecycle state is then
             undefined.
@@ -383,8 +377,8 @@ class TreeScheduleBase(
                 eval_state.complete(node_id, exception)
                 return exception
 
-            # Nested setup failures are raw outcomes of the failed combine node.
-            # The immediate parent COB owns interpretation of that exception,
+            # Nested setup failures are raw outcomes of the failed composite node.
+            # The immediate parent owns interpretation of that exception,
             # exactly as it would for an exception raised during normal evaluation.
             return self.propagate_completion(
                 node_id,
@@ -398,42 +392,17 @@ class TreeScheduleBase(
         ) -> SetupOutcome:
             node = self.tree.nodes[node_id]
             assert isinstance(node, CombineNode)
-            cob = node.objective
+            composite = node.objective
 
-            # Start this COBs lifecycle
-            # ... once evaluation begins, _end_evaluation() must be called exactly once.
             eval_state.activate(node_id)
 
             try:
-                cob._begin_evaluation(  # noqa: SLF001
-                    parameters=parameters,
-                    ctx=combine_ctx,
-                )
-
-                child_contexts = combine_ctx.spawn_children(
-                    cob.n_terms(),
-                    cob.child_context_configurator,
+                child_contexts = composite.begin_composite_evaluation(
+                    parameters,
+                    combine_ctx,
                 )
 
             except Exception as e:
-                # an exception in `_begin_evaluation` or `spawn_children`,
-                # ends the current evaluation, and the child_nodes stay marked
-                # as INACTIVE
-                cob._end_evaluation(combine_ctx, e)  # noqa: SLF001
-
-                # spawn_children() installs the complete child batch before it
-                # invokes configurators. A configurator may therefore fail
-                # after creating partially configured, inactive contexts.
-                # Serial evaluation exposes those contexts when the parent
-                # recursively collects metadata. Tree schedules collect
-                # completed nodes non-recursively, so materialize this failed
-                # nested node's inactive children here to preserve the serial
-                # semantics. A failed root has no parent collection step and
-                # deliberately keeps the same unmaterialized state as serial.
-                if node.parent_id is not None:
-                    combine_ctx.collect_child_meta_data(recursive=True)
-
-                # setup failure has to be propagated up the tree
                 return propagate_setup_failure(
                     node_id,
                     e,
@@ -479,23 +448,20 @@ class TreeScheduleBase(
         eval_state: EvaluationState,
     ) -> float:
         """
-        Finish a combine node after all of its children complete.
+        Finish a composite node after all of its children complete.
 
-        Child outcomes are converted into weighted terms, exceptions are
-        offered to the combined objective's handler, metadata is collected,
-        and the terms are reduced. The node's evaluation lifecycle is ended
-        whether reduction succeeds or fails.
+        The composite objective interprets the raw child outcomes and returns
+        its final numerical value.
 
         Args:
             node_id: Identifier of the combine node to finish.
             eval_state: Evaluation state containing all child outcomes.
 
         Returns:
-            Reduced numerical value produced by the combine node.
+            Numerical value produced by the composite node.
 
         Raises:
-            BaseException: If term handling, reduction, metadata collection,
-                or lifecycle finalization fails.
+            BaseException: If the composite cannot finish its evaluation.
 
         """
 
@@ -511,72 +477,8 @@ class TreeScheduleBase(
         assert ctx is not None
         assert isinstance(node, CombineNode)
 
-        cob = node.objective
-
-        try:
-            # this sub-stage is similar to CombinedObjectiveFunction._evaluate
-            # ... it iterates over the child outcomes
-            # ... successful outcomes are converted into weighted terms
-            # ... exceptions are passed to this COB's exception handler
-            # ... since the ctx.child_context context manager is mimicked here
-            # ... the finally block needs to call `collect_child_meta_data`
-
-            terms: list[TermResult] = []
-
-            try:
-                for idx, child_id in enumerate(node.children):
-                    # All children must have completed before this combine node is
-                    # finished. EvaluationState owns the node-state checks here so
-                    # this function only deals with actual raw outcomes.
-                    outcome = eval_state.outcome(child_id)
-
-                    child_ctx = eval_state.contexts[child_id]
-                    assert child_ctx is not None
-
-                    if isinstance(outcome, Exception):
-                        # If the child evaluation failed, this COB's exception handler
-                        # gets a chance to convert the exception into a valid term.
-                        term = cob.exception_handler(
-                            outcome,
-                            child_ctx,
-                            idx,
-                        )
-                    else:
-                        try:
-                            # Successful child results are converted into the weighted
-                            # term contributed to this COB.
-                            term = outcome * cob.weights[idx]
-                        except Exception as e:
-                            # Applying the weight is part of evaluating the term too,
-                            # so failures here follow the same exception-handler semantics.
-                            term = cob.exception_handler(
-                                e,
-                                child_ctx,
-                                idx,
-                            )
-
-                    terms.append(term)
-
-            finally:
-                # Mimic cleanup performed by the child-context context manager.
-                ctx.collect_child_meta_data(recursive=False)
-
-            # Once all child outcomes have been converted into terms,
-            # the COB can perform its reduction.
-            value = cob._reduce_terms(terms, ctx)  # noqa: SLF001
-            ctx.loss = value
-
-        except BaseException as e:
-            # Any exception that escapes the term handling or reduction means
-            # this combine node itself failed.
-            cob._end_evaluation(ctx, e)  # noqa: SLF001
-            raise
-
-        else:
-            # Successful reduction completes this COB's evaluation lifecycle.
-            cob._end_evaluation(ctx, None)  # noqa: SLF001
-
-        return value
+        child_outcomes = [eval_state.outcome(child_id) for child_id in node.children]
+        return node.objective.finish_composite_evaluation(child_outcomes, ctx)
 
     def expand_leaf_tasks(
         self,
@@ -629,7 +531,7 @@ class TreeScheduleBase(
         Record a completed node outcome and propagate completion towards the root.
 
         Each node produces a raw outcome: either its objective value or an exception.
-        When all children of a combine node have completed, that combine node is
+        When all children of a composite node have completed, that node is
         finished and its own raw outcome is propagated further upwards.
 
         Args:
@@ -654,8 +556,8 @@ class TreeScheduleBase(
             node = self.tree.nodes[current_node_id]
 
             # A node may only complete once.
-            # Store the raw outcome of this node. The parent combine node will
-            # interpret it later by applying its weight / exception handler.
+            # Store the raw outcome of this node. Its parent composite will
+            # interpret it once all sibling outcomes are available.
             eval_state.complete(
                 current_node_id,
                 outcome_to_propagate,
@@ -665,26 +567,23 @@ class TreeScheduleBase(
             if parent_id is None:
                 return outcome_to_propagate
 
-            # One more child of the parent has completed.
-            # The parent cannot be finished until all of its children have completed.
+            # One more child of the parent has completed. The parent cannot be
+            # finished until all of its children have completed.
             if not eval_state.child_completed(parent_id):
                 return PENDING
 
             parent = self.tree.nodes[parent_id]
             assert isinstance(parent, CombineNode)
 
-            # All children of the parent are now complete. Finishing the combine
-            # node interprets those child outcomes, reduces its terms, and completes
-            # its ObjectiveFunctor lifecycle.
+            # All children of the parent are now complete. The composite owns
+            # interpretation of those outcomes and completion of its scope.
             try:
                 outcome_to_propagate = self.finish_combine_node(
                     parent_id,
                     eval_state,
                 )
             except Exception as e:
-                # A combine node can itself fail, for example because its exception
-                # handler, reducer, or post-evaluation hook raises. That failure is
-                # simply the raw outcome propagated to its own parent.
+                # A composite node failure is its raw outcome for its own parent.
                 outcome_to_propagate = e
 
             # The root has no parent, so its raw outcome is the final outcome
@@ -696,7 +595,7 @@ class TreeScheduleBase(
                 )
                 return outcome_to_propagate
 
-            # Otherwise the completed combine node behaves exactly like any other
+            # Otherwise the completed composite behaves exactly like any other
             # completed child. Store its outcome on the next iteration and continue
             # propagating towards the root.
             current_node_id = parent_id
@@ -717,7 +616,7 @@ class TreeScheduleBase(
         Notes:
             This is the complete backend-specific execution contract. Backends
             do not perform tree discovery, context restoration, propagation,
-            reduction, exception handling, or lifecycle transitions.
+            composite interpretation or lifecycle transitions.
 
         """
         raise NotImplementedError
@@ -886,7 +785,7 @@ class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
         Compile an objective functor into a serial tree schedule.
 
         Args:
-            objective: Root ordinary or combined objective to schedule.
+            objective: Root ordinary or composite objective to schedule.
             profile: Optional cost profile. Serial scheduling does not use
                 placement costs, so this argument is ignored.
 

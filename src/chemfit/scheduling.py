@@ -43,6 +43,11 @@ ParametersT_contra = TypeVar(
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 ResultT_co = TypeVar("ResultT_co", covariant=True)
 
+# A scheduled objective-tree node produces either a numerical value or an
+# ordinary evaluation exception. Catastrophic BaseException subclasses escape
+# the scheduling protocol.
+NodeOutcome: TypeAlias = float | Exception
+
 
 @dataclass(frozen=True)
 class EvaluationRequest(Generic[ParametersT_co]):
@@ -102,6 +107,42 @@ SchedulingProfile: TypeAlias = Mapping[ObjectivePath, float]
 
 #: Backend-independent static resources needed for one evaluation.
 ResourceRequest: TypeAlias = _ResourceRequest
+
+
+@runtime_checkable
+class SchedulableCompositeObjective(Protocol[ParametersT_contra]):
+    """
+    Structural interface used to compile and evaluate composite objectives.
+
+    Composite objectives own the semantics of their evaluation scopes. Tree
+    schedulers only discover their children, activate those children, and pass
+    the completed raw child outcomes back for interpretation.
+    """
+
+    def child_objectives(
+        self,
+    ) -> Sequence[ObjectiveFunctor[ParametersT_contra]]:
+        """Return the objectives evaluated as immediate children."""
+
+        ...
+
+    def begin_composite_evaluation(
+        self,
+        parameters: ParametersT_contra,
+        ctx: EvaluateContext,
+    ) -> Sequence[EvaluateContext]:
+        """Begin this evaluation scope and return its child contexts."""
+
+        ...
+
+    def finish_composite_evaluation(
+        self,
+        child_outcomes: Sequence[NodeOutcome],
+        ctx: EvaluateContext,
+    ) -> float:
+        """Interpret completed children and finish this evaluation scope."""
+
+        ...
 
 
 @runtime_checkable

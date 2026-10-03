@@ -4,8 +4,8 @@ Executor-backed tree scheduling for objective-functor evaluations.
 ExecutorTreeScheduler prepares an objective call tree and binds it to
 either a caller-provided executor or an executor created by a factory. Leaf
 objectives are submitted as independent futures, while TreeScheduleBase
-retains responsibility for nested reduction, exception handling, evaluation
-lifecycles, and result ordering.
+coordinates composite activation, completion propagation, and result ordering.
+Each composite objective retains its own evaluation semantics.
 """
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -34,7 +34,7 @@ class ExecutorTreeSchedule(
     Evaluate tree leaves concurrently through an Executor.
 
     Args:
-        tree: Compiled ordinary or combined objective call tree.
+        tree: Compiled ordinary or composite objective call tree.
         executor: Executor used to submit leaf evaluations.
         owns_executor: Whether closing this schedule should shut down the
             executor.
@@ -159,7 +159,7 @@ class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
         Compile an objective functor and bind it to an executor.
 
         Args:
-            objective: Root ordinary or combined objective to schedule.
+            objective: Root ordinary or composite objective to schedule.
             profile: Optional cost profile. The executor backend currently
                 ignores static placement costs.
 
