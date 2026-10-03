@@ -188,10 +188,18 @@ if TYPE_CHECKING:
     def parse_outputs(_output_file: Path) -> Quantities:
         return {"value": 1.0}
 
-    def make_command(_parameters: Parameters, _workdir: Path) -> list[str]:
+    def make_command(
+        _parameters: Parameters,
+        _workdir: Path,
+        _ctx: EvaluateContext,
+    ) -> list[str]:
         return ["true"]
 
-    def prepare_input(_parameters: Parameters, _workdir: Path) -> None:
+    def prepare_input(
+        _parameters: Parameters,
+        _workdir: Path,
+        _ctx: EvaluateContext,
+    ) -> None:
         return None
 
     external = (

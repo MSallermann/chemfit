@@ -34,8 +34,9 @@ pre-factor :math:`A`.
 
 Before we can start we should define how our external command can be called.
 For maximum flexibility, the command is provided as a function that accepts
-the parameter dictionary and the temporary working directory. Each evaluation
-runs in its own isolated working directory.
+the parameter dictionary, temporary working directory, and current
+:py:class:`~chemfit.abstract_objective_function.EvaluateContext`. Each
+evaluation runs in its own isolated working directory.
 
 All files created by the external command should be written relative to this
 working directory. Paths registered through ``with_parser()`` or ``wait_for()``
@@ -44,14 +45,19 @@ are interpreted relative to it as well.
 .. note::
 
     The extra arguments, ``script_file`` and ``output_file``, need to be bound. In the end the computer will accept only a function
-    whose only free arguments are the parameters and the working directory. In this example we will use the :py:meth:`~chemfit.external_computer.ExternalQuantityComputer.with_cmd`
+    whose only free arguments are the parameters, working directory, and evaluation context. In this example we will use the :py:meth:`~chemfit.external_computer.ExternalQuantityComputer.with_cmd`
     utility method to help us out with this.
 
 .. code-block:: python
 
     # Define the command that will be called to create the output file with given parameters
     def callable_cmd(
-        parameters: dict[str, float], workdir: Path, script_file: Path, output_file: Path
+        parameters: dict[str, float],
+        workdir: Path,
+        ctx: EvaluateContext,
+        *,
+        script_file: Path,
+        output_file: Path,
     ) -> list[str]:
         return f"python {script_file} {parameters['prefactor']} {output_file}".split()
 
@@ -128,12 +134,16 @@ The behavior is controlled entirely through callables.
 Commands and hooks
 ^^^^^^^^^^^^^^^^^^
 
-A command callable receives the parameter dictionary and current working
-directory and returns a command as a list of strings:
+A command callable receives the parameter dictionary, current working
+directory, and evaluation context, and returns a command as a list of strings:
 
 .. code-block:: python
 
-   def run_simulation(parameters: dict[str, Any], workdir: Path):
+   def run_simulation(
+       parameters: dict[str, Any],
+       workdir: Path,
+       ctx: EvaluateContext,
+   ) -> list[str]:
        return ["my_program", "--x", str(parameters["x"])]
 
 Register commands with ``with_cmd()``. Register ordinary Python setup or
@@ -153,7 +163,9 @@ define the exact execution order:
    )
 
 Each step completes before the next begins. Additional keyword arguments passed
-to ``with_hook()`` or ``with_cmd()`` are bound to that callable.
+to ``with_hook()`` or ``with_cmd()`` are bound to that callable. Every step in
+an evaluation receives the same context, so an earlier step can place data in
+``ctx.temp`` for a later step to consume.
 
 
 Parser inputs and completion files
@@ -203,10 +215,16 @@ example, an input-writing hook can run before the first command:
 
 .. code-block:: python
 
-   def write_input(parameters: dict[str, Any], workdir: Path):
-       (workdir / "input.txt").write_text(str(parameters["x"]))
+   def write_input(
+       parameters: dict[str, Any],
+       workdir: Path,
+       ctx: EvaluateContext,
+   ) -> None:
+       ctx.temp.input_file = workdir / "input.txt"
+       ctx.temp.input_file.write_text(str(parameters["x"]))
 
-The hook receives the evaluation parameters and temporary working directory.
+The hook receives the evaluation parameters, temporary working directory, and
+current evaluation context.
 
 Example: generating an input file
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -218,6 +236,7 @@ A common use of ``with_hook()`` is to generate input files from a template.
    def write_input(
        parameters: dict[str, Any],
        workdir: Path,
+       ctx: EvaluateContext,
        *,
        template_path: Path,
        output_name: str,
@@ -228,6 +247,7 @@ A common use of ``with_hook()`` is to generate input files from a template.
 
        output_path = workdir / output_name
        output_path.write_text(content)
+       ctx.temp.input_file = output_path
 
 This can then be attached to the computer:
 
@@ -385,8 +405,8 @@ add ``srun`` to another command:
 
 .. code-block:: python
 
-   def with_srun(parameters, workdir, *, command):
-       return ["srun", *command(parameters, workdir)]
+   def with_srun(parameters, workdir, ctx, *, command):
+       return ["srun", *command(parameters, workdir, ctx)]
 
    computer = computer.with_cmd(with_srun, command=run_simulation)
 
