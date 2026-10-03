@@ -8,7 +8,7 @@ from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.async_helpers import async_eval_many
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_scheduler import ExecutorTreeScheduler
-from chemfit.wrap_funcs import to_objective_functor
+from chemfit.wrap_funcs import objective
 
 
 class MockExecutor(ThreadPoolExecutor):
@@ -24,12 +24,12 @@ class MockExecutor(ThreadPoolExecutor):
 
 
 def test_async_cob():
-    @to_objective_functor(pass_ctx=False)
+    @objective(pass_ctx=False)
     def a(p: dict[str, float]) -> float:
         time.sleep(0.5)
         return p["x"] ** 2
 
-    @to_objective_functor()
+    @objective()
     def b(p: dict[str, float]) -> float:
         time.sleep(0.5)
         return p["y"] ** 2

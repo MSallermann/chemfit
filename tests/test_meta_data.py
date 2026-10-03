@@ -8,7 +8,7 @@ from chemfit.abstract_objective_function import (
     QuantityComputerObjectiveFunction,
 )
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.wrap_funcs import to_objective_functor, to_quantity_computer
+from chemfit.wrap_funcs import objective, quantity
 
 
 class MyFunctor(ObjectiveFunctor):
@@ -24,12 +24,12 @@ class MyFunctor(ObjectiveFunctor):
         return val
 
 
-@to_objective_functor()
+@objective()
 def a(p: dict):
     return p["y"] ** 2
 
 
-@to_quantity_computer()
+@quantity()
 def quants(p: dict):
     return {"x_plus_y": p["x"] + p["y"]}
 

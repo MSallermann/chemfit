@@ -115,10 +115,10 @@ The context can be used to record additional information during evaluation:
 
 .. testcode::
 
-    from chemfit.wrap_funcs import to_quantity_computer
+    from chemfit.wrap_funcs import quantity
     from chemfit.abstract_objective_function import EvaluateContext
 
-    @to_quantity_computer(pass_ctx=True)
+    @quantity(pass_ctx=True)
     def computer(params, ctx):
         value = params["x"] ** 2
         ctx.meta["x_squared"] = value

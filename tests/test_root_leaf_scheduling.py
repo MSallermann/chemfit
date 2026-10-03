@@ -10,16 +10,20 @@ from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.scheduling import EvaluationRequest
 from chemfit.tree_schedule import SerialTreeScheduler
-from chemfit.wrap_funcs import to_objective_functor
+from chemfit.wrap_funcs import objective
 
 Parameters = dict[str, Any]
+try:
+    from mpi4py import MPI
+except ImportError:
+    MPI = None
 
 
 class OrdinaryLeafError(RuntimeError):
     """Ordinary per-evaluation failure raised by a root leaf."""
 
 
-@to_objective_functor(pass_ctx=True)
+@objective(pass_ctx=True)
 def root_leaf(parameters: Parameters, ctx: EvaluateContext):
     """Evaluate one root-leaf request."""
     delay = float(parameters.get("delay", 0.0))
@@ -30,9 +34,7 @@ def root_leaf(parameters: Parameters, ctx: EvaluateContext):
     ctx.meta["label"] = parameters.get("label")
     ctx.quantities = {"value": float(parameters["value"])}
 
-    if parameters.get("record_mpi_rank"):
-        from mpi4py import MPI  # noqa: PLC0415
-
+    if parameters.get("record_mpi_rank") and MPI is not None:
         ctx.meta["worker_rank"] = MPI.COMM_WORLD.Get_rank()
 
     if parameters.get("fail"):

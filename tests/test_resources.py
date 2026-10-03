@@ -11,7 +11,7 @@ from chemfit.abstract_objective_function import (
 from chemfit.callgraph import LeafNode, objective_to_call_tree
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.tree_schedule import LeafTask
-from chemfit.wrap_funcs import to_objective_functor, to_quantity_computer
+from chemfit.wrap_funcs import objective, quantity
 
 Parameters = dict[str, float]
 Quantities = dict[str, float]
@@ -67,46 +67,48 @@ def test_decorators_preserve_resources_through_bind_and_with_loss() -> None:
         "licenses.solver": 1,
     }
 
-    @to_objective_functor(resources=requested)
-    def objective(parameters: Parameters, scale: float) -> float:
+    @objective(resources=requested)
+    def loss_objective(parameters: Parameters, scale: float) -> float:
         return scale * parameters["x"]
 
     requested_dict = requested
-    assert objective.resources == requested_dict
-    assert objective.resources is not requested_dict
-    assert objective.bind(scale=2.0).resources == requested_dict
+    assert loss_objective.resources == requested_dict
+    assert loss_objective.resources is not requested_dict
+    assert loss_objective.bind(scale=2.0).resources == requested_dict
 
-    @to_quantity_computer(resources={"cpus": 8, "gpus": 1, "memory_gb": 16})
+    @quantity(resources={"cpus": 8, "gpus": 1, "memory_gb": 16})
     def simulation(parameters: Parameters, offset: float) -> Quantities:
         return {"x": parameters["x"] + offset}
 
     bound_simulation = simulation.bind(offset=1.0)
-    objective = bound_simulation.with_loss(lambda quantities: quantities["x"] ** 2)
+    quantity_objective = bound_simulation.with_loss(
+        lambda quantities: quantities["x"] ** 2
+    )
 
     expected = {"cpus": 8, "gpus": 1, "memory_gb": 16}
     assert simulation.resources == expected
     assert bound_simulation.resources == expected
-    assert objective.resources is bound_simulation.resources
+    assert quantity_objective.resources is bound_simulation.resources
 
-    objective.resources = {"mpi_ranks": 4}
+    quantity_objective.resources = {"mpi_ranks": 4}
     assert bound_simulation.resources == {"mpi_ranks": 4}
 
 
 def test_resources_remain_static_tree_metadata() -> None:
     """Schedulers can compile leaf resources without changing LeafTask."""
 
-    @to_objective_functor(resources={"cpus": 2})
+    @objective(resources={"cpus": 2})
     def cpu_term(parameters: Parameters) -> float:
         return parameters["x"]
 
-    @to_quantity_computer(resources={"gpus": 1})
+    @quantity(resources={"gpus": 1})
     def gpu_computer(parameters: Parameters) -> Quantities:
         return {"x": parameters["x"]}
 
-    objective = CombinedObjectiveFunction(
+    combined_objective = CombinedObjectiveFunction(
         [cpu_term, gpu_computer.with_loss(lambda quantities: quantities["x"])]
     )
-    tree = objective_to_call_tree(objective)
+    tree = objective_to_call_tree(combined_objective)
     resources_by_node = {
         node.id: node.objective.resources
         for node in tree.nodes

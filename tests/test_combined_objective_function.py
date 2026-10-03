@@ -17,7 +17,7 @@ from chemfit import combined_objective_function
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.scheduling import EvaluationRequest
-from chemfit.wrap_funcs import to_quantity_computer
+from chemfit.wrap_funcs import quantity
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -336,7 +336,7 @@ def test_aggregator(executor: Executor):
         assert all(q is not None for q in quantities)
         return sum(q["test"] for q in quantities if q is not None)
 
-    @to_quantity_computer()
+    @quantity()
     def q1(parameters: dict[str, float], f: float) -> dict[str, float]:
         return {"test": f * parameters["x"] + parameters["y"]}
 
