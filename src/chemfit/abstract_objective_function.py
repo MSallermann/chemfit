@@ -5,6 +5,7 @@ import copy
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future
 from functools import partial
+from inspect import signature
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, cast
 
@@ -683,6 +684,44 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
 LossFunction = Callable[Concatenate[LossQuantitiesT, ...], float]
 
 
+def _loss_function_takes_parameters(
+    loss_function: LossFunction[Any],
+) -> bool:
+    """Determine which supported positional signature a loss function uses."""
+
+    try:
+        loss_signature = signature(loss_function)
+    except (TypeError, ValueError) as exception:
+        msg = (
+            "loss_function must have an inspectable signature accepting "
+            "(quantities) or (quantities, parameters)"
+        )
+        raise TypeError(msg) from exception
+
+    quantities = object()
+    parameters = object()
+
+    try:
+        loss_signature.bind(quantities)
+    except TypeError:
+        pass
+    else:
+        # Preserve the historical preference for the one-argument form when
+        # an optional second positional argument or *args allows both forms.
+        return False
+
+    try:
+        loss_signature.bind(quantities, parameters)
+    except TypeError as exception:
+        msg = (
+            "loss_function must accept (quantities) or "
+            f"(quantities, parameters); got signature {loss_signature}"
+        )
+        raise TypeError(msg) from exception
+
+    return True
+
+
 class QuantityComputer(Generic[ParametersT_contra, QuantitiesT_co]):
     def __init__(self):
         """
@@ -822,6 +861,7 @@ class QuantityComputerObjectiveFunction(
         self.quantity_computer = quantity_computer
         self.static_meta_data: dict[str, Any] = {}
         self.loss_function = loss_function
+        self._loss_takes_parameters = _loss_function_takes_parameters(loss_function)
 
     @property
     def resources(self) -> ResourceRequest:
@@ -858,7 +898,10 @@ class QuantityComputerObjectiveFunction(
 
         Notes:
             ``loss_function`` may accept either ``(quantities)`` or
-            ``(quantities, parameters) as positional args``.
+            ``(quantities, parameters)`` as positional arguments. Its
+            signature is inspected when this objective is constructed, so a
+            ``TypeError`` raised inside the loss function is propagated
+            without retrying the call with different arguments.
 
         """
 
@@ -867,9 +910,9 @@ class QuantityComputerObjectiveFunction(
         # Update or set static meta data if needed
         ctx.meta.update(self.static_meta_data)
 
-        try:
-            loss = self.loss_function(quantities)
-        except TypeError:
+        if self._loss_takes_parameters:
             loss = self.loss_function(quantities, parameters)
+        else:
+            loss = self.loss_function(quantities)
 
         return loss
