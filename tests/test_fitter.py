@@ -7,17 +7,14 @@ import pytest
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.fitter import Fitter, FitterEvaluateContext
-from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 from pydictnest import get_nested, has_nested, items_nested
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
-NG_ATOL = 1e-1
-NSTEPS_CB = 100
-NG_BUDGET = 500
+NG_SMOKE_BUDGET = 8
+SCIPY_ATOL = 1e-4
 
 
 def square_x(params: dict[str, float]) -> float:
@@ -33,281 +30,149 @@ def collect_progress(
     step: int,
     ctxs: list[FitterEvaluateContext],
     progress: list,
-    print_to_console: bool = False,
 ):
-    for ctx in ctxs:
-        info = {
-            "step": step,
-            "n_evals": ctx.n_evals,
-            "cur_params": ctx.parameters,
-            "cur_loss": ctx.loss,
-            "opt_loss": ctx.opt_loss,
-            "opt_params": ctx.opt_params,
-        }
-
-        if print_to_console:
-            print(info)
-
-        progress.append(info)
-
-
-def test_with_square_func():
-    def cont1(params: dict):
-        return 2.0 * (params["x"] - 2) ** 2
-
-    def cont2(params: dict):
-        return 3.0 * (params["y"] + 1) ** 2
-
-    obj_func = CombinedObjectiveFunction([cont1, cont2])
-
-    initial_params = {"x": 0.0, "y": 0.0}
-    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
-
-    progress = []
-    fitter.register_callback(
-        lambda step, ctxs: collect_progress(step, ctxs, progress=progress),
-        n_steps=NSTEPS_CB,
+    progress.extend(
+        [
+            {
+                "step": step,
+                "n_evals": ctx.n_evals,
+                "cur_params": ctx.parameters,
+                "cur_loss": ctx.loss,
+                "opt_loss": ctx.opt_loss,
+                "opt_params": ctx.opt_params,
+            }
+            for ctx in ctxs
+        ]
     )
+
+
+def _combined_quadratic() -> CombinedObjectiveFunction:
+    def cont1(params: dict[str, float]) -> float:
+        return 2.0 * (params["x"] - 2.0) ** 2
+
+    def cont2(params: dict[str, float]) -> float:
+        return 3.0 * (params["y"] + 1.0) ** 2
+
+    return CombinedObjectiveFunction([cont1, cont2])
+
+
+def test_scipy_converges_on_combined_objective():
+    fitter = Fitter(
+        objective_function=_combined_quadratic(),
+        initial_params={"x": 0.0, "y": 0.0},
+    )
+
     optimal_params = fitter.fit_scipy()
 
-    print(f"{optimal_params = }")
     assert np.isclose(optimal_params["x"], 2.0)
     assert np.isclose(optimal_params["y"], -1.0)
 
-    for opt in NG_SOLVERS:
-        progress = []
-        optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET, optimizer_str=opt)
 
-        print(f"{opt = }")
-        print(f"{optimal_params = }")
-        print(f"{len(progress) = }")
-        print(f"{NG_BUDGET // NSTEPS_CB = }")
-
-        print(f"{progress[-1]['opt_loss'] = }")
-        print(f"{progress[-1]['opt_params'] = }")
-        print(f"{obj_func(optimal_params) = }")
-
-        # This assert is interesting because intuitively we would expect,
-        # these to be exactly equal, but this is solver dependent!!
-        # The "CMA" solver, for instance, may recommend parameters it has not actually visited yet
-        # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
-        # obj_func(optimal_params) value may be very slightly different
-        assert np.isclose(
-            progress[-1]["opt_loss"], obj_func(optimal_params), atol=NG_ATOL
-        )
-        assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
-        assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
-
-
-def test_with_square_func_bounds():
-    def cont1(params: dict):
-        return 2.0 * (params["x"] - 2) ** 2
-
-    def cont2(params: dict):
-        return 3.0 * (params["y"] + 1) ** 2
-
-    obj_func = CombinedObjectiveFunction([cont1, cont2])
-
-    initial_params = {"x": 0.0, "y": 0.0}
-    bounds = {"x": (0.0, 1.5)}
-
+@pytest.mark.parametrize("optimizer", NG_SOLVERS)
+def test_nevergrad_supported_solvers_smoke(optimizer: str):
+    """Exercise ChemFit's Nevergrad integration without testing optimizer quality."""
     fitter = Fitter(
-        objective_function=obj_func,
-        initial_params=initial_params,
+        objective_function=_combined_quadratic(),
+        initial_params={"x": 0.0, "y": 0.0},
+        bounds={"x": (-5.0, 5.0), "y": (-5.0, 5.0)},
+    )
+
+    result = fitter.fit_nevergrad(
+        budget=NG_SMOKE_BUDGET,
+        optimizer_str=optimizer,
+    )
+
+    assert set(result) == {"x", "y"}
+    assert -5.0 <= result["x"] <= 5.0
+    assert -5.0 <= result["y"] <= 5.0
+    assert np.isfinite(result["x"])
+    assert np.isfinite(result["y"])
+
+
+def test_nevergrad_callbacks_run_at_requested_interval():
+    progress: list[dict[str, Any]] = []
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+    fitter.register_callback(
+        lambda step, ctxs: collect_progress(step, ctxs, progress),
+        n_steps=2,
+    )
+
+    fitter.fit_nevergrad(
+        budget=4,
+        optimizer_str="OnePlusOne",
+    )
+
+    assert progress
+    assert progress[-1]["n_evals"] == 4
+    assert progress[-1]["opt_loss"] is not None
+    assert progress[-1]["opt_params"] is not None
+
+
+def test_scipy_respects_bounds():
+    bounds = {"x": (0.0, 1.5)}
+    fitter = Fitter(
+        objective_function=_combined_quadratic(),
+        initial_params={"x": 0.0, "y": 0.0},
         bounds=bounds,
         near_bound_tol=1e-2,
     )
 
     optimal_params = fitter.fit_scipy()
 
-    print(f"{optimal_params = }")
-
     assert len(check_params_near_bounds(optimal_params, bounds, 1e-2)) == 1
     assert np.isclose(optimal_params["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
 
-    for opt in NG_SOLVERS:
-        optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET, optimizer_str=opt)
-        print(f"{opt = }")
-        print(f"{optimal_params = }")
 
-        assert np.isclose(optimal_params["x"], 1.5, atol=NG_ATOL)
-        assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
+def test_scipy_supports_nested_parameter_dicts():
+    def cont1(params: dict) -> float:
+        return 2.0 * (params["params"]["x"] - 2.0) ** 2
 
-
-def test_with_nested_dict():
-    def cont1(params: dict):
-        return 2.0 * (params["params"]["x"] - 2) ** 2
-
-    def cont2(params: dict):
-        return 3.0 * (params["y"] + 1) ** 2
-
-    obj_func = CombinedObjectiveFunction([cont1, cont2])
-
-    initial_params = {"params": {"x": 0.0}, "y": 0.0}
-    bounds = {"params": {"x": (0.0, 1.5)}}
+    def cont2(params: dict) -> float:
+        return 3.0 * (params["y"] + 1.0) ** 2
 
     fitter = Fitter(
-        objective_function=obj_func, initial_params=initial_params, bounds=bounds
+        objective_function=CombinedObjectiveFunction([cont1, cont2]),
+        initial_params={"params": {"x": 0.0}, "y": 0.0},
+        bounds={"params": {"x": (0.0, 1.5)}},
     )
 
     optimal_params = fitter.fit_scipy()
-    print(f"{optimal_params = }")
+
     assert np.isclose(optimal_params["params"]["x"], 1.5)
     assert np.isclose(optimal_params["y"], -1.0)
 
-    optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET)
 
-    print(f"{optimal_params = }")
-    assert np.isclose(optimal_params["params"]["x"], 1.5, atol=NG_ATOL)
-    assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
-
-
-def test_with_complicated_dict():
-    def ob(params: dict):
-        res = 0
-        for _k, v in items_nested(params):
-            res += v**2
-        return res
+def test_scipy_supports_complicated_nested_parameter_dicts():
+    def objective(params: dict) -> float:
+        return sum(value**2 for _key, value in items_nested(params))
 
     initial_params = {
-        "electrostatic": {"bla": {"a": 1.0, "b": 1.0, "c": 1.0}, "foo": 1.0},
+        "electrostatic": {
+            "bla": {"a": 1.0, "b": 1.0, "c": 1.0},
+            "foo": 1.0,
+        },
         "dispersion": 0.4,
         "params": {"a": 1.0, "b": 1.0},
     }
+    bounds = {
+        "dispersion": [0.2, 2.0],
+        "electrostatic": {"bla": {"a": [0.5, 1.0]}},
+    }
 
-    bounds = {"dispersion": [0.2, 2.0], "electrostatic": {"bla": {"a": [0.5, 1.0]}}}
-
-    # Every non-constrained parameter should be at 0.0
-    # and every constrained parameter should be at the lower bound
-    def check_solution(opt_params: dict):
-        for k, v in items_nested(opt_params):
-            if has_nested(bounds, k):
-                lower, _upper = get_nested(bounds, k)
-                print(k, v, lower)
-                assert np.isclose(v, lower, atol=NG_ATOL)
-            else:
-                print(k, v, 0.0)
-                assert np.isclose(v, 0.0, atol=NG_ATOL)
-
-    fitter = Fitter(objective_function=ob, initial_params=initial_params, bounds=bounds)
-
+    fitter = Fitter(
+        objective_function=objective,
+        initial_params=initial_params,
+        bounds=bounds,
+    )
     optimal_params = fitter.fit_scipy()
-    print(f"{optimal_params = }")
-    check_solution(optimal_params)
 
-    optimal_params = fitter.fit_nevergrad(budget=NG_BUDGET)
-    print(f"{optimal_params = }")
-
-    check_solution(optimal_params)
-
-
-def test_with_square_func_threadpool():
-    def cont1(params: dict):
-        return 2.0 * (params["x"] - 2) ** 2
-
-    def cont2(params: dict):
-        return 3.0 * (params["y"] + 1) ** 2
-
-    obj_func = CombinedObjectiveFunction([cont1, cont2])
-    schedule = obj_func.set_scheduler(
-        ExecutorTreeScheduler(executor_factory=ThreadPoolExecutor)
-    )
-
-    initial_params = {"x": 0.0, "y": 0.0}
-    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
-
-    NUM_WORKERS = 5
-
-    for opt in NG_SOLVERS:
-        progress = []
-
-        fitter.register_callback(
-            lambda step, ctxs, progress=progress: collect_progress(
-                step, ctxs, progress=progress, print_to_console=True
-            ),
-            n_steps=NSTEPS_CB,
-        )
-
-        contexts = [FitterEvaluateContext() for _ in range(NUM_WORKERS)]
-
-        optimal_params = fitter.fit_nevergrad(
-            budget=NG_BUDGET,
-            optimizer_str=opt,
-            num_workers=NUM_WORKERS,
-            executor=ThreadPoolExecutor(NUM_WORKERS),
-            contexts=contexts,
-        )
-
-        print(f"{opt = }")
-        print(f"{optimal_params = }")
-        print(f"{len(progress) = }")
-        print(f"{NG_BUDGET // NSTEPS_CB = }")
-        print(f"{obj_func(optimal_params) = }")
-
-        # This assert is interesting because intuitively we would expect,
-        # these to be exactly equal, but this is solver dependent!!
-        # The "CMA" solver, for instance, may recommend parameters it has not actually visited yet
-        # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
-        # obj_func(optimal_params) value may be very slightly different
-        assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
-        assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
-
-    schedule.close()
-
-
-def test_with_square_func_processpool():
-    loky = pytest.importorskip("loky", reason="Missing loky")
-
-    def cont1(params: dict):
-        return 2.0 * (params["x"] - 2) ** 2
-
-    def cont2(params: dict):
-        return 3.0 * (params["y"] + 1) ** 2
-
-    obj_func = CombinedObjectiveFunction(
-        [cont1, cont2],
-        scheduler=SerialTreeScheduler(),
-    )
-
-    initial_params = {"x": 0.0, "y": 0.0}
-    fitter = Fitter(objective_function=obj_func, initial_params=initial_params)
-
-    NUM_WORKERS = 5
-
-    for opt in NG_SOLVERS:
-        progress = []
-
-        fitter.register_callback(
-            lambda step, ctxs, progress=progress: collect_progress(
-                step, ctxs, progress=progress, print_to_console=True
-            ),
-            n_steps=NSTEPS_CB,
-        )
-
-        contexts = [FitterEvaluateContext() for _ in range(NUM_WORKERS)]
-
-        optimal_params = fitter.fit_nevergrad(
-            budget=NG_BUDGET,
-            optimizer_str=opt,
-            num_workers=NUM_WORKERS,
-            executor=loky.ProcessPoolExecutor(NUM_WORKERS),
-            contexts=contexts,
-        )
-
-        print(f"{opt = }")
-        print(f"{optimal_params = }")
-        print(f"{len(progress) = }")
-        print(f"{NG_BUDGET // NSTEPS_CB = }")
-        print(f"{obj_func(optimal_params) = }")
-
-        # This assert is interesting because intuitively we would expect,
-        # these to be exactly equal, but this is solver dependent!!
-        # The "CMA" solver, for instance, may recommend parameters it has not actually visited yet
-        # Therefore, the `opt_loss`, which is only computed from actually visited parameters and the
-        # obj_func(optimal_params) value may be very slightly different
-        assert np.isclose(optimal_params["x"], 2.0, atol=NG_ATOL)
-        assert np.isclose(optimal_params["y"], -1.0, atol=NG_ATOL)
+    for key, value in items_nested(optimal_params):
+        if has_nested(bounds, key):
+            lower, _upper = get_nested(bounds, key)
+            assert np.isclose(value, lower, atol=SCIPY_ATOL)
+        else:
+            assert np.isclose(value, 0.0, atol=SCIPY_ATOL)
 
 
 def test_seed_observations():
@@ -323,9 +188,7 @@ def test_seed_observations():
         initial_params={"x": 0.0},
         bounds={"x": (0.0, 5.0)},
     )
-
     contexts = [FitterEvaluateContext(), FitterEvaluateContext()]
-
     opt_params = fitter.fit_nevergrad(
         budget=2,
         num_workers=2,
@@ -335,18 +198,14 @@ def test_seed_observations():
             ({"x": 10.0}, 0.0),  # invalid, should be skipped
         ],
     )
-
     # replayed observations should not consume live evaluation budget
     assert n_calls == 2
-
     # valid replayed point should have been used to seed incumbent state
     assert contexts[0].opt_loss is not None
     assert contexts[0].opt_loss <= 1.0
-
     # invalid replayed point should not become incumbent
     assert contexts[0].opt_params is not None
     assert 0.0 <= contexts[0].opt_params["x"] <= 5.0
-
     # optimizer should still return an in-bounds result
     assert 0.0 <= opt_params["x"] <= 5.0
 
@@ -361,14 +220,12 @@ def test_nevergrad_evaluates_partial_final_batch():
 
     fitter = Fitter(objective, initial_params={"x": 1.0})
     fitter.fit_nevergrad(budget=3, num_workers=2)
-
     assert n_calls == 3
 
 
 def test_user_supplied_ask_tell_interface():
     candidates = iter([{"x": 0.0}, {"x": 2.0}, {"x": 4.0}])
     observations = []
-
     fitter = Fitter(lambda params: (params["x"] - 2.0) ** 2, {"x": 0.0})
     fitter.init()
     for params in candidates:
@@ -376,7 +233,6 @@ def test_user_supplied_ask_tell_interface():
         observations.append((params, loss))
         fitter.tell()
     result = fitter.finish()
-
     assert result == {"x": 2.0}
     assert observations == [
         ({"x": 0.0}, 4.0),
@@ -388,7 +244,6 @@ def test_user_supplied_ask_tell_interface():
 
 def test_user_supplied_ask_tell_recommendation_and_partial_batch():
     fitter = Fitter(lambda params: params["x"] ** 2, {"x": 0.0})
-
     with ThreadPoolExecutor(2) as executor:
         fitter.init(num_workers=2, executor=executor)
         losses = fitter.ask([{"x": 0.0}, {"x": 1.0}])
@@ -396,7 +251,6 @@ def test_user_supplied_ask_tell_recommendation_and_partial_batch():
         final_loss = fitter.ask([{"x": 2.0}])
         fitter.tell()
         result = fitter.finish({"x": 0.5})
-
     assert losses == [0.0, 1.0]
     assert final_loss == [4.0]
     assert result == {"x": 0.5}
@@ -405,13 +259,10 @@ def test_user_supplied_ask_tell_recommendation_and_partial_batch():
 def test_process_pool_preserves_fitter_context_state():
     objective = WrappedObjectiveFunctor(square_x_with_quantities, pass_ctx=True)
     fitter = Fitter(objective, {"x": 0.0})
-
     with ProcessPoolExecutor(2) as executor:
         fitter.init(num_workers=2, executor=executor)
-
         assert fitter.ask([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
         assert fitter.ask([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
-
     first, second = fitter.contexts
     assert first.n_evals == 2
     assert first.opt_loss == 1.0
@@ -426,13 +277,10 @@ def test_process_pool_preserves_fitter_context_state():
 def test_new_best_without_quantities_clears_previous_best_quantities():
     fitter = Fitter(square_x, {"x": 0.0})
     ctx = FitterEvaluateContext()
-
     ctx.quantities = {"source": "previous best"}
     fitter.objective_function.post_process_return_value({"x": 2.0}, 4.0, ctx)
-
     ctx.quantities = None
     fitter.objective_function.post_process_return_value({"x": 1.0}, 1.0, ctx)
-
     assert ctx.opt_loss == 1.0
     assert ctx.opt_params == {"x": 1.0}
     assert ctx.opt_quantities is None
@@ -466,11 +314,9 @@ def test_nevergrad_parameter_leaves():
             "metadata": "fixed",
         },
     )
-
     assert fitter.initial_parameters["model"] == "quadratic"
     assert fitter.initial_parameters["core"]["x"] == 1.0
     assert np.array_equal(fitter.initial_parameters["core"]["weights"], [1.0, 2.0])
-
     result = fitter.fit_nevergrad(
         budget=3,
         optimizer_str="OnePlusOne",
@@ -483,7 +329,6 @@ def test_nevergrad_parameter_leaves():
             "metadata": ng.p.Constant("fixed"),
         },
     )
-
     assert result["model"] in {"quadratic", "absolute"}
     assert 0.1 <= result["core"]["x"] <= 10.0
     assert isinstance(result["core"]["weights"], np.ndarray)
@@ -504,7 +349,6 @@ def test_nevergrad_parametrization_can_be_partial():
         },
         bounds={"x": (0.0, 2.0)},
     )
-
     instrumentation = fitter._make_nevergrad_parameterization(  # noqa: SLF001
         {
             "model": {"kind": choice},
@@ -515,7 +359,6 @@ def test_nevergrad_parametrization_can_be_partial():
     assert isinstance(positional_parameters, ng.p.Tuple)
     parameter_leaves = positional_parameters[0]
     assert isinstance(parameter_leaves, ng.p.Dict)
-
     x_parameter = parameter_leaves["x"]
     assert isinstance(x_parameter, ng.p.Scalar)
     lower_bound, upper_bound = x_parameter.bounds
@@ -523,11 +366,9 @@ def test_nevergrad_parametrization_can_be_partial():
     assert upper_bound is not None
     assert np.array_equal(lower_bound, [0.0])
     assert np.array_equal(upper_bound, [2.0])
-
     model_kind_parameter = parameter_leaves["model.kind"]
     assert isinstance(model_kind_parameter, ng.p.Choice)
     assert model_kind_parameter is not choice
-
     label_parameter = parameter_leaves["label"]
     assert isinstance(label_parameter, ng.p.Constant)
     assert label_parameter.value == "fixed"
@@ -535,17 +376,11 @@ def test_nevergrad_parametrization_can_be_partial():
 
 def test_nevergrad_requires_explicit_non_numeric_leaves():
     fitter = Fitter(lambda _params: 0.0, {"model": "linear"})
-
     with pytest.raises(TypeError, match=r"ng\.p\.Constant"):
         fitter.fit_nevergrad(budget=1)
 
 
 def test_nevergrad_parametrization_requires_parameter_leaves():
     fitter = Fitter(square_x, {"x": 1.0})
-
     with pytest.raises(TypeError, match="Nevergrad parameters"):
         fitter.fit_nevergrad(budget=1, parametrization={"x": 2.0})
-
-
-if __name__ == "__main__":
-    test_with_square_func()

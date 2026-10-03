@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any, Generic, cast
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
-from pydictnest import flatten_dict, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
@@ -24,6 +23,7 @@ from chemfit.abstract_objective_function import (
 from chemfit.executor_utils import map_with_context
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
+from pydictnest import flatten_dict, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -273,43 +273,39 @@ class Fitter(Generic[ParametersT]):
 
     def register_callback(
         self, func: Callable[[int, list[FitterEvaluateContext]], None], n_steps: int
-    ):
+    ) -> None:
         """
         Register a callback to be executed during optimization.
 
-        The callback is invoked every ``n_steps`` iterations (or
-        nevergrad/SciPy "steps", depending on the backend), and receives
-        the current step index and the list of `FitterEvaluateContext`
+        The callback is invoked after every ``n_steps`` completed optimizer
+        steps and once at the end of the fit if the final step does not fall
+        exactly on the requested interval. The callback receives the number
+        of completed optimizer steps and the list of `FitterEvaluateContext`
         instances used by the fitter.
 
         Args:
             func (Callable[[int, list[FitterEvaluateContext]], None]):
                 Callback function of the form ``func(step, contexts)``.
-            n_steps (int): Interval (in steps) at which the callback is
-                invoked.
+            n_steps (int): Number of completed optimizer steps between callback
+                invocations.
 
         """
+        if n_steps < 1:
+            msg = "n_steps must be at least 1"
+            raise ValueError(msg)
+
         self.callbacks.append((func, n_steps))
 
-    def _unify_callbacks(
-        self,
-    ) -> (
-        tuple[Callable[[int, list[FitterEvaluateContext]], None], int]
-        | tuple[None, int]
-    ):
-        """Generate a single callback from the list of callbacks."""
+    def _dispatch_callbacks(self, final: bool = False) -> None:
+        """Dispatch callbacks due at the current completed optimizer step."""
 
-        if len(self.callbacks) == 0:
-            return None, 0
+        if self._session_step == 0:
+            return
 
-        min_n_steps = min([n_steps for (_, n_steps) in self.callbacks])
-
-        def callback(step: int, ctxs: list[FitterEvaluateContext]):
-            for cb, n_steps in self.callbacks:
-                if step % n_steps == 0:
-                    cb(step, ctxs)
-
-        return callback, min_n_steps
+        for callback, n_steps in self.callbacks:
+            due = self._session_step % n_steps == 0
+            if (not final and due) or (final and not due):
+                callback(self._session_step, self.contexts)
 
     def _hook_pre_fit(self):
         """Run bookkeeping steps before starting an optimization."""
@@ -427,21 +423,21 @@ class Fitter(Generic[ParametersT]):
         """
         Notify ChemFit that the user completed an optimizer step.
 
-        This dispatches registered fitter callbacks. If ``step`` is omitted,
-        an internal zero-based step counter is used and advanced automatically.
+        This advances the completed-step counter and dispatches registered
+        fitter callbacks. If ``step`` is supplied, it is interpreted as the
+        number of completed optimizer steps.
         """
 
         if not hasattr(self, "_session_step"):
             msg = "call fitter.init() before fitter.tell()"
             raise RuntimeError(msg)
 
-        current_step = self._session_step if step is None else step
-        callback, n_steps = self._unify_callbacks()
+        if step is None:
+            self._session_step += 1
+        else:
+            self._session_step = step
 
-        if callback is not None and current_step % n_steps == 0:
-            callback(current_step, self.contexts)
-
-        self._session_step = current_step + 1
+        self._dispatch_callbacks()
 
     def finish(self, opt_params: ParametersT | None = None) -> ParametersT:
         """
@@ -461,6 +457,8 @@ class Fitter(Generic[ParametersT]):
             opt_params = cast("ParametersT", copy.deepcopy(best_context.opt_params))
 
         self._hook_post_fit(opt_params)
+
+        self._dispatch_callbacks(final=True)
 
         if self._owns_executor:
             cast("ThreadPoolExecutor", self._session_executor).shutdown()
@@ -649,7 +647,7 @@ class Fitter(Generic[ParametersT]):
             for params, loss in zip(asked_params, asked_losses, strict=True):
                 optimizer.tell(params, loss)
 
-            self.tell(step)
+            self.tell()
 
         recommendation = optimizer.provide_recommendation()
         args, _ = recommendation.value
@@ -731,13 +729,8 @@ class Fitter(Generic[ParametersT]):
             assert isinstance(loss, float)
             return loss
 
-        def callback_scipy(intermediate_result: OptimizeResult):
-            if "nit" in intermediate_result:
-                step = intermediate_result.nit
-            else:
-                step = self.contexts[0].n_evals
-
-            self.tell(step)
+        def callback_scipy(_intermediate_result: OptimizeResult):
+            self.tell()
 
         res = minimize(
             f_scipy, x0, method=method, bounds=bounds, **kwargs, callback=callback_scipy
