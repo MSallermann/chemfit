@@ -2,46 +2,29 @@ from __future__ import annotations
 
 import copy
 import functools
+import logging
 import shutil
 import subprocess
-import threading
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from pprint import pformat
 from typing import (
-    TYPE_CHECKING,
     Any,
     Concatenate,
     Generic,
-    Protocol,
     TypeVar,
     cast,
-    runtime_checkable,
 )
 
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
-from chemfit.utils import check_protocol
-
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-import logging
-from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# The protocols have one-way data flow: hooks consume parameters and parsers
-# produce quantities, hence their contravariant/covariant variables.
-ParametersT_contra = TypeVar(
-    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
-)
-QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
-
-# The concrete computer stores mutable collections of callbacks and must keep
-# their parameter and result types matched.  Its variables are therefore
-# invariant even though the individual callback protocols above are variant.
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 QuantitiesT = TypeVar("QuantitiesT", bound=dict[str, Any])
 
@@ -52,42 +35,40 @@ def _subprocess_output_to_text(output: bytes | str) -> str:
     return output
 
 
-@runtime_checkable
-class OutputParser(Protocol[QuantitiesT_co]):
-    """Protocol for parsing output files into a quantity dictionary."""
-
-    def __call__(self, output_files: list[Path], /) -> QuantitiesT_co:
-        """
-        Parse the output files and retrieve the quantities.
-
-        Args:
-            output_files (list[Path]): List of paths to output files. These
-                are typically located in the working directory of a single
-                evaluation.
-
-        Returns:
-            dict[str, Any]: Dictionary of parsed quantities.
-
-        """
-        ...
-
-
-@runtime_checkable
-class PreSubmitHook(Protocol[ParametersT_contra]):
-    """Protocol for running things before the command is submitted."""
-
-    def __call__(self, parameters: ParametersT_contra, workdir: Path, /) -> None:
-        """
-        Run pre-submit actions.
-
-        Args:
-            parameters (dict[str, Any]): Parameter dictionary for the evaluation.
-            workdir (Path): Temporary working directory for this evaluation.
-
-        """
-
-
 CommandType = Callable[[ParametersT, Path], list[str]]
+HookType = Callable[[ParametersT, Path], None]
+
+
+@dataclass(frozen=True)
+class _CommandStep(Generic[ParametersT]):
+    """Build and execute one command in an external evaluation."""
+
+    command: CommandType[ParametersT]
+
+
+@dataclass(frozen=True)
+class _HookStep(Generic[ParametersT]):
+    """Run one Python hook in an external evaluation."""
+
+    hook: HookType[ParametersT]
+
+
+@dataclass(frozen=True)
+class _ParserBinding(Generic[QuantitiesT]):
+    """Associate an output parser with its ordered input files."""
+
+    parser: Callable[..., QuantitiesT]
+    files: tuple[Path, ...]
+
+
+def _relative_paths(output_files: tuple[Path | str, ...]) -> tuple[Path, ...]:
+    """Convert str to Path and make sure that they are relative."""
+
+    files = tuple(Path(output_file) for output_file in output_files)
+    if any(output_file.is_absolute() for output_file in files):
+        msg = "Output paths must be relative to the evaluation working directory."
+        raise ValueError(msg)
+    return files
 
 
 class ExternalQuantityComputer(
@@ -95,11 +76,7 @@ class ExternalQuantityComputer(
 ):
     def __init__(
         self,
-        output_files: list[Path | str],
-        output_parsers: list[OutputParser[QuantitiesT]] | OutputParser[QuantitiesT],
         base_working_directory: Path | str,
-        executable_cmd: CommandType[ParametersT] | None = None,
-        presubmit_hook: PreSubmitHook[ParametersT] | None = None,
         wait_timeout: float | None = 500.0,
         poll_interval: float = 1,
         subprocess_run_args: dict[str, Any] | None = None,
@@ -112,31 +89,14 @@ class ExternalQuantityComputer(
         Initialize an external quantity computer.
 
         This quantity computer evaluates parameters by creating a temporary
-        working directory, executing an external command, waiting for the
-        expected output files to appear, and parsing those files into a
-        quantity dictionary.
+        working directory, executing an ordered sequence of hooks and commands,
+        waiting for the expected output files to appear, and parsing those
+        files into a quantity dictionary.
 
         Args:
-            output_files (list[Path]):
-                Paths to output files that are expected to be created by
-                the external command. These paths must be **relative** to
-                the working directory; absolute paths are not allowed.
-            executable_cmd (Callable[[dict[str, Any], Path], list[str]]):
-                Callable that constructs the command to execute. It receives
-                the parameter dictionary and the temporary working directory,
-                and must return a list of strings suitable for
-                ``subprocess.run``.
-            output_parsers (list[OutputParser] | OutputParser):
-                One or more output parsers called after the external command
-                completes and the output files exist. Each parser receives
-                the list of output file paths and returns a dictionary of
-                quantities. The results of all parsers are merged.
             base_working_directory (Path):
                 Base directory under which temporary working directories
                 will be created, one per evaluation.
-            presubmit_hook (PreSubmitHook | None, optional):
-                Optional hook executed before the external command is run.
-                It can be used to prepare input files, templates, etc.
             wait_timeout (float, optional):
                 Maximum time in seconds to wait for all output files to
                 appear. Defaults to 500.0 seconds.
@@ -150,54 +110,30 @@ class ExternalQuantityComputer(
             delete_temp_workdirs (bool, optional):
                 Whether to delete temporary working directories after each
                 evaluation. Defaults to True.
-            write_dump_file_after_crash: Whether to write a dump file with
-                subprocess output when command execution fails.
+            write_dump_file_after_crash: Whether to write an evaluation-level
+                diagnostic dump when execution, output waiting, or parsing fails.
             keep_temp_workdir_after_crash: Whether to keep the temporary
                 working directory for inspection after a failed evaluation.
             try_parsing_after_exception: Whether to continue waiting for and parsing
                 output files when ``subprocess.run`` raises
                 ``subprocess.CalledProcessError``. Defaults to False.
 
-        Raises:
-            Exception: If any path in `output_files` is absolute rather
-                than relative.
-
         """
 
         super().__init__()
 
-        self.output_files = [Path(f) for f in output_files]
+        self._steps: tuple[_CommandStep[ParametersT] | _HookStep[ParametersT], ...] = ()
+        self._parser_bindings: tuple[_ParserBinding[QuantitiesT], ...] = ()
+        self._completion_files: tuple[Path, ...] = ()
         self.base_working_directory = Path(base_working_directory)
         self.write_dump_file_after_crash = write_dump_file_after_crash
         self.keep_temp_workdir_after_crash = keep_temp_workdir_after_crash
         self.try_parsing_after_exception = try_parsing_after_exception
 
-        # We need to make sure none of the output files is absolute.
-        # The reason for this is that, to facilitate multiple concurrent evaluations,
-        # we may have to create temporary working directories so that concurrent runs do not mess with each others outputs.
-        # Then the relative paths are used to place the output files relative ot the temporary working directory.
-        if any(of.is_absolute() for of in self.output_files):
-            msg = "One of the output files is an absolute path. All output paths need to be relative to the working directory."
-            raise Exception(msg)
-
         if subprocess_run_args is None:
             self.subprocess_run_args: dict[str, Any] = {"capture_output": True}
         else:
             self.subprocess_run_args = subprocess_run_args
-
-        self.executable_cmd = executable_cmd
-
-        # Make sure that, if a single OutputParser has been passed, we turn it into a list with on element
-        if isinstance(output_parsers, OutputParser):
-            self.output_parsers = [output_parsers]
-        else:
-            self.output_parsers = output_parsers
-
-        for o in self.output_parsers:
-            check_protocol(o, OutputParser)
-
-        self.presubmit_hook = presubmit_hook
-        check_protocol(self.presubmit_hook, PreSubmitHook)
 
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
@@ -218,146 +154,301 @@ class ExternalQuantityComputer(
         temp_workdir.mkdir(exist_ok=False, parents=True)
         return temp_workdir
 
-    def with_presubmit(
+    def with_parser(
         self,
-        presubmit: Callable[Concatenate[ParametersT, Path, ...], None],
+        parser: Callable[..., QuantitiesT],
+        *output_files: Path | str,
+    ) -> Self:
+        """
+        Return a copy with a parser bound to its input files.
+
+        The parser receives the resolved output paths as positional arguments
+        in the same order as ``output_files``. Parser input files are also
+        treated as required outputs and are watched before parsing begins.
+
+        Args:
+            parser: Callable that accepts the resolved output paths and returns
+                a quantity dictionary.
+            *output_files: Relative paths consumed by ``parser``.
+
+        Returns:
+            A new computer containing the additional parser binding.
+
+        Raises:
+            TypeError: If ``parser`` is not callable.
+            ValueError: If no files are supplied or a path is absolute.
+
+        """
+        if not callable(parser):
+            msg = "The output parser must be callable."
+            raise TypeError(msg)
+        if not output_files:
+            msg = "with_parser() requires at least one output file."
+            raise ValueError(msg)
+
+        files = _relative_paths(output_files)
+        new = copy.copy(self)
+        new._parser_bindings = (  # noqa: SLF001
+            *self._parser_bindings,
+            _ParserBinding(parser, files),
+        )
+        return new
+
+    def wait_for(self, *output_files: Path | str) -> Self:
+        """
+        Return a copy that also waits for the supplied completion files.
+
+        Completion files are not passed to parsers. They are useful for tools
+        that create result files before the external computation is complete.
+
+        Args:
+            *output_files: Relative paths that must exist before parsing.
+
+        Returns:
+            A new computer containing the additional completion files.
+
+        Raises:
+            ValueError: If no files are supplied or a path is absolute.
+
+        """
+        if not output_files:
+            msg = "wait_for() requires at least one output file."
+            raise ValueError(msg)
+
+        files = _relative_paths(output_files)
+        new = copy.copy(self)
+        new._completion_files = tuple(  # noqa: SLF001
+            dict.fromkeys((*self._completion_files, *files))
+        )
+        return new
+
+    def _watched_files(self) -> tuple[Path, ...]:
+        """Return each parser input and completion file once, in registration order."""
+        parser_files = (
+            output_file
+            for binding in self._parser_bindings
+            for output_file in binding.files
+        )
+        return tuple(dict.fromkeys((*parser_files, *self._completion_files)))
+
+    def _wait_for_outputs(self, output_files: Iterable[Path]) -> None:
+        """Wait synchronously until every required output file exists."""
+        output_files = tuple(output_files)
+        if all(output_file.exists() for output_file in output_files):
+            return
+
+        start = time.monotonic()
+        while not all(output_file.exists() for output_file in output_files):
+            if (
+                self.wait_timeout is not None
+                and time.monotonic() - start >= self.wait_timeout
+            ):
+                msg = f"Timed out waiting for {list(output_files)}"
+                raise TimeoutError(msg)
+            time.sleep(self.poll_interval)
+
+    def _execute_steps(self, parameters: ParametersT, ctx: EvaluateContext) -> None:
+        """Execute hooks and commands sequentially in registration order."""
+        ctx.temp.commands = []
+        ctx.temp.command_failure = None
+        ctx.temp.current_step_index = None
+        ctx.temp.current_step_type = None
+
+        for step_index, step in enumerate(self._steps):
+            ctx.temp.current_step_index = step_index
+
+            if isinstance(step, _HookStep):
+                ctx.temp.current_step_type = "hook"
+                step.hook(parameters, ctx.temp.workdir)
+                continue
+
+            ctx.temp.current_step_type = "command"
+            cmd = step.command(parameters, ctx.temp.workdir)
+            ctx.temp.commands.append(cmd)
+
+            try:
+                subprocess.run(  # noqa: S603
+                    cmd,  # type: ignore
+                    check=True,
+                    cwd=ctx.temp.workdir,
+                    **self.subprocess_run_args,
+                )  # type: ignore
+            except subprocess.CalledProcessError as exception:
+                ctx.temp.command_failure = {
+                    "step_index": step_index,
+                    "exception_type": type(exception).__name__,
+                    "message": str(exception),
+                    "cmd": exception.cmd,
+                    "returncode": exception.returncode,
+                    "stdout": (
+                        None
+                        if exception.stdout is None
+                        else _subprocess_output_to_text(exception.stdout)
+                    ),
+                    "stderr": (
+                        None
+                        if exception.stderr is None
+                        else _subprocess_output_to_text(exception.stderr)
+                    ),
+                }
+                if not self.try_parsing_after_exception:
+                    raise
+
+                logger.warning(
+                    "Command step %d failed with %s: %s. "
+                    "Will attempt to parse output files.",
+                    step_index,
+                    type(exception).__name__,
+                    exception,
+                )
+                break
+
+        ctx.temp.current_step_index = None
+        ctx.temp.current_step_type = None
+
+    def _write_crash_dump(self, ctx: EvaluateContext, exception: Exception) -> Path:
+        """Write evaluation-level failure details and return the dump path."""
+        dump_path = (self.base_working_directory / ctx.temp.workdir.name).with_suffix(
+            ".dump"
+        )
+        with dump_path.open("w") as dump_file:
+            dump_file.write(f"Exception type: {type(exception).__name__}\n")
+            dump_file.write(f"Exception: {exception}\n")
+
+            if isinstance(exception, subprocess.CalledProcessError):
+                dump_file.write("Subprocess failure:\n")
+                dump_file.write(f"  cmd: {exception.cmd!r}\n")
+                dump_file.write(f"  returncode: {exception.returncode}\n")
+                if exception.stdout is not None:
+                    stdout = _subprocess_output_to_text(exception.stdout)
+                    dump_file.write(f"  stdout: {stdout}\n")
+                if exception.stderr is not None:
+                    stderr = _subprocess_output_to_text(exception.stderr)
+                    dump_file.write(f"  stderr: {stderr}\n")
+
+            dump_file.write("ctx.temp:\n")
+            dump_file.write(pformat(vars(ctx.temp)))
+            dump_file.write("\n")
+        return dump_path
+
+    def with_hook(
+        self,
+        hook: Callable[Concatenate[ParametersT, Path, ...], None],
         /,
         **kwargs: Any,
     ) -> Self:
         """
-        Return a copy of this computer with a bound presubmit hook.
+        Return a copy with a hook appended to the execution pipeline.
 
-        The provided ``presubmit`` callable may accept additional keyword arguments
+        The provided ``hook`` callable may accept additional keyword arguments
         beyond ``(parameters, workdir)``. These are bound via ``kwargs`` and the
-        resulting callable is stored as the presubmit hook.
+        resulting callable is executed at this position in the pipeline.
 
         This is a convenience wrapper around ``functools.partial`` that avoids
         requiring users to manually construct partial functions.
 
         Args:
-            presubmit: Callable executed before the command is run. Must accept
+            hook: Callable executed at this position in the pipeline. Must accept
                 ``(parameters: Mapping[str, object], workdir: Path, ...)`` where any
                 additional arguments are keyword-only.
-            **kwargs: Keyword arguments to bind to ``presubmit``.
+            **kwargs: Keyword arguments to bind to ``hook``.
 
         Returns:
-            A new ``ExternalQuantityComputer`` instance with the updated
-            presubmit hook.
+            A new computer containing the additional hook step.
 
         Example:
             >>> from chemfit.external_computer import ExternalQuantityComputer
-            >>> computer = ExternalQuantityComputer(
-            ...    output_files=["out.txt"],
-            ...    output_parsers=[],
-            ...    base_working_directory="workdir"
-            ... )
+            >>> computer = ExternalQuantityComputer(base_working_directory="workdir")
             >>> def write_input(parameters, workdir, *, template_path):
             ...     ...
-            >>> computer2 = computer.with_presubmit(
+            >>> computer2 = computer.with_hook(
             ...     write_input,
             ...     template_path="INCAR.template",
             ... )
 
         Note:
-            Additional arguments must be keyword-only in ``presubmit``.
+            Additional arguments must be keyword-only in ``hook``.
 
         """
-
+        bound_hook = cast("HookType[ParametersT]", functools.partial(hook, **kwargs))
         new = copy.copy(self)
-        new.presubmit_hook = cast(
-            "PreSubmitHook[ParametersT]", functools.partial(presubmit, **kwargs)
+        new._steps = (  # noqa: SLF001
+            *self._steps,
+            _HookStep(bound_hook),
         )
         return new
 
     def with_cmd(
         self,
-        executable_cmd: Callable[Concatenate[ParametersT, Path, ...], list[str]],
+        command: Callable[Concatenate[ParametersT, Path, ...], list[str]],
         /,
         **kwargs: Any,
     ) -> Self:
         """
-        Return a copy of this computer with a bound command function.
+        Return a copy with a command appended to the execution pipeline.
 
-        The provided ``executable_cmd`` may accept additional keyword arguments
+        The provided ``command`` may accept additional keyword arguments
         beyond ``(parameters, workdir)``. These are bound via ``kwargs`` and the
-        resulting callable is stored as the command builder.
+        resulting callable is executed at this position in the pipeline.
 
         This is a convenience wrapper around ``functools.partial`` that avoids
         requiring users to manually construct partial functions.
 
         Args:
-            executable_cmd: Callable used to construct the command. Must accept
+            command: Callable used to construct the command. Must accept
                 ``(parameters: Mapping[str, object], workdir: Path, ...)`` where any
                 additional arguments are keyword-only.
-            **kwargs: Keyword arguments to bind to ``executable_cmd``.
+            **kwargs: Keyword arguments to bind to ``command``.
 
         Returns:
-            A new ``ExternalQuantityComputer`` instance with the updated
-            command function.
+            A new computer containing the additional command step.
 
         Example:
             >>> from chemfit.external_computer import ExternalQuantityComputer
-            >>> computer = ExternalQuantityComputer(
-            ...    output_files=["out.txt"],
-            ...    output_parsers=[],
-            ...    base_working_directory="workdir"
-            ... )
-            >>> def write_input(parameters, workdir, *, template_path):
-            ...     ...
-            >>> computer2 = computer.with_presubmit(
-            ...     write_input,
-            ...     template_path="INCAR.template",
+            >>> computer = ExternalQuantityComputer(base_working_directory="workdir")
+            >>> def command(parameters, workdir, *, executable):
+            ...     return [executable, "input.dat"]
+            >>> computer2 = computer.with_cmd(
+            ...     command,
+            ...     executable="simulation",
             ... )
 
         Note:
-            Additional arguments must be keyword-only in ``executable_cmd``.
+            Additional arguments must be keyword-only in ``command``.
 
         """
 
+        bound_command = cast(
+            "CommandType[ParametersT]", functools.partial(command, **kwargs)
+        )
         new = copy.copy(self)
-        new.executable_cmd = cast(
-            "CommandType[ParametersT]", functools.partial(executable_cmd, **kwargs)
+        new._steps = (  # noqa: SLF001
+            *self._steps,
+            _CommandStep(bound_command),
         )
         return new
 
-    def build_cmd(self, parameters: ParametersT, ctx: EvaluateContext) -> list[str]:
-        """
-        Build the external command for the current evaluation.
-
-        Args:
-            parameters: Parameter dictionary for the current evaluation.
-            ctx: Evaluation context whose temporary working directory is
-                used when constructing the command.
-
-        Returns:
-            Command to execute, formatted for ``subprocess.run``.
-
-        """
-        self.executable_cmd = cast("CommandType[ParametersT]", self.executable_cmd)
-        return self.executable_cmd(parameters, ctx.temp.workdir)
-
-    def _compute(  # noqa: PLR0912, PLR0915
+    def _compute(
         self,
         parameters: ParametersT,
         ctx: EvaluateContext,
     ) -> QuantitiesT:
         """
-        Execute external command and parse parse its output files.
+        Execute an external workflow and parse its output files.
 
         This method implements the core logic:
 
         1. Create a temporary working directory.
-        2. Optionally run a pre-submit hook.
-        3. Build and execute the external command via ``subprocess.run``.
-        4. Wait until all configured output files exist (or timeout).
-        5. Run the configured output parsers and merge the resulting
+        2. Execute each registered hook or command in order.
+        3. Wait until all configured output files exist (or timeout).
+        4. Run the configured output parsers and merge the resulting
            quantity dictionaries.
-        6. Optionally delete the temporary working directory.
+        5. Optionally delete the temporary working directory.
 
         Args:
             parameters: Parameter dictionary for this evaluation.
             ctx: Evaluation context for this call. The temporary working
-                directory, resolved output file paths, and executed command
+                directory, resolved output file paths, and executed commands
                 are stored in ``ctx.temp``.
 
         Returns:
@@ -367,7 +458,7 @@ class ExternalQuantityComputer(
             - Creates and stores ``ctx.temp.workdir``.
             - Stores the resolved output file paths in
             ``ctx.temp.output_files``.
-            - Stores the executed command in ``ctx.temp.cmd``.
+            - Stores executed commands in ``ctx.temp.commands``.
             - Creates and optionally deletes a temporary working directory.
             - Runs an external subprocess.
 
@@ -387,8 +478,10 @@ class ExternalQuantityComputer(
         or any *queueing* submission command typically return **immediately** from
         ``subprocess.run``. The actual compute job may start minutes or hours later.
 
-        - The `wait_timeout` starts counting **as soon as `subprocess.run` returns**,
-        *not* when the job begins executing.
+        - Later execution steps run once the submission command itself returns;
+          ChemFit does not wait for the submitted job between steps.
+        - Output polling and `wait_timeout` begin after the complete execution
+          pipeline finishes, *not* when a submitted job begins executing.
         - This almost always causes a timeout if users submit through a scheduler.
 
         **Recommended workaround:**
@@ -399,16 +492,16 @@ class ExternalQuantityComputer(
                 # at end of your SLURM job script
                 touch task.done
 
-        - Then configure `output_files=[Path("task.done")]` **in addition to** your
-        real output files.
+        - Then configure ``wait_for("task.done")`` in addition to the files
+        registered with output parsers.
 
         This ensures `ExternalQuantityComputer` waits for job completion rather than
         the output file prematurely appearing or remaining absent.
 
         **2. Timeout awareness**
 
-        The `wait_timeout` applies to the *combined* waiting time after the external
-        command returns.
+        The `wait_timeout` applies to the *combined* waiting time after all
+        execution steps finish.
 
         - Use very large timeouts (or None) or a reliable completion flag for scheduler-based workloads.
         - If timeout is too small, you will get a `TimeoutError`.
@@ -428,9 +521,8 @@ class ExternalQuantityComputer(
 
         **4. Crash diagnostics and dump files**
 
-        If the external command fails (i.e. ``subprocess.run`` raises
-        ``subprocess.CalledProcessError``), this class can optionally write a
-        diagnostic dump file to help with debugging.
+        If any execution step, output wait, or parser fails, this class can
+        optionally write a diagnostic dump file to help with debugging.
 
         When ``write_dump_file_after_crash=True``, a dump file is written to the
         base working directory using the name of the temporary work directory
@@ -444,8 +536,11 @@ class ExternalQuantityComputer(
 
         The dump file contains diagnostic information including:
 
-        - the captured ``stderr`` of the external program (if available)
-        - the captured ``stdout`` of the external program (if available)
+        - the final exception;
+        - the current execution step and commands executed so far;
+        - captured subprocess diagnostics when the final exception is a
+          ``subprocess.CalledProcessError``;
+        - any recoverable command failure recorded before a later failure;
         - the contents of ``ctx.temp`` at the time of failure
 
         This information often provides enough context to diagnose failures
@@ -466,106 +561,28 @@ class ExternalQuantityComputer(
 
         """
 
-        if self.executable_cmd is None:
-            msg = "No executable command has been attached. Supply it either in the constructor or use the `with_cmd` method."
-            raise Exception(msg)
-
         # Create a temporary working directory
         ctx.temp.workdir = self.create_temp_workdir()
 
         try:
-            ctx.temp.output_files = [ctx.temp.workdir / o for o in self.output_files]
+            watched_files = self._watched_files()
+            ctx.temp.output_files = [
+                ctx.temp.workdir / output_file for output_file in watched_files
+            ]
+            self._execute_steps(parameters, ctx)
 
-            if self.presubmit_hook is not None:
-                self.presubmit_hook(parameters, ctx.temp.workdir)
-
-            cmd = self.build_cmd(parameters, ctx)
-
-            ctx.temp.cmd = cmd
-
-            # Spin up the watcher BEFORE running the command to avoid race conditions
-            ready = threading.Event()
-            stop = threading.Event()
-            watcher = threading.Thread(
-                target=self._file_watch_loop,
-                args=(ctx.temp.output_files, ready, stop),
-                daemon=True,
-            )
-            watcher.start()
-
-            try:
-                # Run the external program (raises on non-zero exit)
-                subprocess.run(  # noqa: S603
-                    cmd,  # type: ignore
-                    check=True,
-                    cwd=ctx.temp.workdir,
-                    **self.subprocess_run_args,
-                )  # type: ignore
-            except subprocess.CalledProcessError as e:
-                msg = (
-                    f"Exception in `subprocess.run` of ExternalQuantityComputer.\n"
-                    f"  ctx.temp = {ctx.temp}"
-                )
-
-                if e.stderr is not None:
-                    stderr = _subprocess_output_to_text(e.stderr)
-                    msg += f"  stderr (if captured) = {stderr}\n"
-
-                # Try to write a dump file
-                if self.write_dump_file_after_crash:
-                    dump_path = (
-                        self.base_working_directory / ctx.temp.workdir.name
-                    ).with_suffix(".dump")
-                    try:
-                        with dump_path.open("w") as f:
-                            if e.stderr is not None:
-                                f.write("Stderr:\n")
-                                f.write(_subprocess_output_to_text(e.stderr))
-                            if e.stdout is not None:
-                                f.write("Stdout:\n")
-                                f.write(_subprocess_output_to_text(e.stdout))
-                            f.write("ctx.temp:\n")
-                            f.write(f"{ctx.temp}")
-                        msg += f"\nWrote dump file to `{dump_path}`."
-                    except Exception as exc_dump:
-                        msg += f"\nCould not write dump file to `{dump_path}`, because of {exc_dump}."
-
-                msg += f"\n`{self.try_parsing_after_exception = }`."
-
-                if self.try_parsing_after_exception:
-                    msg += "\nWill attempt to parse output files."
-                    logger.warning(msg)
-                else:
-                    stop.set()
-                    watcher.join(timeout=1)
-                    raise Exception(msg) from e
-
-            # Block here until file appears (or timeout)
-            # The main reason to implement this extra check is to eventually support remote execution, e.g. on clusters
-            # A script submitted with `sbatch` for example would immediately return from `subprocess.run`, but the necessary output files
-            # would not be present until the submitted script has actually run on one of the compute nodes.
-            # Therefore, waiting until the output files are actually present is a valid strategy.
-            # Of course, we might still run into problems in the case of output files which get continuously appended to.
-            # These could be present already, but not complete and thus fool us into thinking that the script has completed it's run.
-            if all(o.exists() for o in ctx.temp.output_files):
-                # We do one immediate check on the main thread
-                stop.set()
-            else:
-                ok = ready.wait(timeout=self.wait_timeout)
-                stop.set()
-                watcher.join(timeout=1)
-
-                if not ok:
-                    err_message = f"Timed out waiting for {ctx.temp.output_files}"
-                    raise TimeoutError(err_message)
+            self._wait_for_outputs(ctx.temp.output_files)
 
             res: dict[str, Any] = {}
-            for o in self.output_parsers:
+            for binding in self._parser_bindings:
+                parser_inputs = tuple(
+                    ctx.temp.workdir / output_file for output_file in binding.files
+                )
                 success = False
                 # First we perform the retries while silencing all exceptions
                 for _ in range(self.retries_output_parsing):
                     try:
-                        res.update(o(ctx.temp.output_files))
+                        res.update(binding.parser(*parser_inputs))
                         success = True
                         break
                     except Exception as e:  # noqa: F841, S112
@@ -574,13 +591,22 @@ class ExternalQuantityComputer(
                 # If we have not succeeded so far, the (retries + 1)th (aka the last)
                 # attempt is made without a try block, so that we get to handle the actual exception
                 if not success:
-                    res.update(o(ctx.temp.output_files))
+                    res.update(binding.parser(*parser_inputs))
 
         except Exception as e:
             msg = (
                 "Exception in `_compute` of ExternalQuantityComputer.\n"
                 f"  ctx.temp = {ctx.temp}"
             )
+
+            if self.write_dump_file_after_crash:
+                try:
+                    dump_path = self._write_crash_dump(ctx, e)
+                    msg += f"\nWrote dump file to `{dump_path}`."
+                except Exception as dump_exception:
+                    msg += (
+                        f"\nCould not write a crash dump because of {dump_exception}."
+                    )
 
             if self.delete_temp_workdirs and not self.keep_temp_workdir_after_crash:
                 shutil.rmtree(ctx.temp.workdir)
@@ -595,17 +621,3 @@ class ExternalQuantityComputer(
                 shutil.rmtree(ctx.temp.workdir)
 
         return cast("QuantitiesT", res)
-
-    def _file_watch_loop(
-        self,
-        output_files: Iterable[Path],
-        ready: threading.Event,
-        stop: threading.Event,
-    ) -> None:
-        # check if files are there
-        while not stop.is_set():
-            files_created = all(o.exists() for o in output_files)
-            if files_created:
-                ready.set()
-                return
-            time.sleep(self.poll_interval)

@@ -185,21 +185,22 @@ if TYPE_CHECKING:
 
     # External computers connect the command callbacks' parameter type to
     # the parsers' common output type.
-    def parse_outputs(_output_files: list[Path]) -> Quantities:
+    def parse_outputs(_output_file: Path) -> Quantities:
         return {"value": 1.0}
 
     def make_command(_parameters: Parameters, _workdir: Path) -> list[str]:
         return ["true"]
 
-    def presubmit(_parameters: Parameters, _workdir: Path) -> None:
+    def prepare_input(_parameters: Parameters, _workdir: Path) -> None:
         return None
 
-    external = ExternalQuantityComputer(
-        output_files=["result.txt"],
-        output_parsers=parse_outputs,
-        base_working_directory="work",
-        executable_cmd=make_command,
-        presubmit_hook=presubmit,
+    external = (
+        ExternalQuantityComputer[Parameters, Quantities](
+            base_working_directory="work",
+        )
+        .with_hook(prepare_input)
+        .with_cmd(make_command)
+        .with_parser(parse_outputs, "result.txt")
     )
     assert_type(
         external,
