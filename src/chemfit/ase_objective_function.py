@@ -218,13 +218,8 @@ class ASEComputer(
         for setup in self.atoms_setups:
             check_protocol(setup, AtomsSetup)
 
-        if quantity_processors is None:
-            self.quantity_processors = cast(
-                "tuple[QuantityProcessor[QuantitiesT_co], ...]",
-                (DefaultQuantityProcessor(),),
-            )
-        else:
-            self.quantity_processors = tuple(quantity_processors)
+        self.quantity_processors = tuple(quantity_processors or ())
+
         for processor in self.quantity_processors:
             check_protocol(processor, QuantityProcessor)
 
@@ -394,6 +389,13 @@ class ASEComputer(
 
         assert atoms.calc is not None
         quantities: dict[str, Any] = {}
-        for processor in self.quantity_processors:
-            quantities.update(processor(atoms.calc, atoms, ctx))
+
+        if len(self.quantity_processors) == 0:
+            processors = [DefaultQuantityProcessor()]
+        else:
+            processors = self.quantity_processors
+
+        for proc in processors:
+            quantities.update(proc(atoms.calc, atoms, ctx))
+
         return cast("QuantitiesT_co", quantities)
