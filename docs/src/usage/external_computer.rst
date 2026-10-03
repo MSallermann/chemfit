@@ -1,16 +1,16 @@
-.. _file_based:
+.. _external_computer:
 
-===============================
-File-Based Quantity Computers
-===============================
+===========================
+External Quantity Computers
+===========================
 
-The :py:class:`~chemfit.file_based_computer.FileBasedQuantityComputer`
+The :py:class:`~chemfit.external_computer.ExternalQuantityComputer`
 runs an external command in a temporary working directory and parses the
 resulting output files into a quantity dictionary.
 
 This is the standard way to integrate external simulation codes into ChemFit.
 
-A file-based computer is constructed from three pieces:
+An external computer is constructed from three pieces:
 
 - a function that builds the command
 - a list of expected output files
@@ -29,7 +29,7 @@ Consider an external script with a command-line interface, which does the follow
 
     The full script can be found in the unit tests at `<https://github.com/MSallermann/chemfit/tests/input/square_function.py>`_.
 
-In this example we will use the :py:class:`~chemfit.file_based_computer.FileBasedQuantityComputer` to determine the
+In this example we will use the :py:class:`~chemfit.external_computer.ExternalQuantityComputer` to determine the
 pre-factor :math:`A`.
 
 Before we can start we should define how our external command can be called.
@@ -44,7 +44,7 @@ relative to it as well.
 .. note::
 
     The extra arguments, ``script_file`` and ``output_file``, need to be bound. In the end the computer will accept only a function
-    whose only free arguments are the parameters and the working directory. In this example we will use the :py:meth:`~chemfit.file_based_computer.FileBasedQuantityComputer.with_cmd`
+    whose only free arguments are the parameters and the working directory. In this example we will use the :py:meth:`~chemfit.external_computer.ExternalQuantityComputer.with_cmd`
     utility method to help us out with this.
 
 .. code-block:: python
@@ -75,7 +75,7 @@ For our example, we could define such a parser like so:
     As you can see :py:func:`my_output_parser` *has* to accept a list of output files.
     In this simple example, we do not have to worry about this, since we know there will only ever be one output file.
 
-    The reason for the list is that the :py:class:`~chemfit.file_based_computer.FileBasedQuantityComputer` may specify multiple output files and, in fact, multiple parsers.
+    The reason for the list is that the :py:class:`~chemfit.external_computer.ExternalQuantityComputer` may specify multiple output files and, in fact, multiple parsers.
     All output files are passed to all parsers, and their outputs are merged.
 
 We will also need the following loss function
@@ -92,7 +92,7 @@ Now we're ready to wire everything up:
 .. code-block:: python
 
     ob = (
-        FileBasedQuantityComputer(
+        ExternalQuantityComputer(
             output_files=["output.txt"],
             output_parsers=[my_output_parser],
             base_working_directory=".",
@@ -210,7 +210,7 @@ This can then be attached to the computer:
 .. code-block:: python
 
    computer = (
-       FileBasedQuantityComputer(
+       ExternalQuantityComputer(
            output_files=[Path("output.txt")],
            output_parsers=[my_output_parser],
        )
@@ -276,7 +276,7 @@ For debugging, you can keep them:
 
 .. code-block:: python
 
-   computer = FileBasedQuantityComputer(
+   computer = ExternalQuantityComputer(
        ...,
        keep_temp_workdir_after_crash=True,
    )
@@ -285,7 +285,7 @@ To inspect failures, you can also enable dump files:
 
 .. code-block:: python
 
-   computer = FileBasedQuantityComputer(
+   computer = ExternalQuantityComputer(
        ...,
        write_dump_file_after_crash=True,
    )
@@ -301,7 +301,7 @@ after :py:func:`subprocess.run` raises
 
 .. code-block:: python
 
-   computer = FileBasedQuantityComputer(
+   computer = ExternalQuantityComputer(
        ...,
        try_parsing_after_exception=True,
    )
@@ -342,7 +342,7 @@ Subclassing
 -----------
 
 In most cases, constructing a
-:py:class:`~chemfit.file_based_computer.FileBasedQuantityComputer`
+:py:class:`~chemfit.external_computer.ExternalQuantityComputer`
 with callables is sufficient.
 
 Subclassing is useful when the execution flow itself needs to change.
@@ -351,7 +351,7 @@ A typical example is adding a scheduler wrapper such as ``srun``:
 
 .. code-block:: python
 
-   class SrunComputer(FileBasedQuantityComputer):
+   class SrunComputer(ExternalQuantityComputer):
        def build_cmd(self, parameters, ctx):
            base_cmd = super().build_cmd(parameters, ctx)
            return ["srun", *base_cmd]
@@ -362,7 +362,7 @@ This pattern is used when command construction depends on runtime context.
 Summary
 -------
 
-:py:class:`~chemfit.file_based_computer.FileBasedQuantityComputer`
+:py:class:`~chemfit.external_computer.ExternalQuantityComputer`
 provides a structured way to:
 
 - run external programs

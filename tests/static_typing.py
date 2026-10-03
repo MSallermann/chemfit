@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     )
     from chemfit.async_helpers import async_eval_many, async_eval_one
     from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.file_based_computer import FileBasedQuantityComputer
+    from chemfit.external_computer import ExternalQuantityComputer
     from chemfit.fitter import Fitter
     from chemfit.tree_schedule import SerialTreeSchedule, SerialTreeScheduler
     from chemfit.wrap_funcs import (
@@ -183,7 +183,7 @@ if TYPE_CHECKING:
         [wrapped_objective, incompatible_objective]  # pyright: ignore[reportArgumentType]
     )
 
-    # File-based computers connect the command callbacks' parameter type to
+    # External computers connect the command callbacks' parameter type to
     # the parsers' common output type.
     def parse_outputs(_output_files: list[Path]) -> Quantities:
         return {"value": 1.0}
@@ -194,7 +194,7 @@ if TYPE_CHECKING:
     def presubmit(_parameters: Parameters, _workdir: Path) -> None:
         return None
 
-    external = FileBasedQuantityComputer(
+    external = ExternalQuantityComputer(
         output_files=["result.txt"],
         output_parsers=parse_outputs,
         base_working_directory="work",
@@ -203,7 +203,7 @@ if TYPE_CHECKING:
     )
     assert_type(
         external,
-        FileBasedQuantityComputer[Parameters, Quantities],
+        ExternalQuantityComputer[Parameters, Quantities],
     )
     external({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
