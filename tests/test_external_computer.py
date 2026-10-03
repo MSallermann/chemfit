@@ -12,7 +12,7 @@ import pytest
 from chemfit.abstract_objective_function import (
     EvaluateContext,
 )
-from chemfit.file_based_computer import FileBasedQuantityComputer
+from chemfit.external_computer import ExternalQuantityComputer
 from chemfit.fitter import Fitter
 
 if TYPE_CHECKING:
@@ -37,7 +37,7 @@ def loss_function(quantities: dict[str, Any], ref_y: Iterable[float]) -> float:
     return np.sum(errors)
 
 
-def test_squares_file_based():
+def test_squares_external():
     test_dir = Path(__file__).parent
 
     ref_file = test_dir / Path("input/ref_data.txt")
@@ -45,7 +45,7 @@ def test_squares_file_based():
     data = np.loadtxt(ref_file)
     ref_quantities = {"y": data[:, 0], "x": data[:, 1]}
 
-    # Output file created by the FileBasedQuantityComputer
+    # Output file created by the ExternalQuantityComputer
     output_file = Path("output/output_square_function.txt")
 
     # Script that creates the output file
@@ -71,11 +71,11 @@ def test_squares_file_based():
     output_parser = MyOutputParser()
 
     ob_func = (
-        FileBasedQuantityComputer(
+        ExternalQuantityComputer(
             output_files=[output_file],
             output_parsers=output_parser,
             poll_interval=0.5,
-            base_working_directory=test_dir / ".filebased_workdir",
+            base_working_directory=test_dir / ".external_workdir",
             subprocess_run_args={"capture_output": True},
             delete_temp_workdirs=True,
         )
@@ -116,7 +116,7 @@ def test_try_parsing_after_subprocess_exception(
         return {"result": int(output_files[0].read_text(encoding="utf-8"))}
 
     monkeypatch.setattr(subprocess, "run", failing_run)
-    computer = FileBasedQuantityComputer(
+    computer = ExternalQuantityComputer(
         output_files=[output_file],
         output_parsers=parse_output,
         base_working_directory=tmp_path,
@@ -157,7 +157,7 @@ def test_subprocess_exception_does_not_parse_by_default(
         return {"result": 42}
 
     monkeypatch.setattr(subprocess, "run", failing_run)
-    computer = FileBasedQuantityComputer(
+    computer = ExternalQuantityComputer(
         output_files=[output_file],
         output_parsers=parse_output,
         base_working_directory=tmp_path,
@@ -180,6 +180,6 @@ def test_subprocess_exception_does_not_parse_by_default(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(filename="test_file_based.log")
+    logging.basicConfig(filename="test_external.log")
 
-    test_squares_file_based()
+    test_squares_external()

@@ -90,7 +90,7 @@ class PreSubmitHook(Protocol[ParametersT_contra]):
 CommandType = Callable[[ParametersT, Path], list[str]]
 
 
-class FileBasedQuantityComputer(
+class ExternalQuantityComputer(
     QuantityComputer[ParametersT, QuantitiesT], Generic[ParametersT, QuantitiesT]
 ):
     def __init__(
@@ -109,7 +109,7 @@ class FileBasedQuantityComputer(
         try_parsing_after_exception: bool = False,
     ):
         """
-        Initialize a file-based quantity computer.
+        Initialize an external quantity computer.
 
         This quantity computer evaluates parameters by creating a temporary
         working directory, executing an external command, waiting for the
@@ -241,12 +241,12 @@ class FileBasedQuantityComputer(
             **kwargs: Keyword arguments to bind to ``presubmit``.
 
         Returns:
-            A new ``FileBasedQuantityComputer`` instance with the updated
+            A new ``ExternalQuantityComputer`` instance with the updated
             presubmit hook.
 
         Example:
-            >>> from chemfit.file_based_computer import FileBasedQuantityComputer
-            >>> computer = FileBasedQuantityComputer(
+            >>> from chemfit.external_computer import ExternalQuantityComputer
+            >>> computer = ExternalQuantityComputer(
             ...    output_files=["out.txt"],
             ...    output_parsers=[],
             ...    base_working_directory="workdir"
@@ -292,12 +292,12 @@ class FileBasedQuantityComputer(
             **kwargs: Keyword arguments to bind to ``executable_cmd``.
 
         Returns:
-            A new ``FileBasedQuantityComputer`` instance with the updated
+            A new ``ExternalQuantityComputer`` instance with the updated
             command function.
 
         Example:
-            >>> from chemfit.file_based_computer import FileBasedQuantityComputer
-            >>> computer = FileBasedQuantityComputer(
+            >>> from chemfit.external_computer import ExternalQuantityComputer
+            >>> computer = ExternalQuantityComputer(
             ...    output_files=["out.txt"],
             ...    output_parsers=[],
             ...    base_working_directory="workdir"
@@ -402,7 +402,7 @@ class FileBasedQuantityComputer(
         - Then configure `output_files=[Path("task.done")]` **in addition to** your
         real output files.
 
-        This ensures `FileBasedQuantityComputer` waits for job completion rather than
+        This ensures `ExternalQuantityComputer` waits for job completion rather than
         the output file prematurely appearing or remaining absent.
 
         **2. Timeout awareness**
@@ -503,7 +503,7 @@ class FileBasedQuantityComputer(
                 )  # type: ignore
             except subprocess.CalledProcessError as e:
                 msg = (
-                    f"Exception in `subprocess.run` of FileBasedQuantityComputer.\n"
+                    f"Exception in `subprocess.run` of ExternalQuantityComputer.\n"
                     f"  ctx.temp = {ctx.temp}"
                 )
 
@@ -578,7 +578,7 @@ class FileBasedQuantityComputer(
 
         except Exception as e:
             msg = (
-                "Exception in `_compute` of FileBasedQuantityComputer.\n"
+                "Exception in `_compute` of ExternalQuantityComputer.\n"
                 f"  ctx.temp = {ctx.temp}"
             )
 

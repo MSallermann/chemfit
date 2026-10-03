@@ -11,7 +11,7 @@ ChemFit
 
 It provides composable building blocks for constructing objective functions from many independent terms, computing intermediate quantities using simulation workflows, and optimizing model parameters. A small set of core abstractions makes it straightforward to implement custom objective functions and to parallelize their evaluation across objective terms and/or trial parameters.
 
-Out of the box, ChemFit includes integrations for the calculators defined in the Atomic Simulation Environment (ASE) as well as file-based simulation pipelines.
+Out of the box, ChemFit includes integrations for the calculators defined in the Atomic Simulation Environment (ASE) as well as external simulation pipelines.
 
 
 **Highlights**:
@@ -40,7 +40,7 @@ Multiple such objective terms can then be combined using
 and optimized with :class:`~chemfit.fitter.Fitter`.
 
 In practical workflows, the quantity computation may be performed by an
-ASE calculator, a file-based simulation pipeline, or custom Python code.
+ASE calculator, an external simulation pipeline, or custom Python code.
 
 The following minimal example simply defines a loss function
 
@@ -52,9 +52,9 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
 .. testcode::
 
-    from chemfit.wrap_funcs import to_quantity_computer
+    from chemfit.wrap_funcs import quantity
 
-    @to_quantity_computer()
+    @quantity()
     def computer(params):
         return {"x2": params["x"] ** 2, "y2": params["y"] ** 2}
 
@@ -72,7 +72,7 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
     9.0
 
 The quantity computer is defined via a simple Python function, mapping a :class:`dict` of parameters to a :class:`dict` of quantities.
-The :func:`to_quantity_computer` decorator turns this function into a :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` instance.
+The :func:`quantity` decorator turns this function into a :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` instance.
 
 The :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
 method combines a quantity computer with a loss function to form a complete objective.
@@ -110,10 +110,10 @@ where :math:`f` is an external parameter and then we combine them into an overal
 
 .. testcode::
 
-    from chemfit.wrap_funcs import to_quantity_computer
+    from chemfit.wrap_funcs import quantity
     from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-    @to_quantity_computer()
+    @quantity()
     def computer(params, f):
         return {"fx2": f * params["x"] ** 2, "fy2": f * params["y"] ** 2}
 
@@ -209,7 +209,7 @@ Contents
    src/usage/objective_hooks.rst
    src/usage/parallel_execution.rst
    src/usage/ase_objective_function_api.rst
-   src/usage/text_file_based_computer.rst
+   src/usage/external_computer.rst
    src/usage/combined_objective_function.rst
    src/usage/mpi.rst
    src/usage/example_scme.rst
