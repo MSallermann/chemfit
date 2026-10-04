@@ -81,6 +81,53 @@ def test_gather_meta_data():
     assert meta_data == EXPECTED
 
 
+def test_with_meta_is_copy_on_write_and_merges() -> None:
+    plain_objective = MyFunctor(1).with_meta(kind="custom")
+    plain_ctx = EvaluateContext()
+    plain_objective(INITIAL_PARAMS, plain_ctx)
+    assert plain_ctx.meta == {"kind": "custom", "last_value": 1.0}
+
+    objective_base = a
+    objective_tagged = objective_base.with_meta(dataset="training")
+    objective_retagged = objective_tagged.with_meta(dataset="validation", split=2)
+
+    assert objective_base.static_meta_data == {}
+    assert objective_tagged.static_meta_data == {"dataset": "training"}
+
+    objective_ctx = EvaluateContext()
+    objective_retagged(INITIAL_PARAMS, objective_ctx)
+    assert objective_ctx.meta == {"dataset": "validation", "split": 2}
+
+    computer_base = quants
+    computer_tagged = computer_base.with_meta(source="simulation")
+    computer_retagged = computer_tagged.with_meta(source="cache", replica=3)
+
+    assert computer_base.static_meta_data == {}
+    assert computer_tagged.static_meta_data == {"source": "simulation"}
+
+    computer_ctx = EvaluateContext()
+    computer_retagged(INITIAL_PARAMS, computer_ctx)
+    assert computer_ctx.meta == {"source": "cache", "replica": 3}
+
+
+def test_composed_static_metadata_precedence_in_child_context() -> None:
+    computer = quants.with_meta(dataset="liquid", owner="quantity")
+    term = computer.with_loss(loss).with_meta(
+        observable="density",
+        owner="objective",
+    )
+
+    ctx = EvaluateContext()
+    CombinedObjectiveFunction([term])(INITIAL_PARAMS, ctx)
+
+    child_meta = ctx.meta["children"][0]["meta"]
+    assert child_meta == {
+        "dataset": "liquid",
+        "observable": "density",
+        "owner": "objective",
+    }
+
+
 def test_gather_meta_data_mpi():
     mpi_scheduler = pytest.importorskip(
         "chemfit.mpi_scheduler", reason="Missing mpi4py"

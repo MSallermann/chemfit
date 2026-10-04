@@ -45,6 +45,10 @@ if TYPE_CHECKING:
 
     assert_type(wrapped_objective, WrappedObjectiveFunctor[Parameters])
     assert_type(wrapped_objective.resources, ResourceRequest)
+    assert_type(
+        wrapped_objective.with_meta(dataset="training"),
+        WrappedObjectiveFunctor[Parameters],
+    )
     wrapped_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     root_leaf_schedule = SerialTreeScheduler().prepare(wrapped_objective)
@@ -108,12 +112,20 @@ if TYPE_CHECKING:
         WrappedQuantityComputer[Parameters, Quantities],
     )
     assert_type(compute_quantities.resources, ResourceRequest)
+    assert_type(
+        compute_quantities.with_meta(dataset="training"),
+        WrappedQuantityComputer[Parameters, Quantities],
+    )
     compute_quantities({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     bound_quantities = compute_quantities.bind(scale=2.0)
     quantity_objective = bound_quantities.with_loss(loss, target=1.0)
     assert_type(
         quantity_objective,
+        QuantityComputerObjectiveFunction[Parameters, Quantities],
+    )
+    assert_type(
+        quantity_objective.with_meta(observable="x2"),
         QuantityComputerObjectiveFunction[Parameters, Quantities],
     )
     assert_type(quantity_objective.resources, ResourceRequest)

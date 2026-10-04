@@ -84,13 +84,15 @@ class WrappedObjectiveFunctor(
             pre-applied.
 
         """
-        return type(self)(
+        new = type(self)(
             func=self.func,
             pass_ctx=self.pass_ctx,
             func_args=args,
             func_kwargs=kwargs,
             resources=self.resources,
         )
+        new.static_meta_data = self.static_meta_data.copy()
+        return new
 
     def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
@@ -215,13 +217,15 @@ class WrappedQuantityComputer(
             pre-applied.
 
         """
-        return type(self)(
+        new = type(self)(
             func=self.func,
             pass_ctx=self.pass_ctx,
             func_args=args,
             func_kwargs=kwargs,
             resources=self.resources,
         )
+        new.static_meta_data = self.static_meta_data.copy()
+        return new
 
     def _compute(
         self,

@@ -187,11 +187,36 @@ Typical uses include:
 Metadata is propagated upward from child contexts to the parent context,
 allowing you to inspect the full evaluation after it completes.
 
-In addition, :class:`~chemfit.abstract_objective_function.QuantityComputer`
-instances can define static metadata via their ``static_meta_data`` attribute.
-This information is automatically merged into the context's ``meta`` dictionary
-during evaluation, allowing components to annotate results with descriptive or
-structural information.
+Static metadata belongs to a reusable computation or objective definition. Add
+it fluently with
+:py:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_meta` or
+:py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.with_meta`:
+
+.. code-block:: python
+
+   term = (
+       chemfit.ase_quantity(atoms)
+       .with_meta(dataset="liquid", temperature=298)
+       .with_calculator(make_calculator)
+       .with_loss(loss, target=0.997)
+       .with_meta(observable="density")
+   )
+
+``with_meta()`` returns a shallow configured copy, which makes it safe to branch
+from one base definition. Quantity-computer metadata generally describes the
+computation or its provenance, while objective metadata describes the fitting
+term. Both are merged into the evaluation's ``ctx.meta`` dictionary.
+
+Metadata precedence follows the evaluation lifecycle: existing context
+metadata is present first, quantity-computer metadata is applied next, and
+objective metadata is applied last. Objective metadata therefore wins if the
+computer and objective use the same key.
+
+Values discovered during a particular evaluation are dynamic metadata and
+should still be written directly to ``ctx.meta`` by the evaluating callable or
+a hook. The ``static_meta_data`` dictionaries remain available as underlying
+storage for backward compatibility, but ``with_meta()`` is the preferred
+configuration interface.
 
 -------------------------
 
