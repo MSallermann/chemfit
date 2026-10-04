@@ -61,13 +61,40 @@ class _ParserBinding(Generic[QuantitiesT]):
     files: tuple[Path, ...]
 
 
+def _is_safe_relative_path(path: str | Path) -> bool:
+    path = Path(path)
+
+    if path.is_absolute():
+        return False
+
+    depth = 0
+
+    for part in path.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            depth -= 1
+            if depth < 0:
+                return False
+        else:
+            depth += 1
+
+    return True
+
+
 def _relative_paths(output_files: tuple[Path | str, ...]) -> tuple[Path, ...]:
-    """Convert str to Path and make sure that they are relative."""
+    """Convert str to Path and make sure that they are relative to the working directory."""
 
     files = tuple(Path(output_file) for output_file in output_files)
+
     if any(output_file.is_absolute() for output_file in files):
         msg = "Output paths must be relative to the evaluation working directory."
         raise ValueError(msg)
+
+    if not all(_is_safe_relative_path(f) for f in files):
+        msg = "Relative path is not safe because it leaves the current directory (too many `..`)."
+        raise ValueError(msg)
+
     return files
 
 
