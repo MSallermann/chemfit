@@ -97,5 +97,8 @@ print(result.best_parameters, result.best_loss)
 ```
 
 Each distance becomes an independent objective term with its own evaluation
-context. `chemfit.fit` evaluates up to six parameter candidates concurrently
-and returns both the optimizer recommendation and the evaluation contexts.
+context. `workers=6` lets Nevergrad request up to six candidates per batch and,
+by default, gives the built-in thread scheduler six concurrent execution slots
+shared by all objective terms in that batch. Set `execution_workers` to control
+those execution slots independently. `chemfit.fit` returns both the optimizer
+recommendation and the evaluation contexts.

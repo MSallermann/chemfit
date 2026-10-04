@@ -162,6 +162,7 @@ def fit(
     *,
     budget: int,
     workers: int = 1,
+    execution_workers: int | None = None,
     bounds: Mapping[str, Any] | None = None,
     optimizer: str = "NgIohTuned",
     executor: Executor | None = None,
@@ -169,6 +170,17 @@ def fit(
     callbacks: Sequence[tuple[CallbackT, int]] | None = None,
     parametrization: Mapping[str, object] | None = None,
 ) -> FitResult[ParamsT]:
+    """
+    Fit ``objective`` with Nevergrad.
+
+    ``workers`` controls the number of candidates Nevergrad asks for and the
+    maximum candidate batch size. ``execution_workers`` controls the maximum
+    number of objective leaf tasks run concurrently by the built-in thread
+    scheduler and defaults to ``workers``. When ``executor`` or ``scheduler``
+    is supplied, that object controls execution concurrency and
+    ``execution_workers`` must be omitted.
+    """
+
     if budget < 1:
         msg = "`budget` must be at least 1."
         raise ValueError(msg)
@@ -177,20 +189,33 @@ def fit(
         msg = "`workers` must be at least 1."
         raise ValueError(msg)
 
+    if execution_workers is not None and execution_workers < 1:
+        msg = "`execution_workers` must be at least 1."
+        raise ValueError(msg)
+
     if executor is not None and scheduler is not None:
         msg = "Specify only one of `executor` or `scheduler`"
+        raise ValueError(msg)
+
+    if execution_workers is not None and (
+        executor is not None or scheduler is not None
+    ):
+        msg = "`execution_workers` cannot be combined with `executor` or `scheduler`."
         raise ValueError(msg)
 
     if scheduler is None and executor is not None:
         scheduler = ExecutorTreeScheduler(executor=executor)
 
     if scheduler is None:
-        if workers == 1:
+        effective_execution_workers = (
+            workers if execution_workers is None else execution_workers
+        )
+        if effective_execution_workers == 1:
             scheduler = SerialScheduler()
         else:
             scheduler = ExecutorTreeScheduler(
                 executor_factory=lambda: ThreadPoolExecutor(
-                    max_workers=max(32, workers)
+                    max_workers=effective_execution_workers
                 )
             )
 
