@@ -55,7 +55,7 @@ objective = chemfit.combine(
     for distance, target in reference_energies.items()
 )
 
-result = chemfit.fit(
+result = chemfit.fit_nevergrad(
     objective,
     initial={"epsilon": 0.7},
     bounds={"epsilon": (0.1, 2.0)},
@@ -67,7 +67,7 @@ print(result.best_parameters)
 
 Each ASE calculation becomes an independent objective term, `with_loss()`
 turns its energy into a fitting loss, and `chemfit.combine()` joins the terms.
-`chemfit.fit()` optimizes the parameter mapping and returns a `FitResult`
+`chemfit.fit_nevergrad()` optimizes the parameter mapping and returns a `FitResult`
 with `best_parameters`, `best_loss`, the optimizer recommendation, and the
 evaluation contexts.
 

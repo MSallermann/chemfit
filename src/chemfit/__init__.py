@@ -1,7 +1,13 @@
 """ChemFit: composable objective functions and parameter fitting."""
 
 from chemfit.abstract_objective_function import EvaluateContext
-from chemfit.api import ase_quantity, combine, evaluate_many, external_quantity, fit
+from chemfit.api import (
+    ase_quantity,
+    combine,
+    evaluate_many,
+    external_quantity,
+    fit_nevergrad,
+)
 from chemfit.combined_objective_function import (
     mean_reducer,
     nan_exception_handler,
@@ -34,7 +40,7 @@ __all__ = [
     "combine",
     "evaluate_many",
     "external_quantity",
-    "fit",
+    "fit_nevergrad",
     "log_progress",
     "mean_reducer",
     "nan_exception_handler",

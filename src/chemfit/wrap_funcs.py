@@ -10,7 +10,6 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     ObjectiveFunctor,
     QuantityComputer,
-    ResourceRequest,
 )
 
 # These mirror the input/output directions of the abstract interfaces:
@@ -35,7 +34,6 @@ class WrappedObjectiveFunctor(
         pass_ctx: bool = False,
         func_args: tuple[Any, ...] | None = None,
         func_kwargs: dict[str, Any] | None = None,
-        resources: ResourceRequest | None = None,
     ):
         """
         Initialize a wrapped objective functor.
@@ -46,14 +44,11 @@ class WrappedObjectiveFunctor(
                 ``parameters`` and ``ctx``.
             pass_ctx: If ``True``, call ``func(parameters, ctx)``. If
                 ``False``, call ``func(parameters)``.
-            resources: Static resources required for one evaluation.
 
         """
         super().__init__()
         self.func = func
         self.pass_ctx = pass_ctx
-        if resources is not None:
-            self.resources = resources
 
         if func_args is None:
             self.func_args = ()
@@ -91,7 +86,6 @@ class WrappedObjectiveFunctor(
             pass_ctx=self.pass_ctx,
             func_args=args,
             func_kwargs=kwargs,
-            resources=self.resources,
         )
         new.static_meta_data = self.static_meta_data.copy()
         new.pre_eval_hooks = self.pre_eval_hooks.copy()
@@ -126,7 +120,6 @@ class WrappedObjectiveFunctor(
 def objective(
     *,
     pass_ctx: bool = False,
-    resources: ResourceRequest | None = None,
 ) -> Callable[
     [WrappableObjFunction[ParametersT_contra]],
     WrappedObjectiveFunctor[ParametersT_contra],
@@ -143,7 +136,6 @@ def objective(
         pass_ctx: If ``True``, pass the current context as the keyword argument
             ``ctx`` in addition to the parameter mapping. Otherwise the
             callable receives only the parameters and any bound arguments.
-        resources: Static resources required for one evaluation.
 
     Returns:
         A decorator that converts a compatible callable into a
@@ -152,7 +144,7 @@ def objective(
     Examples:
         Define and tag a directly computed objective term::
 
-            @chemfit.objective(resources={"cpu": 1})
+            @chemfit.objective()
             def regularization(parameters, *, strength):
                 return strength * parameters["epsilon"] ** 2
 
@@ -182,7 +174,6 @@ def objective(
         return WrappedObjectiveFunctor(
             func,
             pass_ctx=pass_ctx,
-            resources=resources,
         )
 
     return wrap
@@ -201,7 +192,6 @@ class WrappedQuantityComputer(
         pass_ctx: bool = False,
         func_args: tuple[Any, ...] | None = None,
         func_kwargs: dict[str, Any] | None = None,
-        resources: ResourceRequest | None = None,
     ):
         """
         Initialize a wrapped quantity computer.
@@ -212,15 +202,12 @@ class WrappedQuantityComputer(
                 ``parameters`` and ``ctx``.
             pass_ctx: If ``True``, call ``func(parameters, ctx)``. If
                 ``False``, call ``func(parameters)``.
-            resources: Static resources required for one computation.
 
         """
 
         super().__init__()
         self.func = func
         self.pass_ctx = pass_ctx
-        if resources is not None:
-            self.resources = resources
 
         if func_args is None:
             self.func_args = ()
@@ -256,7 +243,6 @@ class WrappedQuantityComputer(
             pass_ctx=self.pass_ctx,
             func_args=args,
             func_kwargs=kwargs,
-            resources=self.resources,
         )
         new.static_meta_data = self.static_meta_data.copy()
         return new
@@ -291,7 +277,6 @@ class WrappedQuantityComputer(
 def quantity(
     *,
     pass_ctx: bool = False,
-    resources: ResourceRequest | None = None,
 ) -> Callable[
     [WrappableQuantFunction[ParametersT_contra, QuantitiesT_co]],
     WrappedQuantityComputer[ParametersT_contra, QuantitiesT_co],
@@ -308,7 +293,6 @@ def quantity(
         pass_ctx: If ``True``, pass the current context as the keyword argument
             ``ctx`` in addition to the parameter mapping. Otherwise the
             callable receives only the parameters and any bound arguments.
-        resources: Static resources required for one computation.
 
     Returns:
         A decorator that converts a compatible callable into a
@@ -317,7 +301,7 @@ def quantity(
     Examples:
         Build a reusable quantity stage and attach a loss::
 
-            @chemfit.quantity(resources={"cpu": 1})
+            @chemfit.quantity()
             def model(parameters, *, scale):
                 return {"prediction": scale * parameters["x"]}
 
@@ -342,7 +326,6 @@ def quantity(
         return WrappedQuantityComputer(
             func,
             pass_ctx=pass_ctx,
-            resources=resources,
         )
 
     return wrap

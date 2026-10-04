@@ -265,7 +265,7 @@ def evaluate_many(
     parameters: Sequence[ParamsT],
     *,
     executor: Executor | None = None,
-    scheduler: Scheduler | None = None,
+    scheduler: Scheduler[Any] | None = None,
 ) -> list[EvaluateContext]:
     """
     Evaluate one objective for several parameter mappings.
@@ -349,6 +349,7 @@ class FitResult(Generic[ParamsT]):
     """
     Results from the high-level Nevergrad fitting interface.
 
+    Returned by :func:`fit_nevergrad` after the optimization finishes.
     ``recommendation`` is Nevergrad's final recommendation. In contrast,
     ``best_parameters`` and ``best_loss`` describe the best successful,
     optimizer-visible evaluation recorded by ChemFit. The recommendation and
@@ -432,7 +433,7 @@ class FitResult(Generic[ParamsT]):
         return parameters
 
 
-def fit(
+def fit_nevergrad(
     objective: ObjectiveLike[ParamsT],
     initial: ParamsT,
     *,
@@ -442,7 +443,7 @@ def fit(
     bounds: Mapping[str, Any] | None = None,
     optimizer: str = "NgIohTuned",
     executor: Executor | None = None,
-    scheduler: Scheduler | None = None,
+    scheduler: Scheduler[Any] | None = None,
     callbacks: Sequence[tuple[CallbackT, int]] | None = None,
     parametrization: Mapping[str, object] | None = None,
     initial_observations: Iterable[tuple[ParamsT, float | None]] | None = None,
@@ -495,7 +496,7 @@ def fit(
     Examples:
         Run an ordinary bounded fit::
 
-            result = chemfit.fit(
+            result = chemfit.fit_nevergrad(
                 objective,
                 initial={"epsilon": 0.8, "sigma": 1.1},
                 bounds={
@@ -512,7 +513,7 @@ def fit(
         Optimizer and objective execution concurrency can be tuned
         independently::
 
-            result = chemfit.fit(
+            result = chemfit.fit_nevergrad(
                 objective,
                 initial=initial,
                 budget=200,
@@ -522,7 +523,7 @@ def fit(
 
         Seed a new run with results from earlier evaluations::
 
-            result = chemfit.fit(
+            result = chemfit.fit_nevergrad(
                 objective,
                 initial=initial,
                 budget=200,

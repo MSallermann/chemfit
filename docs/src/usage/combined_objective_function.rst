@@ -69,6 +69,28 @@ wrapped internally. In practice many terms are instances of
 :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`, for example
 objectives constructed from quantity computers.
 
+Fluent configuration
+--------------------
+
+``chemfit.combine(...)`` constructs the combined objective. Common semantic
+configuration can then be applied as a fluent chain:
+
+.. code-block:: python
+
+   objective = (
+       chemfit.combine(term1, term2)
+       .with_weights([1.0, 0.2])
+       .with_exception_handler(chemfit.nan_exception_handler)
+       .with_reduction(chemfit.mean_reducer)
+   )
+
+Each method returns a configured copy and leaves its source object unchanged.
+Child objective and hook objects remain shared, while mutable configuration
+containers are independent. ``with_reduction()`` and ``with_aggregator()``
+replace one another, so the last call determines the active reduction
+interface. ``with_exception_handler()`` changes how failed terms contribute to
+the final result. The sections below describe those semantics in detail.
+
 What actually happens during evaluation
 ---------------------------------------
 
@@ -312,17 +334,15 @@ where ``idx`` is the term index and ``ctx`` is the child context for that term.
 Three useful handlers are provided in
 :py:mod:`chemfit.combined_objective_function`.
 
-The default handler simply re-raises the exception:
+The default handler simply re-raises the exception. It can also be selected
+explicitly in a fluent chain:
 
 .. code-block:: python
 
-   from chemfit.combined_objective_function import (
-       CombinedObjectiveFunction,
-       raising_exception_handler,
+   objective = (
+       chemfit.combine(term1, term2)
+       .with_exception_handler(chemfit.raising_exception_handler)
    )
-
-   objective = CombinedObjectiveFunction([term1, term2])
-   objective.exception_handler = raising_exception_handler
 
 Returning ``math.nan`` marks the whole reduction as invalid in the usual way:
 
@@ -330,22 +350,17 @@ Returning ``math.nan`` marks the whole reduction as invalid in the usual way:
 
    import math
 
-   from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.combined_objective_function import (
-       CombinedObjectiveFunction,
-       nan_exception_handler,
-   )
-
    def ok(params):
        return 1.0
 
    def broken(params):
        raise RuntimeError("Whoops")
 
-   objective = CombinedObjectiveFunction([ok, broken])
-   objective.exception_handler = nan_exception_handler
+   objective = chemfit.combine(ok, broken).with_exception_handler(
+       chemfit.nan_exception_handler
+   )
 
-   ctx = EvaluateContext()
+   ctx = chemfit.EvaluateContext()
    loss = objective({}, ctx)
 
    print(math.isnan(loss))     # True
@@ -361,22 +376,17 @@ Returning ``None`` skips the failed term entirely:
 
 .. testcode::
 
-   from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.combined_objective_function import (
-       CombinedObjectiveFunction,
-       skip_exception_handler,
-   )
-
    def ok(params):
        return 1.0
 
    def broken(params):
        raise RuntimeError("Whoops")
 
-   objective = CombinedObjectiveFunction([ok, broken])
-   objective.exception_handler = skip_exception_handler
+   objective = chemfit.combine(ok, broken).with_exception_handler(
+       chemfit.skip_exception_handler
+   )
 
-   ctx = EvaluateContext()
+   ctx = chemfit.EvaluateContext()
    loss = objective({}, ctx)
 
    print(loss)                       # 1.0
@@ -404,12 +414,11 @@ Writing your own exception handler is straightforward:
         }
         return None
 
-    objective = CombinedObjectiveFunction(
-        [term1, broken],
-        exception_handler=my_exception_handler,
+    objective = chemfit.combine(term1, broken).with_exception_handler(
+        my_exception_handler
     )
 
-    ctx = EvaluateContext()
+    ctx = chemfit.EvaluateContext()
     print(objective({"x" : 2.0}, ctx))
     print(ctx.meta["children"][1]["meta"]["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
 

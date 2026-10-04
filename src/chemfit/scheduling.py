@@ -31,7 +31,6 @@ from typing import (
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import EvaluateContext
-from chemfit.abstract_objective_function import ResourceRequest as _ResourceRequest
 
 if TYPE_CHECKING:
     from chemfit.abstract_objective_function import ObjectiveFunctor
@@ -89,24 +88,6 @@ class EvaluationResult:
         """Whether the evaluation completed with a numerical value."""
 
         return not isinstance(self.value, Exception)
-
-
-#: Stable path to an objective within a nested combined-objective tree.
-#:
-#: ``()`` identifies the root objective, whether it is ordinary or combined.
-#: For a combined root, ``(1,)`` identifies its second immediate term and
-#: ``(2, 1, 0)`` identifies child 2, then child 1, then child 0.
-ObjectivePath: TypeAlias = tuple[int, ...]
-
-#: Relative or absolute evaluation cost estimates keyed by objective-tree path.
-#:
-#: Values are deliberately unitless from the scheduler contract's point of
-#: view.  They may be seconds, normalized costs, or another positive scalar
-#: suitable for static placement.
-SchedulingProfile: TypeAlias = Mapping[ObjectivePath, float]
-
-#: Backend-independent static resources needed for one evaluation.
-ResourceRequest: TypeAlias = _ResourceRequest
 
 
 @runtime_checkable
@@ -341,8 +322,6 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
         self,
         objective: ObjectiveFunctor[ParametersT],
         /,
-        *,
-        profile: SchedulingProfile | None = None,
     ) -> PreparedScheduleT_co:
         """
         Prepare an objective-specific plan for repeated evaluations.
@@ -350,9 +329,6 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
         Args:
             objective: Root objective to prepare. For a combined objective,
                 preparation covers its complete nested call tree.
-            profile: Optional measured or user-supplied cost profile keyed by
-                nested objective path. Implementations may ignore the profile
-                if they do not perform cost-aware placement.
 
         Returns:
             Objective-specific execution plan reusable for repeated parameter
@@ -361,9 +337,9 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
         Notes:
             Preparation is the appropriate place for work that depends on the
             objective but should not occur in the hot evaluation path.
-            Examples include tree traversal, static load balancing, rank
-            assignment, scattering immutable data, installing persistent
-            worker-side objective state, and validating resource requirements.
+            Examples include tree traversal, rank assignment, scattering
+            immutable data, and installing persistent worker-side objective
+            state.
 
             The returned schedule is valid only for the objective structure
             that was prepared. Structural mutation of the objective must
@@ -410,7 +386,5 @@ class SerialScheduler(Scheduler[SerialSchedule[Any]]):
         self,
         objective: ObjectiveFunctor[ParametersT],
         /,
-        *,
-        profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> SerialSchedule[ParametersT]:
         return SerialSchedule(objective)

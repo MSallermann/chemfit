@@ -152,16 +152,12 @@ class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
         self,
         objective: ObjectiveFunctor[ParametersT_contra],
         /,
-        *,
-        profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> ExecutorTreeSchedule[ParametersT_contra]:
         """
         Compile an objective functor and bind it to an executor.
 
         Args:
             objective: Root ordinary or composite objective to schedule.
-            profile: Optional cost profile. The executor backend currently
-                ignores static placement costs.
 
         Returns:
             Prepared executor-backed tree schedule. It owns the executor only

@@ -323,8 +323,6 @@ class MPITreeScheduler(Scheduler[MPITreeSchedule[Any]]):
         self,
         objective: ObjectiveFunctor[ParametersT],
         /,
-        *,
-        profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> MPITreeSchedule[ParametersT]:
         """Compile an objective tree and bind it to the MPI communicator."""
 

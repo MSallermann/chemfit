@@ -8,7 +8,12 @@ from ase.calculators.lj import LennardJones
 import chemfit
 
 
-def test_fit_accepts_initial_observations():
+def test_fit_nevergrad_is_the_only_high_level_fit_export():
+    assert callable(chemfit.fit_nevergrad)
+    assert not hasattr(chemfit, "fit")
+
+
+def test_fit_nevergrad_accepts_initial_observations():
     evaluated: list[dict[str, float]] = []
 
     def objective(parameters: dict[str, float]) -> float:
@@ -16,7 +21,7 @@ def test_fit_accepts_initial_observations():
         return parameters["x"] ** 2
 
     observations = (({"x": 0.0}, 0.0) for _ in range(1))
-    result = chemfit.fit(
+    result = chemfit.fit_nevergrad(
         objective,
         initial={"x": 1.0},
         budget=1,
@@ -33,6 +38,8 @@ def test_public_api_workflow(tmp_path: Path):
     @chemfit.quantity()
     def model(parameters: dict[str, float], scale: float):
         return {"value": scale * parameters["x"]}
+
+    assert not hasattr(model, "resources")
 
     def squared_error(quantities: dict[str, float], target: float):
         return (quantities["value"] - target) ** 2
@@ -88,6 +95,7 @@ def test_public_api_workflow(tmp_path: Path):
         lambda parameters: (parameters["x"] - 2.0) ** 2,
         aggregator=aggregate,
     )
+    assert not hasattr(objective, "resources")
 
     with ThreadPoolExecutor(max_workers=2) as executor:
         contexts = chemfit.evaluate_many(
@@ -101,7 +109,7 @@ def test_public_api_workflow(tmp_path: Path):
     assert "energy" in contexts[0].meta["children"][2]["quantities"]
     assert contexts[0].meta["quantity_terms"] == 3
 
-    result = chemfit.fit(
+    result = chemfit.fit_nevergrad(
         objective,
         initial={"x": 2.0},
         budget=2,

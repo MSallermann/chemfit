@@ -27,7 +27,7 @@ Compute, attach a loss, combine, fit
    density_term = simulate.with_loss(density_loss, reference=1.4)
    objective = chemfit.combine(density_term)
 
-   result = chemfit.fit(
+   result = chemfit.fit_nevergrad(
        objective,
        initial={"sigma": 1.0},
        bounds={"sigma": (0.1, 3.0)},
@@ -43,7 +43,7 @@ turns it into an
 ``chemfit.combine()`` returns a
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
-:py:func:`chemfit.api.fit` uses Nevergrad and returns a
+:py:func:`chemfit.api.fit_nevergrad` returns a
 :class:`~chemfit.api.FitResult`. ``result.recommendation`` is Nevergrad's
 recommended parameter mapping. ``best_parameters`` and ``best_loss`` identify
 the best optimizer-visible evaluation recorded by ChemFit, and ``contexts``
@@ -51,8 +51,8 @@ contains one :class:`~chemfit.fitter.FitterEvaluateContext` per candidate slot.
 Internally, the helper configures a :class:`~chemfit.fitter.Fitter`; see
 :ref:`fitter` when you need direct lifecycle control, SciPy, or custom loops.
 
-Concurrency in ``fit``
-----------------------
+Concurrency in ``fit_nevergrad``
+--------------------------------
 
 The two worker settings have separate meanings:
 
@@ -176,6 +176,10 @@ The main fluent families are:
 - Every :class:`~chemfit.abstract_objective_function.QuantityComputer` has
   :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`,
   which ends the quantity-building chain and returns an objective term.
+- :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
+  provides ``with_weights()``, ``with_reduction()``, ``with_aggregator()``, and
+  ``with_exception_handler()``. These return configured copies; reducer and
+  aggregator calls replace one another. See :ref:`combined_objective_functions`.
 - :class:`~chemfit.ase_objective_function.ASEComputer` provides
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_setup`,
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_calculator`,
@@ -299,7 +303,7 @@ The remaining helpers connect these objects to composition and execution:
 - :func:`chemfit.combine() <chemfit.api.combine>` returns a
   :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`;
   see :ref:`combined_objective_functions` for its full behavior.
-- :func:`chemfit.fit() <chemfit.api.fit>` drives a
+- :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` drives a
   :class:`~chemfit.fitter.Fitter`; use that class
   directly for SciPy, callbacks, custom optimizers, supplied contexts, or a
   custom scheduler.
