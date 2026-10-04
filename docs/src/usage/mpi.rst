@@ -30,17 +30,16 @@ schedule's worker loop:
 
 .. code-block:: python
 
-   from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.combined_objective_function import CombinedObjectiveFunction
+   import chemfit
    from chemfit.mpi_scheduler import MPITreeScheduler
 
    terms = magic_from_elsewhere()
-   objective = CombinedObjectiveFunction(terms)
+   objective = chemfit.combine(terms)
 
    scheduler = MPITreeScheduler()
    with scheduler.prepare(objective) as schedule:
        if schedule.rank == 0:
-           ctx = EvaluateContext()
+           ctx = chemfit.EvaluateContext()
            value = schedule.evaluate({"epsilon": 2.0, "sigma": 1.5}, ctx)
            print(value)
            print(ctx.meta["children"])
@@ -56,8 +55,42 @@ part of returned result state.
 Fitting on rank zero
 --------------------
 
-Pass the scheduler to :class:`~chemfit.fitter.Fitter` on rank zero. Nonzero
-ranks prepare the same objective and wait in ``worker_loop()``:
+Pass the scheduler to :func:`chemfit.fit() <chemfit.api.fit>` on rank zero.
+Nonzero ranks prepare the same objective and wait in ``worker_loop()``:
+
+.. code-block:: python
+
+   import chemfit
+   from chemfit.mpi_scheduler import MPITreeScheduler
+
+   terms = magic_from_elsewhere()
+   objective = chemfit.combine(terms)
+   initial = {"epsilon": 2.0, "sigma": 1.5}
+   scheduler = MPITreeScheduler()
+
+   if scheduler.comm.Get_rank() == 0:
+       result = chemfit.fit(
+           objective,
+           initial=initial,
+           budget=100,
+           workers=4,
+           scheduler=scheduler,
+       )
+       print(result.best_parameters)
+   else:
+       with scheduler.prepare(objective) as schedule:
+           schedule.worker_loop()
+
+Here ``workers`` controls how many candidates Nevergrad places in a batch;
+it does not set the MPI world size. Start the desired number of ranks with
+``mpiexec``. The prepared MPI schedule sends all leaf tasks from a candidate
+batch to the available nonzero ranks.
+
+Lower-level fitting control
+---------------------------
+
+Use :class:`~chemfit.fitter.Fitter` directly when you need its manual session
+API or other lower-level controls. The MPI worker lifecycle remains the same:
 
 .. code-block:: python
 
@@ -69,7 +102,7 @@ ranks prepare the same objective and wait in ``worker_loop()``:
    if scheduler.comm.Get_rank() == 0:
        fitter = Fitter(
            objective,
-           initial_params={"epsilon": 2.0, "sigma": 1.5},
+           initial_params=initial,
            scheduler=scheduler,
        )
        optimum = fitter.fit_nevergrad(budget=100, num_workers=4)
@@ -77,11 +110,6 @@ ranks prepare the same objective and wait in ``worker_loop()``:
    else:
        with scheduler.prepare(objective) as schedule:
            schedule.worker_loop()
-
-Here ``num_workers`` controls how many candidates Nevergrad places in a batch;
-it does not set the MPI world size. Start the desired number of ranks with
-``mpiexec``. The prepared MPI schedule sends all leaf tasks from a candidate
-batch to the available nonzero ranks.
 
 Communicators and debugging
 ---------------------------

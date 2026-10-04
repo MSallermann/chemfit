@@ -29,17 +29,25 @@ Out of the box, ChemFit includes integrations for the calculators defined in the
 Quickstart
 *************
 
-In ChemFit, an objective function is typically built from two layers:
+A typical ChemFit workflow is:
 
-1. A :class:`~chemfit.abstract_objective_function.QuantityComputer`
-   computes intermediate quantities from a parameter dictionary.
-2. A loss function maps those quantities to a scalar loss.
+1. compute quantities from parameters;
+2. attach a loss;
+3. combine independent objective terms;
+4. fit the parameters.
 
-The top-level helpers construct these framework objects for you: use
+The top-level API expresses this workflow directly: use
 :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`, attach a loss with
 ``with_loss()``, combine terms with
 :func:`chemfit.combine() <chemfit.api.combine>`, and optimize them with
 :func:`chemfit.fit() <chemfit.api.fit>`.
+
+Underneath, these helpers operate on ChemFit's
+:class:`~chemfit.abstract_objective_function.QuantityComputer`,
+:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`, and
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
+abstractions. A quantity computer maps a parameter dictionary to intermediate
+quantities, and a loss maps those quantities to a scalar objective value.
 
 In practical workflows, the quantity computation may be performed by an
 ASE calculator, an external simulation pipeline, or custom Python code.

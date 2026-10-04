@@ -15,9 +15,22 @@ Nothing prevents you from using ChemFit without them. That being said, you shoul
 
 A recommended first step is to check if you can use one of the built-in ways:
 
-1. If you already have a pure python function implementing your computation, have a look at the :py:func:`~chemfit.wrap_funcs.quantity` decorator, which also features in the :ref:`quickstart` examples.
-2. If you are using an external simulation tool, like LAMMPS for example, have a look at the :py:class:`~chemfit.external_computer.ExternalQuantityComputer` and its corresponding doc page: :ref:`external_computer`.
-3. If you are using ASE, try the :py:class:`~chemfit.ase_objective_function.ASEComputer` described in :ref:`ase_objective_function_api`.
+1. If you already have a pure Python function implementing your computation,
+   start with :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`, which
+   also features in the :ref:`quickstart` examples.
+2. If you use an external simulation tool such as LAMMPS, start with
+   :func:`chemfit.external_quantity() <chemfit.api.external_quantity>` and see
+   :ref:`external_computer`.
+3. If you use ASE, start with
+   :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>` and see
+   :ref:`ase_objective_function_api`.
+
+``chemfit.external_quantity(...)`` returns an
+:class:`~chemfit.external_computer.ExternalQuantityComputer`, while
+``chemfit.ase_quantity(...)`` returns an
+:class:`~chemfit.ase_objective_function.ASEComputer`. The remainder of this
+page uses the underlying class vocabulary because it covers advanced custom
+implementations.
 
 If none of the built-in computers are to your taste, think about sub-classing them.
 

@@ -23,17 +23,25 @@ key.
 
 .. code-block:: python
 
-    from chemfit.abstract_objective_function import EvaluateContext
+    import chemfit
     from chemfit.objective_hooks import TimingHook, UUIDHook
-    from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
-    objective = WrappedObjectiveFunctor(lambda params: params["x"] ** 2)
-    objective.register_eval_hook(UUIDHook()).register_eval_hook(TimingHook())
+    @chemfit.objective()
+    def objective(params):
+        return params["x"] ** 2
 
-    ctx = EvaluateContext()
+    objective.register_eval_hook(hook=UUIDHook()).register_eval_hook(
+        hook=TimingHook()
+    )
+
+    ctx = chemfit.EvaluateContext()
     loss = objective({"x": 2.0}, ctx)
     print(ctx.meta["evaluation_id"])
     print(ctx.meta["timing"]["elapsed_seconds"])
+
+``chemfit.objective()`` returns a wrapped
+:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`; the same hook
+API applies to custom and composed objective functors.
 
 ``register_eval_hook`` returns the objective, allowing chained registrations.
 Register metadata-producing post-hooks before consumers such as a logger, so
