@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Generic, Protocol, TypeVar
@@ -199,6 +200,150 @@ class CombinedObjectiveFunction(
 
         _validate_weights(self.weights, len(self.objective_functions))
 
+    def _copy(self) -> Self:
+        """Return a shallow copy with independent mutable configuration."""
+
+        new = copy.copy(self)
+        new.objective_functions = self.objective_functions.copy()
+        new.weights = self.weights.copy()
+        new.pre_eval_hooks = self.pre_eval_hooks.copy()
+        new.post_eval_hooks = self.post_eval_hooks.copy()
+        new.static_meta_data = self.static_meta_data.copy()
+        return new
+
+    def with_meta(self, /, **meta: Any) -> Self:
+        """
+        Return a copy with additional static evaluation metadata.
+
+        Existing metadata and combined-objective configuration are preserved.
+        Mutable configuration containers and hook registration lists are
+        independent on the returned objective; child objectives and hook
+        objects themselves remain shared.
+        """
+
+        new = self._copy()
+        new.static_meta_data.update(meta)
+        return new
+
+    def with_weights(self, weights: Sequence[float], /) -> Self:
+        """
+        Return a copy with replacement weights for the current terms.
+
+        Args:
+            weights: One non-negative weight for each current objective term.
+                The supplied sequence is copied into an internal list.
+
+        Returns:
+            A configured copy; the source objective is unchanged.
+
+        Raises:
+            ValueError: If the number of weights does not match the number of
+                terms or any weight is negative.
+
+        Examples:
+            Configure two terms without changing the original objective::
+
+                objective = chemfit.combine(term_a, term_b).with_weights(
+                    [1.0, 0.2]
+                )
+
+        """
+
+        new_weights = list(weights)
+        _validate_weights(new_weights, len(self.objective_functions))
+        new = self._copy()
+        new.weights = new_weights
+        return new
+
+    def with_reduction(self, reduction: Reducer, /) -> Self:
+        """
+        Return a copy using a simple reducer for weighted term values.
+
+        Args:
+            reduction: Callable that reduces the weighted values to one float.
+
+        Returns:
+            A configured copy; the source objective is unchanged.
+
+        Notes:
+            This replaces any reducer or aggregator configured earlier in the
+            fluent chain. A later :meth:`with_aggregator` call replaces it in
+            turn.
+
+        Examples:
+            Use the mean of the weighted terms::
+
+                objective = chemfit.combine(terms).with_reduction(
+                    chemfit.mean_reducer
+                )
+
+        """
+
+        new = self._copy()
+        new.reduction = WrappedReducer(reduction)
+        return new
+
+    def with_aggregator(self, aggregator: Aggregator, /) -> Self:
+        """
+        Return a copy using a context-aware term aggregator.
+
+        Args:
+            aggregator: Callable receiving weighted values, child quantities,
+                and the parent evaluation context.
+
+        Returns:
+            A configured copy; the source objective is unchanged.
+
+        Notes:
+            This replaces any reducer or aggregator configured earlier in the
+            fluent chain. A later :meth:`with_reduction` call replaces it in
+            turn.
+
+        Examples:
+            Configure a context-aware aggregation::
+
+                objective = chemfit.combine(terms).with_aggregator(my_aggregator)
+
+        """
+
+        new = self._copy()
+        new.reduction = aggregator
+        return new
+
+    def with_exception_handler(
+        self,
+        exception_handler: ExceptionHandler,
+        /,
+    ) -> Self:
+        """
+        Return a copy using a replacement term-exception handler.
+
+        Args:
+            exception_handler: Callable that re-raises, replaces, or skips a
+                failed term.
+
+        Returns:
+            A configured copy; the source objective is unchanged.
+
+        Notes:
+            Repeated calls replace the previous handler, so the last call in a
+            fluent chain determines how failed terms contribute.
+
+        Examples:
+            Convert failed terms to NaN before applying a mean reduction::
+
+                objective = (
+                    chemfit.combine(terms)
+                    .with_exception_handler(chemfit.nan_exception_handler)
+                    .with_reduction(chemfit.mean_reducer)
+                )
+
+        """
+
+        new = self._copy()
+        new.exception_handler = exception_handler
+        return new
+
     def child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the immediate objective terms in evaluation order."""
 
@@ -282,7 +427,7 @@ class CombinedObjectiveFunction(
         weights: Sequence[float] | float = 1.0,
     ) -> Self:
         """
-        Add one or more objective terms to the combined objective.
+        Mutate this combined objective by adding one or more terms.
 
         Each added callable is converted to an ``ObjectiveFunctor`` if
         needed and appended to the existing term list. The corresponding
