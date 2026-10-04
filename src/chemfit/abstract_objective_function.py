@@ -411,11 +411,31 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             return type(self), (list(self.exceptions),)
 
     def __init__(self) -> None:
-        """Initialize objective function."""
+        """
+        Initialize objective function.
+
+        Attributes:
+            static_meta_data: Reusable metadata merged into ``ctx.meta`` after
+                objective evaluation and before post-evaluation hooks.
+
+        """
 
         self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+        self.static_meta_data: dict[str, Any] = {}
         self._resources: dict[str, float] = {}
+
+    def with_meta(self, /, **meta: Any) -> Self:
+        """
+        Return a copy with additional static evaluation metadata.
+
+        Existing metadata is preserved unless a key is supplied again. The
+        source objective is unchanged.
+        """
+
+        new = copy.copy(self)
+        new.static_meta_data = {**self.static_meta_data, **meta}
+        return new
 
     @property
     def resources(self) -> ResourceRequest:
@@ -583,6 +603,11 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         if not evaluation_failed and post_hook_exceptions:
             raise self.PostEvalHookError(post_hook_exceptions)
 
+    def _apply_static_meta(self, ctx: EvaluateContext) -> None:
+        """Merge this objective's static metadata into an evaluation context."""
+
+        ctx.meta.update(self.static_meta_data)
+
     def _begin_evaluation(self, parameters: ParametersT_contra, ctx: EvaluateContext):
         """
         Initialize an objective evaluation and invoke pre-evaluation hooks.
@@ -615,6 +640,11 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
                 completed successfully.
 
         Notes:
+            Static objective metadata is merged into ``ctx.meta`` before
+            post-evaluation hooks run. This occurs after ``_evaluate()``, so
+            objective metadata takes precedence over metadata contributed by
+            a wrapped quantity computer.
+
             When ``exception`` is not ``None``, the context loss is cleared and
             the exception is stored in ``ctx.temp.exception`` before post-hooks
             are invoked.
@@ -624,6 +654,8 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             failures do not replace the original exception.
 
         """
+
+        self._apply_static_meta(ctx)
 
         if exception is None:
             ctx.temp.exception = None
@@ -741,6 +773,18 @@ class QuantityComputer(Generic[ParametersT_contra, QuantitiesT_co]):
         self.static_meta_data: dict[str, Any] = {}  # For static meta data
         self._resources: dict[str, float] = {}
 
+    def with_meta(self, /, **meta: Any) -> Self:
+        """
+        Return a copy with additional static evaluation metadata.
+
+        Existing metadata is preserved unless a key is supplied again. The
+        source quantity computer is unchanged.
+        """
+
+        new = copy.copy(self)
+        new.static_meta_data = {**self.static_meta_data, **meta}
+        return new
+
     @property
     def resources(self) -> ResourceRequest:
         """Return static resources required for one computation."""
@@ -851,15 +895,10 @@ class QuantityComputerObjectiveFunction(
             quantity_computer (QuantityComputer): Object responsible for
                 computing intermediate quantities.
 
-        Attributes:
-            static_meta_data (dict[str, Any]): Static metadata associated
-                with this objective. Merged into `ctx.meta` on each call.
-
         """
 
         super().__init__()
         self.quantity_computer = quantity_computer
-        self.static_meta_data: dict[str, Any] = {}
         self.loss_function = loss_function
         self._loss_takes_parameters = _loss_function_takes_parameters(loss_function)
 
@@ -906,9 +945,6 @@ class QuantityComputerObjectiveFunction(
         """
 
         quantities = self.quantity_computer(parameters, ctx)
-
-        # Update or set static meta data if needed
-        ctx.meta.update(self.static_meta_data)
 
         if self._loss_takes_parameters:
             loss = self.loss_function(quantities, parameters)

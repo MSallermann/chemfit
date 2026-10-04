@@ -104,6 +104,27 @@ configured object and leave the object they were called on unchanged. Read a
 chain from top to bottom: create a quantity computer, add or replace its
 configuration, and finally attach a loss to produce an objective term.
 
+Use ``with_meta()`` to attach reusable descriptive metadata anywhere in that
+chain:
+
+.. code-block:: python
+
+   term = (
+       chemfit.ase_quantity(atoms)
+       .with_meta(dataset="liquid", temperature=298)
+       .with_calculator(make_calculator)
+       .with_loss(loss, target=0.997)
+       .with_meta(observable="density")
+   )
+
+Metadata attached before ``with_loss()`` belongs to the quantity computer and
+usually describes computation or provenance. Metadata attached afterward
+belongs to the objective term. Both are merged into the evaluation context's
+``ctx.meta`` dictionary. Quantity metadata is applied first, followed by
+objective metadata, so the objective value wins when both define the same key.
+Use direct ``ctx.meta`` writes instead for values computed during one
+evaluation.
+
 Use ``bind`` to specialize a wrapped quantity or objective function:
 
 .. code-block:: python
@@ -149,6 +170,9 @@ and ``with_processor()`` are bound to the corresponding callable.
 
 The main fluent families are:
 
+- Every :class:`~chemfit.abstract_objective_function.QuantityComputer` and
+  :class:`~chemfit.abstract_objective_function.ObjectiveFunctor` provides
+  ``with_meta()`` for copy-on-write static metadata.
 - Every :class:`~chemfit.abstract_objective_function.QuantityComputer` has
   :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`,
   which ends the quantity-building chain and returns an objective term.

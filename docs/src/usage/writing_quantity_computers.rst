@@ -179,13 +179,33 @@ the current evaluation. It is safe to write to and is typically used for:
 Each evaluation has its own ``meta`` dictionary, so there are no race
 conditions.
 
-In addition to values written during evaluation, quantity computers may
-also define *static meta data*. This is meta data attached to the
-computer itself (e.g. a tag or identifier), which is automatically merged
-into ``ctx.meta`` when the computer is evaluated.
+For descriptive metadata that is fixed when the computer is configured, use
+``with_meta()`` instead of writing it inside ``_compute()``:
 
-This is useful for recording information that is constant across all
-evaluations of a given computer, such as:
+.. code-block:: python
+
+    base = Computer(...)
+    liquid = base.with_meta(dataset="liquid", phase="condensed")
+    gas = base.with_meta(dataset="gas", phase="vapor")
+
+The method returns a shallow copy, so ``base`` is unchanged. This static
+metadata is merged into ``ctx.meta`` before ``_compute()`` runs. If the
+computer is turned into an objective with ``with_loss()``, objective metadata
+can be added afterward as well:
+
+.. code-block:: python
+
+    term = (
+        liquid
+        .with_loss(density_loss, target=0.997)
+        .with_meta(observable="density")
+    )
+
+Quantity metadata is applied first and objective metadata afterward; objective
+metadata wins if both define the same key. Continue to write values calculated
+during an evaluation directly to ``ctx.meta``.
+
+Typical static annotations include:
 
 - a label or tag identifying the term
 - the origin of the data
