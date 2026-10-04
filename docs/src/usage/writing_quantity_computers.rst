@@ -25,21 +25,20 @@ If none of the built-in computers are to your taste, think about sub-classing th
 Let's cook
 ********************
 
-.. warning::
+For a completely fresh QuantityComputer, derive from the
+:py:class:`~chemfit.abstract_objective_function.QuantityComputer` base class
+and implement ``QuantityComputer._compute``. That's it.
 
-    **OUTDATED IN PART:** The final prose in this section uses attribute
-    notation for ``ctx.meta``. The example itself is correct: ``ctx.meta`` is
-    a dictionary and metadata entries use item access.
-
-For a completely fresh QuantityComputer, derive from the :py:class:`~chemfit.abstract_objective_function.QuantityComputer` base class and implement the :py:meth:`~chemfit.abstract_objective_function.QuantityComputer._compute` method. That's it.
-
-The ``_compute`` method should accept exactly two arguments: A dictionary of parameters of type :py:class:`dict[str,Any]` and an :py:class:`~chemfit.abstract_objective_function.EvaluateContext`.
+The ``_compute`` method should accept exactly two arguments: a parameter
+mapping (commonly ``dict[str, Any]``) and an
+:py:class:`~chemfit.abstract_objective_function.EvaluateContext`.
 It should return the dictionary of quantities.
 
 This is probably a point at which we should familiarize ourselves with the...
 
 **Golden Rule:**
-    DO NOT MODIFY GLOBAL STATE FROM WITHIN THE COMPUTE METHOD. If you violate this rule, parallel evaluation of your quantity computer can be undefined. It does not *have* to be, but for everyone's sake let's assume it **will** be.
+    DO NOT MODIFY GLOBAL STATE FROM WITHIN THE COMPUTE METHOD. If you violate this rule, parallel evaluation of your quantity computer can be undefined.
+    It does not *have* to be, but for everyone's sake let's assume it **will** be.
 
     Importantly, the golden rule applies to instance variables of the computer itself as well.
 
@@ -56,7 +55,7 @@ This is probably a point at which we should familiarize ourselves with the...
 
     Now what happens if you call the same instance of ``GoldenRuleViolator`` in parallel? That's right! Bad things. The reason is that the value of ``self.bad`` could be overwritten by another thread in the middle of the compute function, which would make your ``params`` and the returned quantities mismatched.
 
-    You might say: "Why would I ever do something so stupid?". Let me just say that you'd be surprised how easy it is to accidentally violate the **Golden Rule**. Even seemingly harmless patterns can violate this rule accidentally,
+    You might say: "Why would I ever do something so stupid?". Well, you'd be surprised how easy it is to accidentally violate the **Golden Rule**. Even seemingly harmless patterns can violate this rule accidentally,
     especially when storing intermediate results on ``self``.
 
 Therefore, if you have anything to communicate with the outside world, there are two options
@@ -76,7 +75,9 @@ Let's fix the ``GoldenRuleViolator``:
             # ...
             return {"mojo" : bad}
 
-Now there is no problem. All we ever do is write to ``bad`` which is local to the current function evaluation or to ``ctx.meta.bad`` which explicitly prevents any kind of race conditions.
+Now there is no problem. All we ever do is write to ``bad``, which is local to
+the current function evaluation, or to ``ctx.meta["bad"]``, which belongs to
+that evaluation's context.
 
 ******************************************
 Configuring a computer
@@ -105,7 +106,7 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
     from chemfit.wrap_funcs import quantity
 
     @quantity(pass_ctx=True)
-    def computer(params, ctx, f):
+    def computer(params, *, ctx, f):
         ...
 
     # Configure f=1
@@ -115,7 +116,8 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
 
 .. note::
 
-    If ``pass_ctx=True``, all arguments except ``params`` and ``ctx`` must be bound..
+    If ``pass_ctx=True``, all required arguments except ``params`` and the
+    injected keyword argument ``ctx`` must be bound.
 
     If ``pass_ctx==False``, all arguments except ``params`` have to be bound.
 
@@ -137,7 +139,9 @@ If we forego the :py:func:`~chemfit.wrap_funcs.quantity` approach and we need ex
 .. important::
 
     A quantity computer becomes fully specified once it depends only on ``(parameters, ctx)``. At that point, all external parameters have been
-    fixed, either via :meth:`bind` (for wrapped functions) or via the constructor (for class-based implementations).
+    fixed, either via
+    :py:meth:`~chemfit.wrap_funcs.WrappedQuantityComputer.bind` (for wrapped
+    functions) or via the constructor (for class-based implementations).
 
 
 ******************************************
@@ -200,13 +204,6 @@ evaluations of a given computer, such as:
 ctx.config
 ====================
 
-.. warning::
-
-    **OUTDATED:** The examples in this subsection treat ``ctx.config`` as a
-    mapping with ``.get(...)``. It is currently a ``SimpleNamespace`` and
-    therefore uses attribute access. The per-evaluation CPU/GPU guidance also
-    predates static ``resources`` annotations on objectives and computers.
-
 ``ctx.config`` provides configuration information to the computation.
 It should be treated as **read-only**.
 
@@ -218,26 +215,29 @@ Typical use cases include:
 
 .. code-block:: python
 
-    if ctx.config.get("compute_forces", False):
+    if getattr(ctx.config, "compute_forces", False):
         ...
 
 The main purpose of ``ctx.config`` is to allow behavior to vary **per
 evaluation**, without requiring reconstruction of the quantity computer
 or objective function.
 
-In particular, ``ctx.config`` is useful when different evaluations may
-run in different execution environments. For example, in distributed or
-parallel settings, different calls may:
+In particular, ``ctx.config`` is useful when the same computation needs
+different per-evaluation modes. Different calls may:
 
 - run on different cluster nodes
-- use different numbers of cores or GPUs
 - access different scratch directories
-- use different execution backends
+- enable different diagnostics or approximations
 
 .. code-block:: python
 
-    scratch_dir = ctx.config.get("scratch_dir", "/tmp")
-    n_cores = ctx.config.get("n_cores", 1)
+    scratch_dir = getattr(ctx.config, "scratch_dir", "/tmp")
+    diagnostics = getattr(ctx.config, "diagnostics", False)
+
+Static requirements such as CPU or GPU counts belong in the objective or
+computer's ``resources`` mapping. Resource annotations describe requirements;
+the built-in serial, executor, and MPI schedulers currently do not perform
+resource-aware placement.
 
 **Rule of thumb:**
     Use ``ctx.config`` to *influence how the computation is carried out*,
@@ -247,14 +247,9 @@ parallel settings, different calls may:
 ctx.shared
 ====================
 
-.. warning::
-
-    **OUTDATED:** The cache example treats ``ctx.shared`` as a mapping with
-    ``.setdefault(...)``. It is currently a ``SimpleNamespace`` and therefore
-    uses attribute access.
-
-``ctx.shared`` allows controlled sharing of state across multiple
-evaluations.
+``ctx.shared`` allows controlled sharing of state across related parent and
+child contexts. Separate root contexts share state only when they are
+explicitly constructed with the same namespace.
 
 This is useful for:
 
@@ -265,15 +260,16 @@ This is useful for:
 However, this is also the most dangerous field.
 
 **Important:**
-    Any data stored in ``ctx.shared`` may be accessed concurrently from
-    multiple threads or processes. You must ensure that all access is
-    thread-safe and does not violate the Golden Rule.
+    During local or threaded execution, related contexts use the same object,
+    so access may be concurrent and must be thread-safe. Process executors
+    serialize worker-input state instead; mutations made in a worker are not
+    returned to the driver.
 
-Example (simple cache):
+Example (initialize a cache before concurrent evaluation):
 
 .. code-block:: python
 
-    cache = ctx.shared.setdefault("cache", {})
+    cache = ctx.shared.cache
 
     key = tuple(sorted(params.items()))
     if key in cache:
@@ -289,13 +285,6 @@ Example (simple cache):
 ===================================
 External parameters vs ctx.config
 ===================================
-
-.. warning::
-
-    **OUTDATED IN PART:** The conceptual distinction remains useful, but the
-    resource-related examples predate static ``resources`` annotations.
-    Resource requirements are structural metadata rather than
-    parameter-dependent context configuration.
 
 Both external parameters (passed via ``bind`` or the constructor) and
 ``ctx.config`` can influence the behavior of a quantity computer, but
@@ -326,7 +315,7 @@ Typical examples include:
 - enabling or disabling optional work
 - selecting approximate vs. exact evaluation modes
 - turning diagnostics on or off
-- passing execution-specific information (e.g. resources, paths)
+- passing evaluation-specific information such as scratch paths
 
 The main reason to use ``ctx.config`` is that it can vary **per
 evaluation** without requiring you to reconstruct the quantity computer
@@ -355,17 +344,10 @@ Summary
 Calling computers from within computers
 ******************************************
 
-.. warning::
-
-    **OUTDATED IN PART:** The child-context model in this section remains
-    current, but its execution-policy and manual executor guidance predates
-    prepared schedulers.
-
 .. note::
 
     This section is for fairly advanced use and is particularly relevant when
-    implementing an execution policy for
-    :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+    implementing a component that performs its own nested computations.
 
 If we want to make calls to other computers from our custom computer, the recommended approach is to make use of the child context system to supply fresh contexts to the inner computers.
 
@@ -396,12 +378,6 @@ The benefit of this approach is two-fold
 =============================================================
 Child-parent relationships for the different context fields
 =============================================================
-
-.. warning::
-
-    **OUTDATED IN PART:** The propagation model below remains current, but the
-    ``ctx.config`` and ``ctx.shared`` examples use mapping methods even though
-    both fields are currently ``SimpleNamespace`` instances.
 
 When creating child contexts via
 :py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`,
@@ -434,44 +410,39 @@ computations is preserved and accessible from the parent.
 ctx.config
 --------------------
 
-The ``config`` dictionary is passed from parent to child contexts as-is.
+The ``config`` namespace is deep-copied from the parent into each child.
 
 All child contexts see the same configuration, allowing them to adapt
 their behavior consistently.
 
 .. code-block:: python
 
-    value = ctx.config.get("mode")
+    value = getattr(ctx.config, "mode", None)
 
-Child contexts should treat ``config`` as read-only.
+Child contexts should treat their local ``config`` as read-only. A child
+context configurator may customize the copy before evaluation.
 
 --------------------
 ctx.shared
 --------------------
 
-The ``shared`` dictionary is shared between parent and child contexts.
+The same ``shared`` namespace object is used by parent and child contexts
+during local execution.
 
 This allows child computations to communicate and reuse data, for
 example through caching.
 
 .. code-block:: python
 
-    cache = ctx.shared.setdefault("cache", {})
+    cache = ctx.shared.cache
 
 Because ``ctx.shared`` may be accessed concurrently, all access must be
-thread-safe.
+thread-safe. Process executors serialize worker-input shared state but do not
+transport mutations to it back to the driver.
 
 ===================================
 Configuring child contexts
 ===================================
-
-.. warning::
-
-    **OUTDATED IN PART:** The child-configurator concept remains current, but
-    the example assigning ``child_ctx.config["worker_id"]`` uses the obsolete
-    mapping-style interface. ``ctx.config`` is currently a ``SimpleNamespace``.
-    The resource-distribution wording also predates static ``resources``
-    annotations and prepared scheduler placement.
 
 Besides the number of children,
 :py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`
@@ -483,10 +454,8 @@ are created.
 
 This can be useful when:
 
-- distributing work across resources
 - assigning identifiers or indices to child evaluations
 - modifying configuration for individual children
-- implementing custom execution strategies
 
 The configurator is called once per child context and can modify the
 child context before it is used.
@@ -510,11 +479,10 @@ Or adjust configuration per child:
 .. code-block:: python
 
     def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
-        child_ctx.config["worker_id"] = idx_child_ctx
+        child_ctx.config.worker_id = idx_child_ctx
 
-This mechanism is particularly useful when writing execution policies
-(for example, MPI or executor-based parallelization), where different children
-may correspond to different processes or resources.
+This mechanism configures evaluation semantics and metadata. Backend placement
+is controlled separately by the prepared scheduler.
 
 **Rule of thumb:**
     Use a child context configurator when child evaluations need

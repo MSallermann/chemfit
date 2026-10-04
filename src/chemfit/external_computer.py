@@ -203,7 +203,8 @@ class ExternalQuantityComputer(
 
         Raises:
             TypeError: If ``parser`` is not callable.
-            ValueError: If no files are supplied or a path is absolute.
+            ValueError: If no files are supplied, a path is absolute, or a
+                relative path escapes the evaluation working directory.
 
         """
         if not callable(parser):
@@ -235,7 +236,8 @@ class ExternalQuantityComputer(
             A new computer containing the additional completion files.
 
         Raises:
-            ValueError: If no files are supplied or a path is absolute.
+            ValueError: If no files are supplied, a path is absolute, or a
+                relative path escapes the evaluation working directory.
 
         """
         if not output_files:

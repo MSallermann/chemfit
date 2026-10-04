@@ -104,14 +104,6 @@ class EvaluationState:
         tree: Compiled objective tree evaluated by the schedule.
         root_ctx: Context belonging directly to the root objective.
 
-    Attributes:
-        contexts: Context associated with each tree node. Contexts for
-            unreachable nodes remain None.
-        node_slots: Current execution state or completed raw outcome for every
-            node.
-        remaining_children: Number of incomplete children for every composite
-            node.
-
     """
 
     contexts: list[EvaluateContext | None]

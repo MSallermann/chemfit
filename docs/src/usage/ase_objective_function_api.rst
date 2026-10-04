@@ -217,8 +217,8 @@ single structure using ASE:
 
    atoms_factory = PathAtomsFactory("trajectory.xyz", index=0)
 
-If the selected ASE index resolves to multiple images, the factory raises
-``ValueError``.
+If the selected ASE index resolves to multiple images, the factory rejects the
+selection because one ``ASEComputer`` requires one base structure.
 
 Use :py:meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_setup` for
 structure configuration that should happen once before the base atoms are

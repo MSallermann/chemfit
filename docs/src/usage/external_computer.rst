@@ -40,7 +40,8 @@ evaluation runs in its own isolated working directory.
 
 All files created by the external command should be written relative to this
 working directory. Paths registered through ``with_parser()`` or ``wait_for()``
-are interpreted relative to it as well.
+are interpreted relative to it as well and must not escape it through excess
+``..`` components.
 
 .. note::
 
@@ -122,7 +123,10 @@ A single call performs the following steps:
 4. invoke each registered parser with its resolved input paths
 5. return the resulting quantity dictionary
 
-The working directory is removed after evaluation unless configured otherwise.
+After a successful evaluation, the working directory is removed when
+``delete_temp_workdirs=True`` (the default). After a failure it is retained by
+default for inspection; set ``keep_temp_workdir_after_crash=False`` to allow
+deletion.
 
 
 Customization points
@@ -280,7 +284,9 @@ Output files must be relative
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 All paths passed to ``with_parser()`` and ``wait_for()`` must be relative to
-the working directory.
+the working directory and must remain within it after processing ``..``
+components. For example, ``subdir/../result.txt`` is valid, while
+``../result.txt`` is rejected.
 
 Using absolute paths breaks isolation and can lead to incorrect results
 when running in parallel.

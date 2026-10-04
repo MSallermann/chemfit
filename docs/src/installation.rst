@@ -16,13 +16,13 @@ For the additional MPI dependency (see :ref:`mpi`) use
 
 .. code-block:: bash
 
-    pip install chemfit[mpi]
+    pip install "chemfit[mpi]"
 
 To install the latest development version, instead, use
 
 .. code-block:: bash
 
-    pip install git+https://github.com/MSallermann/ChemFit.git
+    pip install git+https://github.com/MSallermann/chemfit.git
 
 .. warning::
     The pip install **does not** install the SCME 2.0 code for you.

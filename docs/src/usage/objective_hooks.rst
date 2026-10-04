@@ -99,13 +99,6 @@ for every concurrent evaluation.
 Nested objectives
 -----------------
 
-.. warning::
-
-   **OUTDATED IN PART:** The hook and child-context semantics in this section
-   remain current, but its execution-policy and MPI setup guidance predates
-   prepared schedulers. The ``meta.children`` wording below is also stale;
-   serialized metadata is dictionary-shaped.
-
 By default, registration affects only the given objective. To instrument a
 combined objective and its nested terms, register after building the call tree:
 
@@ -128,14 +121,15 @@ combined objective and its nested terms, register after building the call tree:
 
 Each term runs with its own child context. Child summaries are collected under
 ``ctx.meta["children"]`` and contain ``parameters``, ``quantities``, ``loss``,
-and ``meta``, with further descendants under each child's ``meta.children``.
+and ``meta``, with further descendants under each child's
+``meta["children"]``.
 Parent timing includes nested work; child timing measures the individual term.
 
 Recursive registration follows distinct child evaluation scopes through
-combined objectives and fitter wrappers. Execution policies schedule the
-combined objective's terms; they do not introduce another objective or hook
-scope. Register hooks on the combined objective and, for MPI, construct the
-same hooked objective on every rank.
+combined objectives and fitter wrappers. Schedulers change where leaf
+objectives run; they do not introduce another objective or hook scope. Register
+hooks on the combined objective and, for MPI, construct the same hooked
+objective on every rank.
 
 The same hook instance is registered throughout the current tree. Terms added
 later are not automatically instrumented. Use distinct objective instances
@@ -146,21 +140,16 @@ expose their child scopes by implementing ``_child_objectives()``.
 Parallel execution
 ------------------
 
-.. warning::
-
-   **OUTDATED:** The MPI ``worker_loop(cob)`` and execution-policy guidance in
-   this section predates the scheduler migration. The advice about hook state,
-   serialization, and storing results in ``ctx.meta`` remains current.
-
 Register hooks before submitting work to a process executor. For MPI, register
-term hooks on every rank before nonzero ranks enter ``worker_loop(cob)``; registering
-only on rank zero does not update worker objectives.
+term hooks on every rank before nonzero ranks enter
+``MPITreeSchedule.worker_loop()``; registering only on rank zero does not
+update worker objectives.
 
 Hooks can execute concurrently or in another process. Do not append to a
 captured shared list, mutate global state, or keep start times on the hook
 instance. Such writes can race between threads and do not propagate back from
-worker processes. Store observations in ``ctx.meta`` instead, which the
-execution policies transport with evaluation results. ``ctx.temp`` is local
+worker processes. Store observations in ``ctx.meta`` instead, which executor
+and MPI schedules transport with evaluation results. ``ctx.temp`` is local
 scratch state and is not transported.
 
 Process-based hooks must be serializable. Prefer module-level hook classes

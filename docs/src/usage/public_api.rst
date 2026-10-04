@@ -1,178 +1,198 @@
 .. _public_api:
 
-Small public API (draft)
-========================
+Public API
+==========
 
-This thin facade implements the common workflow proposed in ``api_2.md``.
-The existing classes implement signature inference, reductions, and execution;
-the facade only supplies shorter names and convenience functions. Existing
-modules, constructors, decorators, and extension points remain available.
+The :mod:`chemfit` package exports the common workflow directly: wrap a
+quantity computation, attach a loss, combine terms, and fit parameters. The
+lower-level classes remain available for custom execution and optimization
+loops.
 
 Compute, attach a loss, combine, fit
-------------------------------------------
+------------------------------------
 
 .. code-block:: python
 
-    import chemfit
+   import chemfit
 
-    @chemfit.quantity
-    def simulate(params):
-        return {"density": params["sigma"] ** 2}
+   @chemfit.quantity()
+   def simulate(params):
+       return {"density": params["sigma"] ** 2}
 
-    def density_loss(q, reference):
-        return (q["density"] - reference) ** 2
+   def density_loss(quantities, *, reference):
+       return (quantities["density"] - reference) ** 2
 
-    density_term = simulate.with_loss(density_loss, reference=1.4)
-    objective = chemfit.combine(density_term)
+   density_term = simulate.with_loss(density_loss, reference=1.4)
+   objective = chemfit.combine(density_term)
 
-    result = chemfit.fit(
-        objective,
-        initial={"sigma": 1.0},
-        bounds={"sigma": (0.1, 3.0)},
-        optimizer="NgIohTuned",
-        budget=100,
-        workers=4,
-    )
+   result = chemfit.fit(
+       objective,
+       initial={"sigma": 1.0},
+       bounds={"sigma": (0.1, 3.0)},
+       optimizer="NgIohTuned",
+       budget=100,
+       workers=4,
+   )
 
-The one-shot ``fit`` function currently uses Nevergrad and returns a
-``FitResult`` containing the optimizer recommendation and evaluation contexts.
-Its two concurrency settings have separate meanings:
+:py:func:`chemfit.api.fit` uses Nevergrad and returns a
+:class:`~chemfit.api.FitResult`. ``result.recommendation`` is Nevergrad's
+recommended parameter mapping. ``best_parameters`` and ``best_loss`` identify
+the best optimizer-visible evaluation recorded by ChemFit, and ``contexts``
+contains one :class:`~chemfit.fitter.FitterEvaluateContext` per candidate slot.
 
-* ``workers`` is the number of candidate slots exposed to Nevergrad and the
+Concurrency in ``fit``
+----------------------
+
+The two worker settings have separate meanings:
+
+- ``workers`` is the number of candidate slots exposed to Nevergrad and the
   maximum number of candidates in one ask/evaluate/tell batch.
-* ``execution_workers`` is the maximum number of objective leaf tasks run at
+- ``execution_workers`` is the maximum number of objective leaf tasks run at
   once by the built-in thread scheduler. It defaults to ``workers``.
 
 Leaf tasks include independent terms within a combined objective, so the
 execution limit applies across both candidates and terms. For example,
 ``workers=4, execution_workers=8`` asks Nevergrad for batches of up to four
-candidates while allowing up to eight leaf tasks from that batch to execute at
+candidates while allowing up to eight leaf tasks from the batch to execute at
 once.
 
-Supplying ``executor=`` or ``scheduler=`` disables the built-in scheduler;
-that object then determines execution concurrency, and ``execution_workers``
-must be omitted. Use an explicit process executor for CPU-bound Python work.
-
-For advanced configuration or SciPy, use ``chemfit.Fitter``. Its constructor
-accepts ``initial=`` or the existing ``initial_params=`` spelling, but not both.
-It is the same class as ``chemfit.fitter.Fitter``, not a separate facade class.
+Supplying ``executor=`` or ``scheduler=`` replaces the built-in scheduler.
+That object determines execution concurrency, and ``execution_workers`` must
+be omitted. ``executor`` and ``scheduler`` are mutually exclusive. Use a
+process executor for CPU-bound Python work that does not release the GIL.
 
 Direct objectives and contexts
 ------------------------------
 
-.. code-block:: python
-
-    @chemfit.objective
-    def square(params, *, ctx):
-        ctx.meta["kind"] = "square"
-        return params["x"] ** 2
-
-    ctx = chemfit.Context()
-    loss = square({"x": 2.0}, ctx=ctx)
-
-``Context`` is an alias for ``EvaluateContext`` and ``Objective`` is an alias
-for ``ObjectiveFunctor``. These are not replacements with different runtime
-semantics. A context is created automatically if omitted.
-
-Optional keyword-only injection
-------------------------------------------
-
-The facade inspects callable signatures when adapting them:
-
-* Quantity functions and direct objectives may request ``ctx``.
-* Losses may request ``params`` and ``ctx``.
-* Aggregators receive child ``quantities`` and the parent ``ctx``.
-
-Injected arguments must be explicitly named and keyword-only. A bare
-``**kwargs`` does not request injection. The primary input is positional; its
-name is not prescribed. For example:
+Use :func:`chemfit.wrap_funcs.objective` for a function that already returns a
+scalar loss. Set ``pass_ctx=True`` when it needs the evaluation context:
 
 .. code-block:: python
 
-    def loss(q, reference, *, params, ctx):
-        ctx.meta["reference"] = reference
-        return (q["density"] - reference) ** 2 + params["sigma"] ** 2
+   @chemfit.objective(pass_ctx=True)
+   def square(params, *, ctx):
+       ctx.meta["kind"] = "square"
+       return params["x"] ** 2
 
-    def aggregator(terms, quantities, ctx):
-        ctx.meta["reduced_terms"] = len(terms)
-        return sum(terms)
+   ctx = chemfit.EvaluateContext()
+   loss = square({"x": 2.0}, ctx)
 
-    term = simulate.with_loss(loss, reference=1.4)
-    objective = chemfit.combine(term, aggregator=aggregator)
+The decorators do not infer context use from the callable signature.
+``pass_ctx=False`` is the default, in which case the wrapped callable receives
+only its parameter mapping plus arguments configured with ``bind``.
 
-Use ``.bind(...)`` for quantity-function configuration and ``.with_loss(...,
-reference=...)`` for loss configuration. Loss ``params`` and ``ctx`` are
-reserved for injection, not configuration keywords.
+Configuring wrapped functions and losses
+----------------------------------------
 
-Loss errors are propagated unchanged, without catching ``TypeError`` and
-retrying the user function with another calling convention. This now applies
-to all quantity computers, not just the short decorator. Legacy positional
-``loss(q, params)`` signatures are resolved at construction; the parameter
-argument must be named ``params``, ``parameters``, or ``p``. Bind other required
-configuration arguments explicitly through ``with_loss``.
-
-Existing function-wrapper constructors and decorators also infer keyword-only
-``ctx`` by default. Explicit ``pass_ctx=True`` or ``False`` remains available
-for compatibility, but is unnecessary for the common path.
-
-Composition and term execution
-------------------------------
-
-``combine(a, b)`` and ``combine([a, b])`` both accept existing objectives or
-plain functions. Plain functions are adapted using the same context-injection
-rules. Supply ``weights=[...]`` and either a simple ``reduction=`` callable or
-a context-aware ``aggregator=`` callable. The two options are mutually exclusive.
-
-To parallelize terms, provide a caller-owned executor:
+Use ``bind`` to specialize a wrapped quantity or objective function:
 
 .. code-block:: python
 
-    from concurrent.futures import ThreadPoolExecutor
-    from chemfit.executor_policy import ExecutorPolicy
-    from chemfit.objective_hooks import TimingHook
+   @chemfit.quantity()
+   def scaled(params, *, scale):
+       return {"value": scale * params["x"]}
 
-    with ThreadPoolExecutor(4) as executor:
-        objective = chemfit.combine(square, density_term)
-        objective.execution_policy = ExecutorPolicy(executor)
-        objective.register_eval_hook(TimingHook(), recursive=True)
-        loss = objective({"x": 2.0, "sigma": 1.0})
+   doubled = scaled.bind(scale=2.0)
 
-Hooks stay on the returned combined objective and run once around its
-evaluation. Its execution policy controls term scheduling. ``ExecutorPolicy``
-uses ``ctx.executor`` when present, otherwise its configured executor, and
-otherwise creates a thread pool lazily.
+Use keyword arguments to ``with_loss`` to bind loss configuration:
 
-Executors are driver-local resources. Do not assume candidate process
-parallelism automatically gives nested term parallelism.
+.. code-block:: python
 
-As before, separate terms sharing a quantity computer still compute it
-separately: no dependency-graph caching is introduced.
+   def squared_error(quantities, *, target):
+       return (quantities["value"] - target) ** 2
+
+   term = doubled.with_loss(squared_error, target=4.0)
+
+A loss function must accept either ``loss(quantities)`` or the legacy
+two-positional-argument form ``loss(quantities, parameters)`` after its
+configuration arguments are bound. Its signature is inspected when the
+objective is constructed. A ``TypeError`` raised inside the loss is propagated
+without retrying another calling convention.
+
+Composition
+-----------
+
+:py:func:`chemfit.api.combine` accepts objective terms as separate positional
+arguments:
+
+.. code-block:: python
+
+   objective = chemfit.combine(term_a, term_b, weights=[1.0, 0.5])
+
+Each term may be an
+:class:`~chemfit.abstract_objective_function.ObjectiveFunctor` or a plain
+``objective(parameters) -> float`` callable. Plain callables are wrapped
+without context injection.
+
+Use ``reduction=`` for a callable that receives the successful weighted term
+values. Use ``aggregator=`` when reduction also needs child quantities and the
+parent context:
+
+.. code-block:: python
+
+   def aggregate(terms, quantities, ctx):
+       ctx.meta["terms_with_quantities"] = sum(q is not None for q in quantities)
+       return sum(terms)
+
+   objective = chemfit.combine(term_a, term_b, aggregator=aggregate)
+
+``reduction`` and ``aggregator`` are mutually exclusive. Separate terms that
+share a quantity computer still compute it separately; composition does not
+introduce dependency caching.
+
+Batch evaluation and term execution
+-----------------------------------
+
+The convenience function :py:func:`chemfit.api.evaluate_many` evaluates a
+parameter batch through either an executor or a scheduler:
+
+.. code-block:: python
+
+   from concurrent.futures import ThreadPoolExecutor
+
+   with ThreadPoolExecutor(max_workers=4) as executor:
+       contexts = chemfit.evaluate_many(
+           objective,
+           [{"x": 1.0}, {"x": 2.0}],
+           executor=executor,
+       )
+
+It returns populated contexts in parameter-input order. The executor is owned
+by the caller. For direct access to completion order, schedule reuse, or MPI,
+use the scheduler interfaces described in :ref:`parallel_execution`.
+
+ASE and external programs
+-------------------------
+
+``chemfit.ase_quantity(atoms)`` constructs an
+:class:`~chemfit.ase_objective_function.ASEComputer` from an ``ase.Atoms``
+object, a path, or a zero-argument atoms factory. The optional ``index`` is
+valid only for path inputs.
+
+``chemfit.external_quantity(workdir)`` constructs an
+:class:`~chemfit.external_computer.ExternalQuantityComputer` rooted at that
+directory. Configure it with ``with_hook``, ``with_cmd``, ``with_parser``, and
+``wait_for``. See :ref:`ase_objective_function_api` and
+:ref:`external_computer` for their complete lifecycles.
 
 Manual fitting
 --------------
 
+For SciPy or a user-owned optimization loop, use
+:class:`~chemfit.fitter.Fitter`. Its constructor uses the
+``initial_params=`` spelling and accepts a scheduler:
+
 .. code-block:: python
 
-    fitter = chemfit.Fitter(square, initial={"x": 1.0})
-    fitter.start(workers=1)
-    try:
-        loss = fitter.evaluate({"x": 2.0})
-        # Feed loss to your external optimizer here.
-        fitter.step()
-    finally:
-        result = fitter.finish()
+   fitter = chemfit.Fitter(square, initial_params={"x": 1.0})
+   fitter.init(num_workers=1)
+   loss = fitter.evaluate({"x": 2.0})
+   # Feed loss to the external optimizer here.
+   fitter.step()
+   optimum = fitter.finish()
 
-``start``, ``evaluate``, and ``step`` delegate to the existing ``init``, ``ask``,
-and ``tell`` methods. They preserve existing batching and context-index
-behavior; ``evaluate`` does not yet accept an arbitrary ``ctx`` argument.
-Call ``finish`` to close resources owned by a manually started fitter session.
-The old method names remain available.
-
-Deferred design work
---------------------
-
-The following proposals remain outside this draft: backend classes and MPI
-facades, a session context manager, declarative error policies, shared quantity
-computation, a rich fit result object, and hiding or renaming existing internal
-classes. They should be designed independently rather than silently changing
-the existing lower-level API.
+``num_workers`` limits candidate batch size; the fitter's configured scheduler
+controls actual execution. ``evaluate`` accepts one mapping or a list of at
+most ``num_workers`` mappings, ``step`` dispatches callbacks for a completed
+optimizer step, and ``finish`` runs final callbacks and closes the prepared
+schedule. See :ref:`fitter` for the complete API.
