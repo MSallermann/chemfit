@@ -3,9 +3,11 @@
 ASE-Based Quantity Computers
 ============================
 
-The :mod:`chemfit.ase_objective_function` module provides one configurable
-:py:class:`~chemfit.ase_objective_function.ASEComputer`. It separates an ASE
-evaluation into three stages:
+Use :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>` to create an
+ASE-backed quantity computation from an ``ase.Atoms`` object, a structure
+path, or a zero-argument atoms factory. It returns the configurable
+:py:class:`~chemfit.ase_objective_function.ASEComputer` documented on this
+page. An ``ASEComputer`` separates evaluation into three stages:
 
 1. prepare a copy of the cached base structure and attach a fresh calculator;
 2. run one evaluation procedure;
@@ -19,9 +21,8 @@ Minimal example
 
 .. code-block:: python
 
+   import chemfit
    from ase.calculators.lj import LennardJones
-
-   from chemfit.ase_objective_function import ASEComputer, PathAtomsFactory
 
    def make_calculator(parameters, atoms, ctx):
        return LennardJones(
@@ -29,9 +30,8 @@ Minimal example
            sigma=parameters["sigma"],
        )
 
-   computer = ASEComputer(
-       atoms_factory=PathAtomsFactory("geometry.xyz"),
-       calculator_factory=make_calculator,
+   computer = chemfit.ase_quantity("geometry.xyz").with_calculator(
+       make_calculator
    )
 
    quantities = computer({"epsilon": 1.0, "sigma": 1.0})
@@ -40,6 +40,10 @@ Minimal example
 The default evaluator calls ``atoms.calc.calculate(atoms)``, so this is a
 single-point calculation. The default quantity processor returns the entries
 in ``calc.results`` and an additional ``"n_atoms"`` value.
+
+``chemfit.ase_quantity(...)`` has constructed an
+:py:class:`~chemfit.ase_objective_function.ASEComputer`. The sections below
+document its full calculator, evaluator, processor, setup, and caching API.
 
 Components
 ----------

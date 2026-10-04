@@ -3,9 +3,12 @@
 Combined Objective Functions
 ============================
 
-A :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-evaluates several objective terms for the same parameter set and then reduces
-the resulting term values to a single scalar loss.
+Use :func:`chemfit.combine() <chemfit.api.combine>` to combine objective terms
+in ordinary workflows.
+It returns a
+:py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`,
+which evaluates several terms for the same parameter set and reduces their
+values to a single scalar loss.
 
 This is the standard way to combine several fitting contributions into one
 objective. Typical examples are fitting against several datasets, several
@@ -36,7 +39,7 @@ A minimal example
 
 .. testcode::
 
-   from chemfit.combined_objective_function import CombinedObjectiveFunction
+   import chemfit
 
    def term1(params):
        return (params["x"] - 1.0) ** 2
@@ -44,10 +47,7 @@ A minimal example
    def term2(params):
        return (params["x"] - 3.0) ** 2
 
-   objective = CombinedObjectiveFunction(
-       objective_functions=[term1, term2],
-       weights=[0.5, 1.0],
-   )
+   objective = chemfit.combine(term1, term2, weights=[0.5, 1.0])
 
    loss = objective({"x": 2.0})
    print(loss) # 1.5
@@ -59,6 +59,10 @@ A minimal example
 
 This evaluates both terms for ``{"x": 2.0}``, multiplies them by the supplied
 weights, and then sums the weighted values.
+
+The returned object is a
+:py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+The remainder of this page documents that object's complete framework API.
 
 The terms do not need to be plain functions. Generic callables are accepted and
 wrapped internally. In practice many terms are instances of

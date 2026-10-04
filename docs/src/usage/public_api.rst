@@ -1,12 +1,14 @@
 .. _public_api:
+.. _common_workflows:
 
-Public API
-==========
+Common workflows
+================
 
-The :mod:`chemfit` package exports the common workflow directly: wrap a
-quantity computation, attach a loss, combine terms, and fit parameters. The
-lower-level classes remain available for custom execution and optimization
-loops.
+This is the recommended starting point for ordinary ChemFit work. The
+:mod:`chemfit` package exposes the common workflow directly: wrap a quantity
+computation, attach a loss, combine terms, and fit parameters. Each helper
+returns or uses the same framework objects documented in the advanced pages,
+so you can move down a layer without rewriting the scientific code.
 
 Compute, attach a loss, combine, fit
 ------------------------------------
@@ -34,11 +36,20 @@ Compute, attach a loss, combine, fit
        workers=4,
    )
 
+``chemfit.quantity()`` produces a
+:class:`~chemfit.wrap_funcs.WrappedQuantityComputer`, and ``with_loss()``
+turns it into an
+:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`.
+``chemfit.combine()`` returns a
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+
 :py:func:`chemfit.api.fit` uses Nevergrad and returns a
 :class:`~chemfit.api.FitResult`. ``result.recommendation`` is Nevergrad's
 recommended parameter mapping. ``best_parameters`` and ``best_loss`` identify
 the best optimizer-visible evaluation recorded by ChemFit, and ``contexts``
 contains one :class:`~chemfit.fitter.FitterEvaluateContext` per candidate slot.
+Internally, the helper configures a :class:`~chemfit.fitter.Fitter`; see
+:ref:`fitter` when you need direct lifecycle control, SciPy, or custom loops.
 
 Concurrency in ``fit``
 ----------------------
@@ -59,7 +70,8 @@ once.
 Supplying ``executor=`` or ``scheduler=`` replaces the built-in scheduler.
 That object determines execution concurrency, and ``execution_workers`` must
 be omitted. ``executor`` and ``scheduler`` are mutually exclusive. Use a
-process executor for CPU-bound Python work that does not release the GIL.
+process executor for CPU-bound Python work that does not release the GIL. See
+:ref:`parallel_execution` for executor ownership, prepared schedules, and MPI.
 
 Direct objectives and contexts
 ------------------------------
@@ -79,7 +91,9 @@ scalar loss. Set ``pass_ctx=True`` when it needs the evaluation context:
 
 The decorators do not infer context use from the callable signature.
 ``pass_ctx=False`` is the default, in which case the wrapped callable receives
-only its parameter mapping plus arguments configured with ``bind``.
+only its parameter mapping plus arguments configured with ``bind``. The
+returned :class:`~chemfit.wrap_funcs.WrappedObjectiveFunctor` participates in
+the full objective lifecycle described in :ref:`concepts`.
 
 Configuring wrapped functions and losses
 ----------------------------------------
@@ -124,21 +138,11 @@ Each term may be an
 ``objective(parameters) -> float`` callable. Plain callables are wrapped
 without context injection.
 
-Use ``reduction=`` for a callable that receives the successful weighted term
-values. Use ``aggregator=`` when reduction also needs child quantities and the
-parent context:
-
-.. code-block:: python
-
-   def aggregate(terms, quantities, ctx):
-       ctx.meta["terms_with_quantities"] = sum(q is not None for q in quantities)
-       return sum(terms)
-
-   objective = chemfit.combine(term_a, term_b, aggregator=aggregate)
-
-``reduction`` and ``aggregator`` are mutually exclusive. Separate terms that
-share a quantity computer still compute it separately; composition does not
-introduce dependency caching.
+The returned
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` also
+supports reducers, aggregators, exception handlers, child-context
+configuration, and mutation. Those semantics live in
+:ref:`combined_objective_functions` rather than being repeated here.
 
 Batch evaluation and term execution
 -----------------------------------
@@ -158,8 +162,10 @@ parameter batch through either an executor or a scheduler:
        )
 
 It returns populated contexts in parameter-input order. The executor is owned
-by the caller. For direct access to completion order, schedule reuse, or MPI,
-use the scheduler interfaces described in :ref:`parallel_execution`.
+by the caller. Underneath, it prepares the objective with a
+:class:`~chemfit.scheduling.Scheduler`. For direct access to completion order,
+schedule reuse, or MPI, use the interfaces described in
+:ref:`parallel_execution`.
 
 ASE and external programs
 -------------------------
@@ -167,32 +173,32 @@ ASE and external programs
 ``chemfit.ase_quantity(atoms)`` constructs an
 :class:`~chemfit.ase_objective_function.ASEComputer` from an ``ase.Atoms``
 object, a path, or a zero-argument atoms factory. The optional ``index`` is
-valid only for path inputs.
+valid only for path inputs. Continue with :ref:`ase_objective_function_api`
+for calculators, evaluators, processors, setup callbacks, and caching.
 
 ``chemfit.external_quantity(workdir)`` constructs an
 :class:`~chemfit.external_computer.ExternalQuantityComputer` rooted at that
 directory. Configure it with ``with_hook``, ``with_cmd``, ``with_parser``, and
-``wait_for``. See :ref:`ase_objective_function_api` and
-:ref:`external_computer` for their complete lifecycles.
+``wait_for``. See :ref:`external_computer` for the complete isolated-working-
+directory and parsing lifecycle.
 
-Manual fitting
---------------
+Going deeper
+------------
 
-For SciPy or a user-owned optimization loop, use
-:class:`~chemfit.fitter.Fitter`. Its constructor uses the
-``initial_params=`` spelling and accepts a scheduler:
+The convenience helpers are entry points, not a separate object model:
 
-.. code-block:: python
+- :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>` returns a
+  :class:`~chemfit.wrap_funcs.WrappedQuantityComputer`; see
+  :ref:`writing_quantity_computers` for custom implementations.
+- :func:`chemfit.combine() <chemfit.api.combine>` returns a
+  :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`;
+  see :ref:`combined_objective_functions` for its full behavior.
+- :func:`chemfit.fit() <chemfit.api.fit>` drives a
+  :class:`~chemfit.fitter.Fitter`; use that class
+  directly for SciPy, callbacks, custom optimizers, supplied contexts, or a
+  custom scheduler.
+- :func:`chemfit.evaluate_many() <chemfit.api.evaluate_many>` prepares a
+  :class:`~chemfit.scheduling.Scheduler`; see :ref:`parallel_execution` for
+  the lower-level request/result protocol.
 
-   fitter = chemfit.Fitter(square, initial_params={"x": 1.0})
-   fitter.init(num_workers=1)
-   loss = fitter.evaluate({"x": 2.0})
-   # Feed loss to the external optimizer here.
-   fitter.step()
-   optimum = fitter.finish()
-
-``num_workers`` limits candidate batch size; the fitter's configured scheduler
-controls actual execution. ``evaluate`` accepts one mapping or a list of at
-most ``num_workers`` mappings, ``step`` dispatches callbacks for a completed
-optimizer step, and ``finish`` runs final callbacks and closes the prepared
-schedule. See :ref:`fitter` for the complete API.
+The :ref:`concepts` page explains how all of these objects fit together.

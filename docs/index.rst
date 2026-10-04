@@ -35,9 +35,11 @@ In ChemFit, an objective function is typically built from two layers:
    computes intermediate quantities from a parameter dictionary.
 2. A loss function maps those quantities to a scalar loss.
 
-Multiple such objective terms can then be combined using
-:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-and optimized with :class:`~chemfit.fitter.Fitter`.
+The top-level helpers construct these framework objects for you: use
+:func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`, attach a loss with
+``with_loss()``, combine terms with
+:func:`chemfit.combine() <chemfit.api.combine>`, and optimize them with
+:func:`chemfit.fit() <chemfit.api.fit>`.
 
 In practical workflows, the quantity computation may be performed by an
 ASE calculator, an external simulation pipeline, or custom Python code.
@@ -63,8 +65,7 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
     ob = simulate.with_loss(square_deviation, target=2.0)
 
-    PARAMS = {"x": 1.0, "y": 2.0}
-    print(ob(PARAMS)) # <-- 9.0
+    print(ob({"x": 1.0, "y": 2.0})) # <-- 9.0
 
 .. testoutput::
     :hide:
@@ -131,77 +132,68 @@ where :math:`f` is an external parameter and then we combine them into an overal
 
     80.0
 
-The :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be customized in many ways.
-Details can be found in the dedicated :ref:`combined_objective_functions` page.
-
-The evaluation of the terms of a :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be parallelized in two ways:
-
-1. Executors which implement the :class:`~chemfit.abstract_objective_function.ExecutorLike` interface. For example from `concurrent.futures`.
-2. By launching multiple processes and using the message passing interface (MPI). See :ref:`mpi` for details.
-
-The following demonstrates executor-backed scheduling:
-
-.. testcode::
-
-    from chemfit.abstract_objective_function import EvaluateContext
-    from chemfit.executor_scheduler import ExecutorTreeScheduler
-    from concurrent.futures import ThreadPoolExecutor
-
-    with ThreadPoolExecutor(4) as executor:
-        scheduler = ExecutorTreeScheduler(executor=executor)
-        with scheduler.prepare(combined) as schedule:
-            print(schedule.evaluate(PARAMS, EvaluateContext()))
-
-.. testoutput::
-    :hide:
-
-    80.0
+``chemfit.combine()`` returns a
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+That object provides reducers, aggregators, exception handling, child
+contexts, mutation, and scheduler-backed execution; see
+:ref:`combined_objective_functions` when you need those controls.
 
 ====================
 Optimizing
 ====================
 
-In principle, objective functions defined with ChemFit can be optimized in any way you like.
-For convenience a :class:`~chemfit.fitter.Fitter` class is provided.
+Optimize the combined objective through the same top-level interface:
 
-It can be used as follows
+.. code-block:: python
 
-.. testcode::
+    result = chemfit.fit(
+        combined,
+        initial={"x": 1.0, "y": 2.0},
+        bounds={"x": (-2.0, 2.0), "y": (-2.0, 2.0)},
+        budget=100,
+        workers=4,
+    )
 
-    from chemfit.fitter import Fitter
-    import math
+    print(result.best_parameters)
+    print(result.best_loss)
 
-    fitter = Fitter(objective_function=combined, initial_params=PARAMS)
-
-    # fit with nevergrad
-    optimal_params = fitter.fit_nevergrad(budget=10) # <--- search solutions with a budget of 10
-
-    # fit with scipy
-    optimal_params = fitter.fit_scipy()
-
-    assert math.isclose(optimal_params["x"], 0.44721359813354555)
-    assert math.isclose(optimal_params["y"], 0.894427188104411)
-
-The :class:`~chemfit.fitter.Fitter` can be configured in many ways, for details refer to the :ref:`fitter` page.
-
-*************
-Contents
-*************
+``chemfit.fit()`` uses Nevergrad and returns a :class:`~chemfit.api.FitResult`.
+Use :class:`~chemfit.fitter.Fitter` directly for SciPy, callbacks, custom
+optimizer loops, or manual lifecycle control. Use the scheduler APIs for
+direct control over threads, processes, or MPI. The :ref:`common_workflows`,
+:ref:`fitter`, and :ref:`parallel_execution` pages continue from here.
 
 .. toctree::
-   :maxdepth: 3
+   :maxdepth: 2
+   :caption: Getting started
 
    src/installation
-   src/usage/concepts.rst
    src/usage/public_api.rst
-   src/usage/writing_quantity_computers.rst
-   src/usage/fitter.rst
-   src/usage/objective_hooks.rst
-   src/usage/parallel_execution.rst
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Using ChemFit
+
    src/usage/ase_objective_function_api.rst
    src/usage/external_computer.rst
    src/usage/combined_objective_function.rst
-   src/usage/mpi.rst
+   src/usage/fitter.rst
+   src/usage/parallel_execution.rst
    src/usage/example_scme.rst
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Understanding and advanced usage
+
+   src/usage/concepts.rst
+   src/usage/writing_quantity_computers.rst
+   src/usage/objective_hooks.rst
+   src/usage/mpi.rst
+   src/usage/evaluation_dashboard.rst
    src/development/development.rst
+
+.. toctree::
+   :maxdepth: 3
+   :caption: API reference
+
    src/api/modules

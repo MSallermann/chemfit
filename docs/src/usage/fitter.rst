@@ -1,11 +1,47 @@
 .. _fitter:
 
 ##################################
-Fitter
+Fitting
 ##################################
 
-The :py:class:`~chemfit.fitter.Fitter` class drives optimization of
-objective functions defined on parameter dictionaries.
+For an ordinary Nevergrad optimization, start with
+:func:`chemfit.fit() <chemfit.api.fit>`:
+
+.. code-block:: python
+
+    import chemfit
+
+    @chemfit.objective()
+    def objective(params):
+        return 2.0 * (params["x"] - 2) ** 2 + 3.0 * (params["y"] + 1) ** 2
+
+    result = chemfit.fit(
+        objective,
+        initial={"x": 0.0, "y": 0.0},
+        bounds={"x": (-5.0, 5.0), "y": (-5.0, 5.0)},
+        budget=100,
+        workers=4,
+    )
+
+    print(result.best_parameters)
+
+``chemfit.fit()`` creates and drives a
+:py:class:`~chemfit.fitter.Fitter` and returns a
+:class:`~chemfit.api.FitResult`. Candidate batching and objective execution
+concurrency can be configured independently; see :ref:`parallel_execution`.
+
+Use :class:`~chemfit.fitter.Fitter` directly when you need:
+
+- SciPy optimization;
+- custom optimizer loops;
+- callbacks or supplied contexts;
+- manual ``init``/``evaluate``/``step``/``finish`` lifecycle control;
+- a custom :class:`~chemfit.scheduling.Scheduler`.
+
+The remainder of this page documents that richer interface.
+
+The ``Fitter`` class drives optimization of objective functions defined on
+parameter dictionaries.
 
 The Fitter is responsible for driving the optimization process. Its evaluation
 interface consistently passes parameter dictionaries to the objective, while
@@ -31,7 +67,7 @@ ChemFit currently supports two optimization backends:
 2. :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`
 
 Custom optimizers can be connected through the user-driven
-``init``/``ask``/``tell`` interface.
+``init``/``evaluate``/``step``/``finish`` interface.
 
 Both operate on the same parameter-dictionary interface.
 
@@ -39,7 +75,7 @@ Both operate on the same parameter-dictionary interface.
 Basic usage
 ----------------------------------
 
-The minimal setup requires:
+Direct ``Fitter`` setup requires:
 
 1. an objective function
 2. a dictionary of initial parameters
@@ -59,7 +95,8 @@ The minimal setup requires:
     opt_params = fitter.fit_scipy()
     print(opt_params)
 
-The same objective can also be optimized with Nevergrad:
+The same ``Fitter`` can also run Nevergrad directly when its lower-level
+controls are needed:
 
 .. code-block:: python
 
