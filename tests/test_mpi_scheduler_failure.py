@@ -127,13 +127,13 @@ def test_unpickleable_worker_failure_reaches_rank_zero_as_mpi_error() -> None:
     """Reconstruct a serializable worker failure as MPIWorkerError."""
 
     objective = CombinedObjectiveFunction([CatastrophicLeaf()])
-    with objective.set_scheduler(mpi_scheduler.MPITreeScheduler()) as schedule:
+    with mpi_scheduler.MPITreeScheduler().prepare(objective) as schedule:
         if schedule.rank != 0:
             schedule.worker_loop()
             return
 
         expected = "Worker rank 1 failed with UnpickleableInterrupt: remote catastrophe"
         with pytest.raises(mpi_scheduler.MPIWorkerError, match=expected):
-            objective({"x": 1.0}, EvaluateContext())
+            schedule.evaluate({"x": 1.0}, EvaluateContext())
 
         assert schedule.closed

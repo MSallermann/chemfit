@@ -86,9 +86,10 @@ def test_gather_meta_data_mpi():
         "chemfit.mpi_scheduler", reason="Missing mpi4py"
     )
 
-    with COB.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+    scheduler = mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)
+    with scheduler.prepare(COB) as mpi:
         if mpi.rank == 0:
-            COB(INITIAL_PARAMS, ctx := EvaluateContext())
+            mpi.evaluate(INITIAL_PARAMS, ctx := EvaluateContext())
             meta_data = ctx.to_meta_data()["meta"]["children"]
 
             print(f"{meta_data = }")

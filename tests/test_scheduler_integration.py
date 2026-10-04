@@ -9,12 +9,9 @@ from typing import Any
 import pytest
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.combined_objective_function import (
-    CombinedObjectiveFunction,
-    SerialScheduler,
-)
+from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_scheduler import ExecutorTreeScheduler
-from chemfit.scheduling import EvaluationRequest, Scheduler
+from chemfit.scheduling import EvaluationRequest, Scheduler, SerialScheduler
 from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.wrap_funcs import quantity
 
@@ -378,7 +375,7 @@ def evaluate_serial_reference() -> tuple[list[Outcome], list[ContextState]]:
     ]
     outcomes: list[Outcome] = []
 
-    with objective.set_scheduler(SerialScheduler()) as schedule:
+    with SerialScheduler().prepare(objective) as schedule:
         for parameters, ctx in zip(ALL_PARAMETERS, contexts, strict=True):
             outcomes.append(evaluate_one(schedule, parameters, ctx))
 
@@ -397,7 +394,7 @@ def evaluate_batch(scheduler: Scheduler) -> tuple[list[Outcome], list[ContextSta
         for parameters, ctx in zip(ALL_PARAMETERS, contexts, strict=True)
     ]
 
-    with objective.set_scheduler(scheduler) as schedule:
+    with scheduler.prepare(objective) as schedule:
         completed = sorted(
             schedule.evaluate_many(requests),
             key=lambda result: result.index,
@@ -702,9 +699,8 @@ def test_mpi_composed_semantics_match_serial_reference() -> None:
         for parameters, ctx in zip(ALL_PARAMETERS, contexts, strict=True)
     ]
 
-    with objective.set_scheduler(
-        mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)
-    ) as schedule:
+    scheduler = mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)
+    with scheduler.prepare(objective) as schedule:
         if schedule.rank == 0:
             completed = sorted(
                 schedule.evaluate_many(requests),

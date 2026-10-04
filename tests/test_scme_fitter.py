@@ -251,11 +251,16 @@ def test_multi_energy_ob_function_fitting_mpi():
     )
 
     ob = construct_objective_function(REFERENCE_CONFIGS, REFERENCE_ENERGIES)
+    scheduler = mpi_scheduler.MPITreeScheduler()
 
-    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler()) as mpi:
-        if mpi.rank == 0:
-            fitter = Fitter(objective_function=ob, initial_params=INITIAL_PARAMS)
-            optimal_params = fitter.fit_scipy(tol=0, options={"maxiter": 50})
-            print(f"{optimal_params = }")
-        else:
-            mpi.worker_loop()
+    if scheduler.comm.Get_rank() == 0:
+        fitter = Fitter(
+            objective_function=ob,
+            initial_params=INITIAL_PARAMS,
+            scheduler=scheduler,
+        )
+        optimal_params = fitter.fit_scipy(tol=0, options={"maxiter": 50})
+        print(f"{optimal_params = }")
+    else:
+        with scheduler.prepare(ob) as schedule:
+            schedule.worker_loop()

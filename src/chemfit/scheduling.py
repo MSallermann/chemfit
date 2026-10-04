@@ -349,9 +349,7 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
         Args:
             objective: Root objective to prepare. For a combined objective,
-                preparation covers its complete nested call tree. Scheduler
-                settings attached to nested combined objectives do not apply
-                while they are executed through this root plan.
+                preparation covers its complete nested call tree.
             profile: Optional measured or user-supplied cost profile keyed by
                 nested objective path. Implementations may ignore the profile
                 if they do not perform cost-aware placement.
@@ -377,3 +375,39 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
         """
         ...
+
+
+class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
+    def __init__(self, ob: ObjectiveFunctor[ParametersT]) -> None:
+        """Initialize a reference serial schedule."""
+        super().__init__()
+        self.ob = ob
+
+    def evaluate_many(
+        self, requests: Sequence[EvaluationRequest[ParametersT]]
+    ) -> Iterator[EvaluationResult]:
+        for idx, req in enumerate(requests):
+            parameters = req.parameters
+            ctx = req.ctx
+            try:
+                self.ob._begin_evaluation(parameters, ctx)  # noqa: SLF001
+                value = self.ob._evaluate(parameters, ctx)  # noqa: SLF001
+                ctx.loss = value
+            except BaseException as e:
+                self.ob._end_evaluation(ctx, e)  # noqa: SLF001
+                raise
+            else:
+                self.ob._end_evaluation(ctx, None)  # noqa: SLF001
+
+            yield EvaluationResult(index=idx, value=value)
+
+
+class SerialScheduler(Scheduler[SerialSchedule[Any]]):
+    def prepare(
+        self,
+        objective: ObjectiveFunctor[ParametersT],
+        /,
+        *,
+        profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
+    ) -> SerialSchedule[ParametersT]:
+        return SerialSchedule(objective)
