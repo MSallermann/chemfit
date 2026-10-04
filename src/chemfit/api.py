@@ -1,12 +1,13 @@
 from collections.abc import (
     Callable,
+    Iterable,
     Mapping,
     Sequence,
 )
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, TypeVar, cast, overload
 
 from ase import Atoms
 
@@ -34,6 +35,20 @@ ParamsT = TypeVar("ParamsT", bound=Mapping[str, Any])
 ObjectiveLike = Callable[[ParamsT], float] | ObjectiveFunctor[ParamsT]
 
 
+@overload
+def combine(
+    args: Iterable[ObjectiveLike[ParamsT]],
+    /,
+    *,
+    weights: Sequence[float] | None = None,
+    reduction: Reducer | None = None,
+    aggregator: Aggregator | None = None,
+    exception_handler: ExceptionHandler = raising_exception_handler,
+    child_context_configurator: ChildContextConfigurator | None = None,
+) -> CombinedObjectiveFunction[ParamsT]: ...
+
+
+@overload
 def combine(
     *args: ObjectiveLike[ParamsT],
     weights: Sequence[float] | None = None,
@@ -41,9 +56,26 @@ def combine(
     aggregator: Aggregator | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
     child_context_configurator: ChildContextConfigurator | None = None,
+) -> CombinedObjectiveFunction[ParamsT]: ...
+
+
+def combine(
+    *args: ObjectiveLike[ParamsT] | Iterable[ObjectiveLike[ParamsT]],
+    weights: Sequence[float] | None = None,
+    reduction: Reducer | None = None,
+    aggregator: Aggregator | None = None,
+    exception_handler: ExceptionHandler = raising_exception_handler,
+    child_context_configurator: ChildContextConfigurator | None = None,
 ) -> CombinedObjectiveFunction[ParamsT]:
+    """Combine positional objective terms or a single iterable of terms."""
+
+    if len(args) == 1 and not callable(args[0]):
+        objective_functions = tuple(args[0])
+    else:
+        objective_functions = cast("tuple[ObjectiveLike[ParamsT], ...]", args)
+
     return CombinedObjectiveFunction(
-        objective_functions=args,
+        objective_functions=objective_functions,
         weights=weights,
         reduction=reduction,
         aggregator=aggregator,

@@ -113,17 +113,48 @@ Additional keyword-only arguments can be bound by
 Evaluators
 ----------
 
-An evaluator performs the ASE calculation that must finish before quantity
-extraction. Every computer has exactly one active evaluator.
+The evaluator is the action stage between calculator construction and quantity
+extraction. For each call, ``ASEComputer``:
 
-The default evaluator performs a single-point calculation. Advanced workflows
-can replace it with
+1. copies the cached base atoms into ``ctx.temp.atoms``;
+2. creates and attaches a fresh calculator using the current parameters;
+3. calls ``evaluator(parameters, atoms, ctx)``;
+4. passes the resulting atoms and calculator state to the quantity processors.
+
+The evaluator receives the evaluation-local atoms copy, with ``atoms.calc``
+already set. It should perform the calculation or simulation in place and
+return ``None``. Its return value is not used: calculated properties belong in
+``atoms.calc.results``, structural changes belong on ``atoms``, and additional
+per-evaluation state can be stored on ``ctx.temp``. Processors then read that
+post-evaluation state and turn it into the quantity dictionary.
+
+The default evaluator calls ``atoms.calc.calculate(atoms)``. A custom evaluator
+can instead request particular properties, run dynamics, optimize the
+structure, or combine several ASE operations. For example:
+
+.. code-block:: python
+
+   def calculate_energy_and_forces(parameters, atoms, ctx):
+       atoms.get_potential_energy()
+       forces = atoms.get_forces()
+       ctx.temp.maximum_force = abs(forces).max()
+
+   evaluated = computer.with_evaluator(calculate_energy_and_forces)
+
+Here the ASE property methods populate ``atoms.calc.results``. A later
+processor can read those results, the potentially modified atoms, and
+``ctx.temp.maximum_force``.
+
+Use
 :py:meth:`~chemfit.ase_objective_function.ASEComputer.with_evaluator`:
 
 .. code-block:: python
 
+   from ase import units
+   from ase.md.verlet import VelocityVerlet
+
    def run_md(parameters, atoms, ctx, *, timestep, steps):
-       dynamics = make_dynamics(atoms, timestep=timestep)
+       dynamics = VelocityVerlet(atoms, timestep=timestep * units.fs)
        dynamics.run(steps)
        ctx.temp.md_steps = steps
 
@@ -133,9 +164,16 @@ can replace it with
        steps=1000,
    )
 
-The evaluator receives the same context used by calculator construction and
-quantity extraction. These callbacks can therefore communicate through
-``ctx.temp`` without storing evaluation state on the computer.
+Additional keyword arguments are bound to the evaluator. Every computer has
+exactly one active evaluator, so each ``with_evaluator()`` call replaces the
+previous evaluator rather than appending another stage. It returns a configured
+copy; the source computer is unchanged.
+
+The calculator factory, evaluator, and processors all receive the same
+context. They can therefore communicate through ``ctx.temp`` without storing
+evaluation state on the computer. If the evaluator raises an exception,
+processors are not run and the exception follows the enclosing objective's
+usual error handling.
 
 Geometry minimization
 ---------------------

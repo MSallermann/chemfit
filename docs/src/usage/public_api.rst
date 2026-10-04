@@ -95,8 +95,14 @@ only its parameter mapping plus arguments configured with ``bind``. The
 returned :class:`~chemfit.wrap_funcs.WrappedObjectiveFunctor` participates in
 the full objective lifecycle described in :ref:`concepts`.
 
-Configuring wrapped functions and losses
-----------------------------------------
+Fluent configuration and chaining
+---------------------------------
+
+ChemFit configuration methods are designed to chain. ``bind()``, the
+``with_*()`` methods, ``wait_for()``, and ASE's ``minimize()`` return a
+configured object and leave the object they were called on unchanged. Read a
+chain from top to bottom: create a quantity computer, add or replace its
+configuration, and finally attach a loss to produce an objective term.
 
 Use ``bind`` to specialize a wrapped quantity or objective function:
 
@@ -117,21 +123,78 @@ Use keyword arguments to ``with_loss`` to bind loss configuration:
 
    term = doubled.with_loss(squared_error, target=4.0)
 
-A loss function must accept either ``loss(quantities)`` or the legacy
-two-positional-argument form ``loss(quantities, parameters)`` after its
-configuration arguments are bound. Its signature is inspected when the
-objective is constructed. A ``TypeError`` raised inside the loss is propagated
-without retrying another calling convention.
+A loss function must accept either ``loss(quantities)`` or
+``loss(quantities, parameters)`` after its configuration arguments are bound.
+If both forms are valid, ChemFit calls the loss with ``quantities`` only.
+
+The same style configures integrations without a large constructor call. For
+example, an external-program term can be assembled as one pipeline:
+
+.. code-block:: python
+
+   term = (
+       chemfit.external_quantity("runs")
+       .with_hook(write_input, template="input.template")
+       .with_cmd(run_model, executable="my-model")
+       .with_parser(parse_output, "results.json")
+       .wait_for("task.done")
+       .with_loss(squared_error, target=reference)
+   )
+
+Here ``with_hook()`` and ``with_cmd()`` append execution steps in call order,
+``with_parser()`` appends an output parser, and ``wait_for()`` adds a completion
+file. Keyword arguments supplied to ``bind()``, ``with_loss()``,
+``with_hook()``, ``with_cmd()``, ``with_calculator()``, ``with_evaluator()``,
+and ``with_processor()`` are bound to the corresponding callable.
+
+The main fluent families are:
+
+- Every :class:`~chemfit.abstract_objective_function.QuantityComputer` has
+  :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`,
+  which ends the quantity-building chain and returns an objective term.
+- :class:`~chemfit.ase_objective_function.ASEComputer` provides
+  :meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_setup`,
+  :meth:`~chemfit.ase_objective_function.ASEComputer.with_calculator`,
+  :meth:`~chemfit.ase_objective_function.ASEComputer.with_evaluator`, and
+  :meth:`~chemfit.ase_objective_function.ASEComputer.with_processor`. Setup
+  callbacks and processors append; calculator and evaluator configuration
+  replace the previous value.
+  :meth:`~chemfit.ase_objective_function.ASEComputer.minimize` replaces the
+  evaluator with the built-in BFGS workflow. See
+  :ref:`ase_objective_function_api`.
+- :class:`~chemfit.external_computer.ExternalQuantityComputer` provides
+  :meth:`~chemfit.external_computer.ExternalQuantityComputer.with_hook`,
+  :meth:`~chemfit.external_computer.ExternalQuantityComputer.with_cmd`, and
+  :meth:`~chemfit.external_computer.ExternalQuantityComputer.with_parser`;
+  all append to the pipeline.
+  :meth:`~chemfit.external_computer.ExternalQuantityComputer.wait_for` adds
+  completion files. See :ref:`external_computer`.
+- Wrapped Python quantities and objectives provide
+  :meth:`~chemfit.wrap_funcs.WrappedQuantityComputer.bind` and
+  :meth:`~chemfit.wrap_funcs.WrappedObjectiveFunctor.bind` for specializing
+  additional callable arguments.
+
+Because the source object is unchanged, it can be used as a reusable base for
+multiple variants:
+
+.. code-block:: python
+
+   base = chemfit.ase_quantity(atoms).with_calculator(make_calculator)
+   energy_term = base.with_processor(read_energy).with_loss(energy_loss)
+   force_term = base.with_processor(read_forces).with_loss(force_loss)
 
 Composition
 -----------
 
 :py:func:`chemfit.api.combine` accepts objective terms as separate positional
-arguments:
+arguments or as one iterable:
 
 .. code-block:: python
 
    objective = chemfit.combine(term_a, term_b, weights=[1.0, 0.5])
+
+   terms = (make_term(index) for index in range(10))
+   objective = chemfit.combine(terms)
 
 Each term may be an
 :class:`~chemfit.abstract_objective_function.ObjectiveFunctor` or a plain
@@ -187,9 +250,28 @@ Going deeper
 
 The convenience helpers are entry points, not a separate object model:
 
+All of :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`,
+:func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>`, and
+:func:`chemfit.external_quantity() <chemfit.api.external_quantity>` return a
+subclass of :class:`~chemfit.abstract_objective_function.QuantityComputer`,
+which provides the general evaluation semantics and
+:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`.
+
+More specifically:
+
 - :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>` returns a
-  :class:`~chemfit.wrap_funcs.WrappedQuantityComputer`; see
-  :ref:`writing_quantity_computers` for custom implementations.
+  :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` for wrapping ordinary
+  Python functions; see :ref:`writing_quantity_computers` for custom
+  implementations.
+- :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>` returns an
+  :class:`~chemfit.ase_objective_function.ASEComputer` used with ASE
+  calculators; see :ref:`ase_objective_function_api`.
+- :func:`chemfit.external_quantity() <chemfit.api.external_quantity>` returns
+  an :class:`~chemfit.external_computer.ExternalQuantityComputer` for working
+  with external executables; see :ref:`external_computer`.
+
+The remaining helpers connect these objects to composition and execution:
+
 - :func:`chemfit.combine() <chemfit.api.combine>` returns a
   :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`;
   see :ref:`combined_objective_functions` for its full behavior.
