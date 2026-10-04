@@ -6,6 +6,7 @@ import math
 import random
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -21,9 +22,10 @@ from chemfit.abstract_objective_function import (
     QuantityComputerObjectiveFunction,
 )
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_policy import ExecutorPolicy
-from chemfit.mpi_policy import MPIPolicy
-from chemfit.wrap_funcs import to_quantity_computer
+from chemfit.executor_scheduler import ExecutorTreeScheduler
+from chemfit.mpi_scheduler import MPITreeSchedule, MPITreeScheduler
+from chemfit.scheduling import SerialScheduler
+from chemfit.wrap_funcs import quantity
 
 
 def gil_sleep_busy(seconds: float) -> None:
@@ -32,7 +34,7 @@ def gil_sleep_busy(seconds: float) -> None:
         pass
 
 
-@to_quantity_computer(pass_ctx=True)
+@quantity(pass_ctx=True)
 def do_stuff(parameters: dict[str, Any], ctx: EvaluateContext):
     if ctx.config.release_gil:
         time.sleep(ctx.config.wait_time)
@@ -74,92 +76,113 @@ class BenchmarkResult:
     time_taken_list: list[dict]
 
 
-def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
-    time_taken_list = []
-    client = None
-    executor = None
-    executor_policy = None
+def make_scheduler(bm_params: BenchmarkParams, resources: ExitStack):
+    method = Method(bm_params.method)
 
-    if bm_params.method == Method.threadpool:
-        executor = ThreadPoolExecutor(max_workers=bm_params.n_workers)
-        executor_policy = ExecutorPolicy(executor)
-    elif bm_params.method == Method.loky_processpool:
-        executor = ProcessPoolExecutor(max_workers=bm_params.n_workers)
-        executor_policy = ExecutorPolicy(executor)
-    elif bm_params.method == Method.dask:
-        client = Client(scheduler_file="./scheduler.json")
-        executor_policy = ExecutorPolicy(client.get_executor())
-
-    for n_terms in bm_params.n_terms_list:
-        terms = [
-            QuantityComputerObjectiveFunction(
-                loss_function=rmsd, quantity_computer=do_stuff
-            )
-            for _ in range(n_terms)
-        ]
-        mpi_policy = (
-            MPIPolicy(mpi_debug_log=False) if bm_params.method == Method.mpi else None
+    if method == Method.threadpool:
+        executor = resources.enter_context(
+            ThreadPoolExecutor(max_workers=bm_params.n_workers)
         )
-        execution_policy = mpi_policy if mpi_policy is not None else executor_policy
-        cob = CombinedObjectiveFunction(terms, execution_policy=execution_policy)
-        if mpi_policy is not None and mpi_policy.rank != 0:
-            mpi_policy.worker_loop(cob)
-            continue
+        return ExecutorTreeScheduler(executor=executor)
 
-        for n_params in bm_params.n_params_list:
-            params = {chr(i): float(i) for i in range(n_params)}
+    if method == Method.loky_processpool:
+        executor = resources.enter_context(
+            ProcessPoolExecutor(max_workers=bm_params.n_workers)
+        )
+        return ExecutorTreeScheduler(executor=executor)
 
-            ctx = EvaluateContext()
-            ctx.config.release_gil = bm_params.release_gil
+    if method == Method.dask:
+        scheduler_file = Path(__file__).with_name("scheduler.json")
+        client = resources.enter_context(
+            Client(scheduler_file=str(scheduler_file), timeout="30s")
+        )
+        if bm_params.n_workers is not None:
+            client.wait_for_workers(bm_params.n_workers, timeout=30.0)
+        return ExecutorTreeScheduler(executor=client.get_executor())
 
-            for wait_time in bm_params.wait_times:
-                ctx.config.wait_time = wait_time
+    if method == Method.mpi:
+        return MPITreeScheduler(mpi_debug_log=False)
 
-                # some warmup iterations
-                for _ in range(bm_params.n_warmup):
-                    cob(params, ctx)
+    return SerialScheduler()
 
-                _time_total = 0.0
 
-                for i_eval in range(bm_params.n_evals):
-                    print(
-                        f"{n_terms = } {n_params = } {wait_time = }, eval {i_eval + 1} / {bm_params.n_evals}"
-                    )
+def make_objective(n_terms: int) -> CombinedObjectiveFunction:
+    terms = [
+        QuantityComputerObjectiveFunction(
+            loss_function=rmsd,
+            quantity_computer=do_stuff,
+        )
+        for _ in range(n_terms)
+    ]
+    return CombinedObjectiveFunction(terms)
 
-                    # different parameters each time, so nothing get get cached or anything funny like that
-                    params = {chr(i): random.random() for i in range(n_params)}  # noqa: S311
 
-                    # We only time the eval part
-                    time_start = time.perf_counter()
-                    res = cob(params, ctx)
-                    _time_total += time.perf_counter() - time_start
+def benchmark_objective(
+    cob: CombinedObjectiveFunction,
+    bm_params: BenchmarkParams,
+    n_terms: int,
+    time_taken_list: list[dict],
+) -> None:
+    for n_params in bm_params.n_params_list:
+        params = {chr(i): float(i) for i in range(n_params)}
 
-                    # Ensure the results are correct
-                    expected = cob.n_terms() * sum(v**2 for v in params.values())
+        ctx = EvaluateContext()
+        ctx.config.release_gil = bm_params.release_gil
 
-                    print(f"   {res = }")
-                    print(f"   {expected = }")
+        for wait_time in bm_params.wait_times:
+            ctx.config.wait_time = wait_time
 
-                    assert math.isclose(res, expected)
+            for _ in range(bm_params.n_warmup):
+                cob(params, ctx)
 
-                avg_time = _time_total / bm_params.n_evals
-                time_taken_list.append(
-                    {
-                        "n_params": n_params,
-                        "n_terms": n_terms,
-                        "wait_time": wait_time,
-                        "time_taken": avg_time,
-                    }
+            time_total = 0.0
+
+            for i_eval in range(bm_params.n_evals):
+                print(
+                    f"{n_terms = } {n_params = } {wait_time = }, "
+                    f"eval {i_eval + 1} / {bm_params.n_evals}"
                 )
 
-        if mpi_policy is not None:
-            mpi_policy.release_workers()
+                # Use different parameters so neither backend nor objective caches
+                # can turn repeated benchmark iterations into no-op evaluations.
+                params = {chr(i): random.random() for i in range(n_params)}  # noqa: S311
 
-    if executor is not None:
-        executor.shutdown()
+                # Scheduler construction, worker startup, and warmup are excluded.
+                time_start = time.perf_counter()
+                res = cob(params, ctx)
+                time_total += time.perf_counter() - time_start
 
-    if client is not None:
-        client.close()
+                expected = cob.n_terms() * sum(v**2 for v in params.values())
+
+                print(f"   {res = }")
+                print(f"   {expected = }")
+
+                assert math.isclose(res, expected)
+
+            time_taken_list.append(
+                {
+                    "n_params": n_params,
+                    "n_terms": n_terms,
+                    "wait_time": wait_time,
+                    "time_taken": time_total / bm_params.n_evals,
+                }
+            )
+
+
+def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
+    time_taken_list = []
+
+    with ExitStack() as resources:
+        scheduler = make_scheduler(bm_params, resources)
+
+        for n_terms in bm_params.n_terms_list:
+            cob = make_objective(n_terms)
+            with scheduler.prepare(cob) as schedule:
+                if isinstance(schedule, MPITreeSchedule) and schedule.rank != 0:
+                    schedule.worker_loop()
+                    continue
+
+                benchmark_objective(cob, bm_params, n_terms, time_taken_list)
 
     return BenchmarkResult(
         params=bm_params,

@@ -14,7 +14,7 @@ wait_times = [
     2048e-5
 ]
 n_params_list = [10]
-n_terms_list = [12]
+n_terms_list = [10]
 n_evals = 40
 n_workers = 4
 
