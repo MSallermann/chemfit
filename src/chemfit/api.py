@@ -19,7 +19,6 @@ from chemfit.combined_objective_function import (
     ExceptionHandler,
     Reducer,
     raising_exception_handler,
-    sum_reducer,
 )
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.external_computer import ExternalQuantityComputer
@@ -38,7 +37,8 @@ ObjectiveLike = Callable[[ParamsT], float] | ObjectiveFunctor[ParamsT]
 def combine(
     *args: ObjectiveLike[ParamsT],
     weights: Sequence[float] | None = None,
-    reduction: Reducer | Aggregator = sum_reducer,
+    reduction: Reducer | None = None,
+    aggregator: Aggregator | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
     child_context_configurator: ChildContextConfigurator | None = None,
 ) -> CombinedObjectiveFunction[ParamsT]:
@@ -46,6 +46,7 @@ def combine(
         objective_functions=args,
         weights=weights,
         reduction=reduction,
+        aggregator=aggregator,
         exception_handler=exception_handler,
         child_context_configurator=child_context_configurator,
     )

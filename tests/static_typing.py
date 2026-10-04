@@ -149,7 +149,7 @@ if TYPE_CHECKING:
 
     combined_with_aggregator = CombinedObjectiveFunction(
         [wrapped_objective],
-        reduction=aggregate_values,
+        aggregator=aggregate_values,
     )
     assert_type(combined_with_aggregator, CombinedObjectiveFunction[Parameters])
 
@@ -164,7 +164,7 @@ if TYPE_CHECKING:
 
     CombinedObjectiveFunction(
         [wrapped_objective],
-        reduction=aggregator_requiring_quantities,  # pyright: ignore[reportArgumentType]
+        aggregator=aggregator_requiring_quantities,  # pyright: ignore[reportArgumentType]
     )
 
     # Objectives with incompatible parameter value types must not be combined,

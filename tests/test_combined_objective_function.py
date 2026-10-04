@@ -84,6 +84,7 @@ def std_reducer(terms: list[float]) -> float:
 
 REDUCERS = [
     combined_objective_function.sum_reducer,
+    sum,
     std_reducer,
 ]
 
@@ -346,7 +347,7 @@ def test_aggregator(executor: Executor):
             q1.bind(f=1).with_loss(lambda _: 0.0),
             q1.bind(f=2).with_loss(lambda _: 0.0),
         ],
-        reduction=custom_aggregator,
+        aggregator=custom_aggregator,
     )
 
     with ExecutorTreeScheduler(executor=executor).prepare(cob) as schedule:
@@ -355,6 +356,22 @@ def test_aggregator(executor: Executor):
 
     assert math.isclose(res, 8.0)
     assert ctx.meta["foo"] == "bar"
+
+
+def test_reducer_and_aggregator_are_mutually_exclusive():
+    def custom_aggregator(
+        terms: list[float],
+        _quantities: list[dict[str, Any] | None],
+        _ctx: EvaluateContext,
+    ) -> float:
+        return sum(terms)
+
+    with pytest.raises(ValueError, match="either `reduction` or `aggregator`"):
+        combined_objective_function.CombinedObjectiveFunction(
+            make_funcs(),
+            reduction=sum,
+            aggregator=custom_aggregator,
+        )
 
 
 @pytest.mark.parametrize("executor", EXECUTORS)

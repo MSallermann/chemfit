@@ -257,7 +257,7 @@ def make_combined(
         terms,
         weights=weights,
         child_context_configurator=configure_child_context,
-        reduction=RecordingAggregator(name, offset),
+        aggregator=RecordingAggregator(name, offset),
         exception_handler=exception_handler,
     )
 

@@ -52,11 +52,20 @@ def test_public_api_workflow(tmp_path: Path):
         .with_loss(lambda quantities: (quantities["n_atoms"] - 2) ** 2)
     )
 
+    def aggregate(
+        terms: list[float],
+        quantities: list[dict[str, object] | None],
+        ctx: chemfit.EvaluateContext,
+    ) -> float:
+        ctx.meta["quantity_terms"] = sum(value is not None for value in quantities)
+        return sum(terms)
+
     objective = chemfit.combine(
         model.bind(scale=2.0).with_loss(squared_error, target=4.0),
         external_term,
         ase_term,
         lambda parameters: (parameters["x"] - 2.0) ** 2,
+        aggregator=aggregate,
     )
 
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -69,6 +78,7 @@ def test_public_api_workflow(tmp_path: Path):
     assert [ctx.loss for ctx in contexts] == [6.0, 0.0]
     assert contexts[0].meta["children"][1]["quantities"] == {"value": 1.0}
     assert "energy" in contexts[0].meta["children"][2]["quantities"]
+    assert contexts[0].meta["quantity_terms"] == 3
 
     result = chemfit.fit(
         objective,

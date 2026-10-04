@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import inspect
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import Any, Generic, Protocol, TypeVar
 
 from typing_extensions import Self
 
@@ -120,8 +119,9 @@ class CombinedObjectiveFunction(
         objective_functions: Sequence[ObjectiveLike[ParametersT]],
         weights: Sequence[float] | None = None,
         child_context_configurator: ChildContextConfigurator | None = None,
-        reduction: Reducer | Aggregator = sum_reducer,
+        reduction: Reducer | None = None,
         exception_handler: ExceptionHandler = raising_exception_handler,
+        aggregator: Aggregator | None = None,
     ) -> None:
         """
         Initialize a combined objective from multiple weighted terms.
@@ -129,8 +129,8 @@ class CombinedObjectiveFunction(
         Each objective term is evaluated independently in its own child
         context. The resulting term values are multiplied by their
         corresponding weights, optionally filtered through
-        ``exception_handler`` if evaluation fails, and then combined using
-        ``reduction``.
+        ``exception_handler`` if evaluation fails, and then combined by the
+        configured reducer or aggregator.
 
         Generic callables are automatically wrapped as ``ObjectiveFunctor``
         instances.
@@ -142,17 +142,20 @@ class CombinedObjectiveFunction(
                 ``None``, all weights default to ``1.0``.
             child_context_configurator: Optional callable used to configure
                 each spawned child context before term evaluation.
-            reduction: Callable used to reduce the list of weighted term
-                values to a single scalar loss. Can be either a simple reducer,
-                or the more advanced Aggregator, which can make use of the full context
-                and the quantities.
+            reduction: Callable that reduces the list of weighted term values
+                to a scalar. Defaults to :func:`sum_reducer`. Mutually exclusive
+                with ``aggregator``.
             exception_handler: Callable used to handle exceptions raised
                 during term evaluation. It may return a replacement value or
                 ``None`` to skip the term entirely.
+            aggregator: Context-aware callable that reduces weighted term values
+                using child quantities and the parent context. Mutually exclusive
+                with ``reduction``.
 
         Raises:
             AssertionError: If the number of weights does not match the
                 number of objective functions, or if any weight is negative.
+            ValueError: If both ``reduction`` and ``aggregator`` are supplied.
 
         """
 
@@ -163,14 +166,15 @@ class CombinedObjectiveFunction(
 
         self.child_context_configurator = child_context_configurator
 
-        # TODO(MS): Replace signature-length inspection with an explicit,  # noqa: TD003
-        # reliable way to distinguish reducers from aggregators.
-        if len(inspect.signature(reduction).parameters) == 1:
-            reduction = cast("Reducer", reduction)
-            self.reduction: Aggregator = WrappedReducer(reduction)
+        if reduction is not None and aggregator is not None:
+            msg = "Specify either `reduction` or `aggregator`, not both."
+            raise ValueError(msg)
+
+        if aggregator is None:
+            reducer = sum_reducer if reduction is None else reduction
+            self.reduction: Aggregator = WrappedReducer(reducer)
         else:
-            reduction = cast("Aggregator", reduction)
-            self.reduction: Aggregator = reduction
+            self.reduction = aggregator
 
         self.exception_handler = exception_handler
 

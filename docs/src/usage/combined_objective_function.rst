@@ -230,8 +230,10 @@ An aggregator has the richer signature
    ) -> float:
        ...
 
-If ChemFit sees that the reduction callable takes only one argument, it treats it
-as a simple reducer. If it takes three arguments, it treats it as an aggregator.
+Pass a simple reducer with ``reduction=`` and a context-aware aggregator with
+``aggregator=``. These options are mutually exclusive. The distinction is
+explicit, so callable objects, built-ins, and functions with optional parameters
+do not need to be classified from their signatures.
 
 The difference is that an aggregator can inspect both the term values and the
 child quantities, and it can write additional information into the parent context.
@@ -268,7 +270,7 @@ The following example is based on the actual test setup.
            q1.bind(f=1).with_loss(lambda q: 0.0),
            q1.bind(f=2).with_loss(lambda q: 0.0),
        ],
-       reduction=custom_aggregator,
+       aggregator=custom_aggregator,
    )
 
    ctx = EvaluateContext()
