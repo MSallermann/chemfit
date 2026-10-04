@@ -4,9 +4,11 @@
 External Quantity Computers
 ===========================
 
-The :py:class:`~chemfit.external_computer.ExternalQuantityComputer`
-runs an external command in a temporary working directory and parses the
-resulting output files into a quantity dictionary.
+Use :func:`chemfit.external_quantity() <chemfit.api.external_quantity>` to
+start an external-program quantity pipeline. It returns an
+:py:class:`~chemfit.external_computer.ExternalQuantityComputer`, which runs
+commands in isolated temporary working directories and parses their output
+files into quantity dictionaries.
 
 This is the standard way to integrate external simulation codes into ChemFit.
 
@@ -29,8 +31,9 @@ Consider an external script with a command-line interface, which does the follow
 
     The full script can be found in the unit tests at `<https://github.com/MSallermann/chemfit/tests/input/square_function.py>`_.
 
-In this example we will use the :py:class:`~chemfit.external_computer.ExternalQuantityComputer` to determine the
-pre-factor :math:`A`.
+In this example we use ``chemfit.external_quantity(...)`` to determine the
+pre-factor :math:`A`. The returned ``ExternalQuantityComputer`` exposes the
+full pipeline API documented below.
 
 Before we can start we should define how our external command can be called.
 For maximum flexibility, the command is provided as a function that accepts
@@ -95,18 +98,28 @@ Now we're ready to wire everything up:
 
 .. code-block:: python
 
-    from chemfit.external_computer import ExternalQuantityComputer
+    import chemfit
 
     ob = (
-        ExternalQuantityComputer(base_working_directory=".")
+        chemfit.external_quantity(".")
         .with_cmd(callable_cmd, script_file=script_file, output_file="output.txt")
         .with_parser(my_output_parser, "output.txt")
         .with_loss(loss_function, ref_y=ref_quantities["y"])
     )
 
-    initial_guess = {"prefactor": 0.01}
-    fitter = Fitter(ob, initial_params=initial_guess)
-    opt_params = fitter.fit_scipy()
+    result = chemfit.fit(
+        ob,
+        initial={"prefactor": 0.01},
+        bounds={"prefactor": (0.0, 10.0)},
+        budget=100,
+    )
+
+``chemfit.external_quantity(...)`` is only the concise constructor. The rest
+of this page documents the returned
+:py:class:`~chemfit.external_computer.ExternalQuantityComputer`, including its
+commands, hooks, parsers, polling, temporary-directory lifecycle, and failure
+handling. Use :class:`~chemfit.fitter.Fitter` directly when this workflow needs
+SciPy or manual optimizer control.
 
 The entire example can be found in the tests.
 

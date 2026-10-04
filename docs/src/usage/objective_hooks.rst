@@ -5,11 +5,12 @@ Evaluation hooks
 
 Evaluation hooks attach instrumentation to an
 :class:`~chemfit.abstract_objective_function.ObjectiveFunctor` without changing
-its evaluation implementation. A hook is an object with ``pre_eval(ctx)``,
-``post_eval(ctx)``, or both methods. No hook base class is required.
-Hooks receive the evaluation context and should store their output there.
-Register hooks on the objective produced by ``computer.with_loss(...)``, not
-on the quantity computer itself.
+its evaluation implementation. Register either a hook object with
+``pre_eval(ctx)`` and/or ``post_eval(ctx)`` methods, or pass ordinary callables
+through the ``pre=`` and ``post=`` keyword arguments. No hook base class is
+required. Callbacks receive the evaluation context and should store their
+output there. Register them on the objective produced by
+``computer.with_loss(...)``, not on the quantity computer itself.
 
 Built-in hooks
 --------------
@@ -63,6 +64,34 @@ whether evaluation succeeded:
 
 For a one-sided hook, simply omit the other method. Keep hook instance
 attributes for configuration, not mutable per-evaluation state.
+
+Registering functions directly
+------------------------------
+
+For callbacks that do not need a configuration object, pass functions
+directly with ``pre=`` and ``post=``:
+
+.. code-block:: python
+
+    def mark_running(ctx):
+        ctx.meta["status"] = "running"
+
+    def record_outcome(ctx):
+        ctx.meta["status"] = (
+            "failed" if ctx.temp.exception is not None else "completed"
+        )
+
+    objective.register_eval_hook(
+        pre=mark_running,
+        post=record_outcome,
+    )
+
+Either keyword may be supplied on its own, or both may be registered in one
+call. At least one callback is required. The ``hook=`` form is mutually
+exclusive with ``pre=`` and ``post=``; use either a hook object or direct
+callbacks in a given registration. ``recursive=True`` applies the supplied
+pre- and post-callbacks to the current descendant objectives in exactly the
+same way as it does for a hook object.
 
 Lifecycle and errors
 --------------------

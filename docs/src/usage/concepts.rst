@@ -10,6 +10,18 @@ objective functions are structured and evaluated.
 The goal is to provide a mental model that helps you design your own
 objective functions and understand how ChemFit executes them.
 
+Most workflows begin with top-level helpers such as
+:func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`,
+:func:`chemfit.combine() <chemfit.api.combine>`, and
+:func:`chemfit.fit() <chemfit.api.fit>`.
+Those helpers operate on the objects described here: ``quantity()`` creates a
+:class:`~chemfit.abstract_objective_function.QuantityComputer`, ``combine()``
+returns a
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`, and
+``fit()`` drives them through :class:`~chemfit.fitter.Fitter` and a prepared
+:class:`~chemfit.scheduling.Scheduler`. This page explains that underlying
+machinery rather than replacing it with convenience-function terminology.
+
 -------------------------
 
 Objective functions as compositions
