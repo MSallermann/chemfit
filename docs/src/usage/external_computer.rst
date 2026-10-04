@@ -107,7 +107,7 @@ Now we're ready to wire everything up:
         .with_loss(loss_function, ref_y=ref_quantities["y"])
     )
 
-    result = chemfit.fit(
+    result = chemfit.fit_nevergrad(
         ob,
         initial={"prefactor": 0.01},
         bounds={"prefactor": (0.0, 10.0)},

@@ -40,7 +40,7 @@ The top-level API expresses this workflow directly: use
 :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`, attach a loss with
 ``with_loss()``, combine terms with
 :func:`chemfit.combine() <chemfit.api.combine>`, and optimize them with
-:func:`chemfit.fit() <chemfit.api.fit>`.
+:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`.
 
 Underneath, these helpers operate on ChemFit's
 :class:`~chemfit.abstract_objective_function.QuantityComputer`,
@@ -154,7 +154,7 @@ Optimize the combined objective through the same top-level interface:
 
 .. code-block:: python
 
-    result = chemfit.fit(
+    result = chemfit.fit_nevergrad(
         combined,
         initial={"x": 1.0, "y": 2.0},
         bounds={"x": (-2.0, 2.0), "y": (-2.0, 2.0)},
@@ -165,7 +165,7 @@ Optimize the combined objective through the same top-level interface:
     print(result.best_parameters)
     print(result.best_loss)
 
-``chemfit.fit()`` uses Nevergrad and returns a :class:`~chemfit.api.FitResult`.
+``chemfit.fit_nevergrad()`` returns a :class:`~chemfit.api.FitResult`.
 Use :class:`~chemfit.fitter.Fitter` directly for SciPy, callbacks, custom
 optimizer loops, or manual lifecycle control. Use the scheduler APIs for
 direct control over threads, processes, or MPI. The :ref:`common_workflows`,

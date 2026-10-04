@@ -55,7 +55,8 @@ part of returned result state.
 Fitting on rank zero
 --------------------
 
-Pass the scheduler to :func:`chemfit.fit() <chemfit.api.fit>` on rank zero.
+Pass the scheduler to
+:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` on rank zero.
 Nonzero ranks prepare the same objective and wait in ``worker_loop()``:
 
 .. code-block:: python
@@ -69,7 +70,7 @@ Nonzero ranks prepare the same objective and wait in ``worker_loop()``:
    scheduler = MPITreeScheduler()
 
    if scheduler.comm.Get_rank() == 0:
-       result = chemfit.fit(
+       result = chemfit.fit_nevergrad(
            objective,
            initial=initial,
            budget=100,

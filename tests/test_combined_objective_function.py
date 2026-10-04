@@ -119,7 +119,9 @@ def test_fluent_weights_copy_mutable_configuration() -> None:
         [term_a, term_b]
     ).with_meta(dataset="source")
     source.register_eval_hook(pre=hook_a, post=hook_a)
-    variant = source.with_weights([1.0, 0.2])
+    supplied_weights = [1.0, 0.2]
+    variant = source.with_weights(supplied_weights)
+    supplied_weights[0] = 9.0
     variant.register_eval_hook(pre=hook_b, post=hook_b)
 
     assert variant is not source
@@ -179,6 +181,8 @@ def test_fluent_reduction_and_aggregator_use_last_configuration() -> None:
 
     assert reduced is not source
     assert aggregated is not source
+    assert aggregator_last is not reduced
+    assert reducer_last is not aggregated
     assert isinstance(source.reduction, combined_objective_function.WrappedReducer)
     assert source.reduction.to_reducer() is combined_objective_function.sum_reducer
     assert isinstance(reduced.reduction, combined_objective_function.WrappedReducer)
@@ -217,6 +221,7 @@ def test_fluent_exception_handler_uses_last_configuration() -> None:
     )
 
     assert skipped is not source
+    assert replaced is not skipped
     assert (
         source.exception_handler
         is combined_objective_function.raising_exception_handler

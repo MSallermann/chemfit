@@ -16,12 +16,12 @@ ranks.
 One-shot fitting
 ----------------
 
-The top-level :py:func:`chemfit.api.fit` function separates optimizer
+The top-level :py:func:`chemfit.api.fit_nevergrad` function separates optimizer
 concurrency from execution concurrency:
 
 .. code-block:: python
 
-   result = chemfit.fit(
+   result = chemfit.fit_nevergrad(
        objective,
        initial={"x": 1.0},
        budget=100,
@@ -42,7 +42,7 @@ To choose a different executor, pass a caller-owned executor and omit
    import loky
 
    with loky.ProcessPoolExecutor(max_workers=4) as executor:
-       result = chemfit.fit(
+       result = chemfit.fit_nevergrad(
            objective,
            initial={"x": 1.0},
            budget=100,

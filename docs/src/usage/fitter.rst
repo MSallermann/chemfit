@@ -5,7 +5,7 @@ Fitting
 ##################################
 
 For an ordinary Nevergrad optimization, start with
-:func:`chemfit.fit() <chemfit.api.fit>`:
+:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`:
 
 .. code-block:: python
 
@@ -15,7 +15,7 @@ For an ordinary Nevergrad optimization, start with
     def objective(params):
         return 2.0 * (params["x"] - 2) ** 2 + 3.0 * (params["y"] + 1) ** 2
 
-    result = chemfit.fit(
+    result = chemfit.fit_nevergrad(
         objective,
         initial={"x": 0.0, "y": 0.0},
         bounds={"x": (-5.0, 5.0), "y": (-5.0, 5.0)},
@@ -25,7 +25,7 @@ For an ordinary Nevergrad optimization, start with
 
     print(result.best_parameters)
 
-``chemfit.fit()`` creates and drives a
+``chemfit.fit_nevergrad()`` creates and drives a
 :py:class:`~chemfit.fitter.Fitter` and returns a
 :class:`~chemfit.api.FitResult`. Candidate batching and objective execution
 concurrency can be configured independently; see :ref:`parallel_execution`.
@@ -323,7 +323,7 @@ Saving and replaying evaluations
 
 The :class:`~chemfit.fitter_callbacks.SaveMetaData` callback pairs naturally
 with the ``initial_observations`` argument of
-:func:`chemfit.fit() <chemfit.api.fit>` or
+:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` or
 :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`.
 
 It allows evaluation results to be persisted and later reused to seed a
@@ -331,7 +331,7 @@ new optimization:
 
 .. code-block:: python
 
-    result = chemfit.fit(
+    result = chemfit.fit_nevergrad(
         objective,
         initial=initial,
         budget=100,
@@ -590,7 +590,7 @@ The Nevergrad backend can be seeded with previously observed
         ({"x": 2.0, "y": -1.0}, 0.0),
     ]
 
-    result = chemfit.fit(
+    result = chemfit.fit_nevergrad(
         objective,
         initial={"x": 1.0, "y": 1.0},
         budget=100,

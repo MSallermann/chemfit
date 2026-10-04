@@ -770,16 +770,12 @@ class SerialTreeScheduler(Scheduler[SerialTreeSchedule[Any]]):
         self,
         objective: ObjectiveFunctor[ParametersT_contra],
         /,
-        *,
-        profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
     ) -> SerialTreeSchedule[ParametersT_contra]:
         """
         Compile an objective functor into a serial tree schedule.
 
         Args:
             objective: Root ordinary or composite objective to schedule.
-            profile: Optional cost profile. Serial scheduling does not use
-                placement costs, so this argument is ignored.
 
         Returns:
             Prepared serial schedule for the objective tree.

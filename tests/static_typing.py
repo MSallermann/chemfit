@@ -13,8 +13,8 @@ if TYPE_CHECKING:
     from chemfit.abstract_objective_function import (
         EvaluateContext,
         QuantityComputerObjectiveFunction,
-        ResourceRequest,
     )
+    from chemfit.api import FitResult, fit_nevergrad
     from chemfit.ase_objective_function import (
         ASEComputer,
         ASEEvaluator,
@@ -39,12 +39,11 @@ if TYPE_CHECKING:
     Quantities = dict[str, float]
 
     # Objective wrappers preserve the concrete parameter dictionary type.
-    @objective(resources={"cpus": 4})
+    @objective()
     def wrapped_objective(parameters: Parameters) -> float:
         return parameters["x"] ** 2
 
     assert_type(wrapped_objective, WrappedObjectiveFunctor[Parameters])
-    assert_type(wrapped_objective.resources, ResourceRequest)
     assert_type(
         wrapped_objective.with_meta(dataset="training"),
         WrappedObjectiveFunctor[Parameters],
@@ -77,6 +76,14 @@ if TYPE_CHECKING:
     assert_type(fitter, Fitter[Parameters])
     fitter.objective_function({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
+    fit_result = fit_nevergrad(
+        wrapped_objective,
+        {"x": 1.0},
+        budget=1,
+        initial_observations=[({"x": 0.0}, 0.0)],
+    )
+    assert_type(fit_result, FitResult[Parameters])
+
     # An unannotated lambda falls back to a dynamic dictionary, keeping the
     # common concise form usable without discarding precise function annotations.
     inferred_fitter = Fitter(lambda parameters: parameters["x"] ** 2, {"x": 0.0})
@@ -100,7 +107,7 @@ if TYPE_CHECKING:
 
     # Quantity wrappers preserve both their parameter and result types. Binding
     # arguments and attaching a loss function must not erase either one.
-    @quantity(resources={"cpus": 8, "gpus": 1})
+    @quantity()
     def compute_quantities(parameters: Parameters, scale: float) -> Quantities:
         return {"x2": scale * parameters["x"] ** 2}
 
@@ -111,7 +118,6 @@ if TYPE_CHECKING:
         compute_quantities,
         WrappedQuantityComputer[Parameters, Quantities],
     )
-    assert_type(compute_quantities.resources, ResourceRequest)
     assert_type(
         compute_quantities.with_meta(dataset="training"),
         WrappedQuantityComputer[Parameters, Quantities],
@@ -128,7 +134,6 @@ if TYPE_CHECKING:
         quantity_objective.with_meta(observable="x2"),
         QuantityComputerObjectiveFunction[Parameters, Quantities],
     )
-    assert_type(quantity_objective.resources, ResourceRequest)
     quantity_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     # Combined objectives preserve a common parameter type with either the
@@ -150,6 +155,22 @@ if TYPE_CHECKING:
 
     combined = CombinedObjectiveFunction([wrapped_objective])
     assert_type(combined, CombinedObjectiveFunction[Parameters])
+    assert_type(
+        combined.with_weights([1.0]),
+        CombinedObjectiveFunction[Parameters],
+    )
+    assert_type(
+        combined.with_reduction(reduce_values),
+        CombinedObjectiveFunction[Parameters],
+    )
+    assert_type(
+        combined.with_aggregator(aggregate_values),
+        CombinedObjectiveFunction[Parameters],
+    )
+    assert_type(
+        combined.with_exception_handler(handle_failure),
+        CombinedObjectiveFunction[Parameters],
+    )
     combined({"x": "wrong"})  # pyright: ignore[reportArgumentType]
 
     combined_with_reducer = CombinedObjectiveFunction(
