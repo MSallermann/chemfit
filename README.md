@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="https://github.com/msallermann/chemfit/blob/next/logo/chemfit_logo_portable.svg?raw=true" width="400"/>
+    <img src="logo/chemfit_logo_portable.svg" width="400"/>
 </p>
 
 # About
@@ -7,11 +7,6 @@
 ChemFit is a Python package for concurrent simulation-based parameter
 optimization. It can be used with ASE calculators, external executables, and
 custom Python objectives.
-
-# Documentation
-
-Please check the **documentation** for details [here](https://chemfit.readthedocs.io).
-
 
 # Installation
 
@@ -27,6 +22,62 @@ Or, locally:
 git clone git@github.com:MSallermann/chemfit.git
 pip install -e chemfit
 ```
+
+# Quick start: fit a Lennard-Jones potential
+
+This example fits the Lennard-Jones energy scale `epsilon` while keeping
+`sigma` fixed:
+
+```python
+import chemfit
+from ase import Atoms
+from ase.calculators.lj import LennardJones
+
+
+reference_energies = {
+    1.1: -0.98,
+    1.5: -0.32,
+}
+
+objective = chemfit.combine(
+    chemfit.ase_quantity(
+        Atoms("Ar2", positions=[(0, 0, 0), (distance, 0, 0)])
+    )
+    .with_calculator(
+        lambda p, atoms, ctx: LennardJones(
+            epsilon=p["epsilon"], sigma=1.0, rc=100.0
+        )
+    )
+    .with_loss(
+        lambda q, target: (q["energy"] - target) ** 2,
+        target=target,
+    )
+    for distance, target in reference_energies.items()
+)
+
+result = chemfit.fit(
+    objective,
+    initial={"epsilon": 0.7},
+    bounds={"epsilon": (0.1, 2.0)},
+    budget=100,
+)
+
+print(result.best_parameters)
+```
+
+Each ASE calculation becomes an independent objective term, `with_loss()`
+turns its energy into a fitting loss, and `chemfit.combine()` joins the terms.
+`chemfit.fit()` optimizes the parameter mapping and returns a `FitResult`
+with `best_parameters`, `best_loss`, the optimizer recommendation, and the
+evaluation contexts.
+
+Objective terms can also run across threads, processes, or MPI, and ChemFit
+supports external programs, custom schedulers, SciPy, hooks, and lower-level
+control; see the full documentation below.
+
+# Documentation
+
+Please check the **documentation** for details [here](https://chemfit.readthedocs.io).
 
 # Citation
 
@@ -49,58 +100,3 @@ Thanks!
 # Problems?
 
 Please open an issue [here](https://github.com/MSallermann/chemfit/issues).
-
-# Quick start: fit a Lennard-Jones potential
-
-This complete example recovers the Lennard-Jones parameters
-`epsilon = sigma = 1` from three reference dimer energies. It demonstrates ASE
-integration, combined objectives, bounds, and parallel fitting.
-
-```python
-import chemfit
-from ase import Atoms
-from ase.calculators.lj import LennardJones
-
-
-def squared_error(quantities, *, target):
-    return (quantities["energy"] - target) ** 2
-
-
-def reference_energy(distance: float) -> float:
-    return 4.0 * (1.0/distance**12 - 1.0/distance**6)
-
-
-def energy_term(distance: float):
-    atoms = Atoms("Ar2", positions=[(0, 0, 0), (distance, 0, 0)])
-    return (
-        chemfit.ase_quantity(atoms)
-        .with_calculator(
-            lambda parameters, atoms, ctx: LennardJones(rc=100, **parameters)
-        )
-        .with_loss(squared_error, target=reference_energy(distance))
-    )
-
-
-distances = [0.95, 1.25, 1.60]
-objective = chemfit.combine(
-    *(energy_term(distance) for distance in distances),
-    reduction=chemfit.mean_reducer,
-)
-
-result = chemfit.fit(
-    objective,
-    initial={"epsilon": 0.7, "sigma": 1.2},
-    bounds={"epsilon": (0.1, 2.0), "sigma": (0.5, 1.5)},
-    budget=400,
-    workers=6,
-    optimizer="TwoPointsDE",
-)
-print(result.best_parameters, result.best_loss)
-```
-
-Each distance becomes an independent objective term with its own evaluation
-context. `workers=6` lets Nevergrad request up to six candidates per batch and,
-by default, gives the built-in thread scheduler six concurrent execution slots
-shared by all objective terms in that batch. Set `execution_workers` to control
-those execution slots independently. `chemfit.fit` returns both the optimizer
-recommendation and the evaluation contexts.
