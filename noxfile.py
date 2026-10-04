@@ -4,7 +4,7 @@ import nox
 # full set of tests for all python versions
 @nox.session(python=["3.10", "3.11", "3.12", "3.13"])
 def tests_all_versions(session):  # noqa: ANN001
-    session.install(".[test,mpi]")
+    session.install(".[test]")
     session.run("pytest", "tests/")
 
 
