@@ -386,6 +386,10 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
     def evaluate_many(
         self, requests: Sequence[EvaluationRequest[ParametersT]]
     ) -> Iterator[EvaluationResult]:
+        if self.closed:
+            msg = "Prepared schedule is closed."
+            raise RuntimeError(msg)
+
         for idx, req in enumerate(requests):
             parameters = req.parameters
             ctx = req.ctx
@@ -393,13 +397,12 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
                 self.ob._begin_evaluation(parameters, ctx)  # noqa: SLF001
                 value = self.ob._evaluate(parameters, ctx)  # noqa: SLF001
                 ctx.loss = value
-            except BaseException as e:
+            except Exception as e:
                 self.ob._end_evaluation(ctx, e)  # noqa: SLF001
-                raise
+                yield EvaluationResult(index=idx, value=e)
             else:
                 self.ob._end_evaluation(ctx, None)  # noqa: SLF001
-
-            yield EvaluationResult(index=idx, value=value)
+                yield EvaluationResult(index=idx, value=value)
 
 
 class SerialScheduler(Scheduler[SerialSchedule[Any]]):
