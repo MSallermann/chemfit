@@ -89,6 +89,32 @@ REDUCERS = [
 ]
 
 
+def test_constructor_rejects_invalid_weights():
+    funcs = make_funcs(2)
+
+    with pytest.raises(ValueError, match=r"expected 2, got 1"):
+        combined_objective_function.CombinedObjectiveFunction(funcs, weights=[1.0])
+
+    with pytest.raises(ValueError, match="must be non-negative"):
+        combined_objective_function.CombinedObjectiveFunction(
+            funcs,
+            weights=[1.0, -1.0],
+        )
+
+
+def test_add_rejects_invalid_weights_without_mutating_objective():
+    cob = combined_objective_function.CombinedObjectiveFunction(make_funcs(1))
+
+    with pytest.raises(ValueError, match=r"expected 2, got 1"):
+        cob.add(make_funcs(2), weights=[1.0])
+
+    with pytest.raises(ValueError, match="must be non-negative"):
+        cob.add(make_funcs(1), weights=-1.0)
+
+    assert cob.n_terms() == 1
+    assert len(cob.objective_functions) == 1
+
+
 EXECUTORS: list[Executor] = [ThreadPoolExecutor(2)]
 
 if loky is not None:
