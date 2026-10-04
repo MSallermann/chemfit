@@ -137,10 +137,9 @@ def test_combined_objective_reduces_terms_with_executor(
     reduction: combined_objective_function.Reducer, executor: Executor
 ):
     cob = make_cob(reduction=reduction)
-    cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
-
-    ctx = EvaluateContext()
-    res = cob(PARAMS, ctx)
+    with ExecutorTreeScheduler(executor=executor).prepare(cob) as schedule:
+        ctx = EvaluateContext()
+        res = schedule.evaluate(PARAMS, ctx)
 
     standard_asserts(res, ctx, reduction)
 
@@ -149,16 +148,18 @@ def test_combined_objective_reduces_terms_with_executor(
 def test_combined_objective_uses_executor_scheduler(
     reduction: combined_objective_function.Reducer, executor: Executor
 ):
+    scheduler = ExecutorTreeScheduler(executor=executor)
+
     cob = combined_objective_function.CombinedObjectiveFunction(
         make_funcs(),
         make_weights(),
         reduction=reduction,
         child_context_configurator=context_configurator,
-        scheduler=ExecutorTreeScheduler(executor=executor),
     )
 
-    ctx = EvaluateContext()
-    res = cob(PARAMS, ctx)
+    with scheduler.prepare(cob) as schedule:
+        ctx = EvaluateContext()
+        res = schedule.evaluate(PARAMS, ctx)
 
     standard_asserts(res, ctx, reduction)
 
@@ -172,11 +173,12 @@ def test_combined_objective_reduces_terms_with_mpi(
     )
 
     cob = make_cob(reduction=reduction)
+    scheduler = mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)
 
-    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+    with scheduler.prepare(cob) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = cob(PARAMS, ctx)
+            res = mpi.evaluate(PARAMS, ctx)
 
             standard_asserts(res, ctx, reduction)
 
@@ -199,10 +201,10 @@ def test_combined_objective_uses_mpi_scheduler(
         child_context_configurator=context_configurator,
     )
 
-    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+    with mpi_scheduler.MPITreeScheduler(mpi_debug_log=False).prepare(cob) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = cob(PARAMS, ctx)
+            res = mpi.evaluate(PARAMS, ctx)
 
             standard_asserts(res, ctx, reduction)
         else:
@@ -249,27 +251,26 @@ def test_combined_objective_exception_handlers_with_executor(executor: Executor)
         raise RuntimeError(msg)
 
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
-    ob.set_scheduler(ExecutorTreeScheduler(executor=executor))
+    with ExecutorTreeScheduler(executor=executor).prepare(ob) as schedule:
+        ob.exception_handler = combined_objective_function.raising_exception_handler
+        with pytest.raises(RuntimeError, match="Whoops"):
+            schedule.evaluate(PARAMS, EvaluateContext())
 
-    ob.exception_handler = combined_objective_function.raising_exception_handler
-    with pytest.raises(RuntimeError, match="Whoops"):
-        ob(PARAMS)
+        ob.exception_handler = combined_objective_function.nan_exception_handler
+        ctx = EvaluateContext()
+        res = schedule.evaluate(PARAMS, ctx)
+        assert math.isnan(res)
+        assert ctx.loss is not None
+        assert math.isnan(ctx.loss)
 
-    ob.exception_handler = combined_objective_function.nan_exception_handler
-    ctx = EvaluateContext()
-    res = ob(PARAMS, ctx)
-    assert math.isnan(res)
-    assert ctx.loss is not None
-    assert math.isnan(ctx.loss)
+        ob.exception_handler = combined_objective_function.skip_exception_handler
+        ctx = EvaluateContext()
+        res = schedule.evaluate(PARAMS, ctx)
 
-    ob.exception_handler = combined_objective_function.skip_exception_handler
-    ctx = EvaluateContext()
-    res = ob(PARAMS, ctx)
-
-    assert math.isclose(res, func1(PARAMS))
-    assert ctx.loss is not None
-    assert math.isclose(ctx.loss, func1(PARAMS))
-    assert ctx.meta["skipped_indices"] == [1]
+        assert math.isclose(res, func1(PARAMS))
+        assert ctx.loss is not None
+        assert math.isclose(ctx.loss, func1(PARAMS))
+        assert ctx.meta["skipped_indices"] == [1]
 
 
 def test_combined_objective_exception_handlers_with_mpi():
@@ -288,10 +289,10 @@ def test_combined_objective_exception_handlers_with_mpi():
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.raising_exception_handler
 
-    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+    with mpi_scheduler.MPITreeScheduler(mpi_debug_log=False).prepare(ob) as mpi:
         if mpi.rank == 0:
             with pytest.raises(RuntimeError, match="Whoops"):
-                ob(PARAMS)
+                mpi.evaluate(PARAMS, EvaluateContext())
         else:
             mpi.worker_loop()
 
@@ -299,10 +300,10 @@ def test_combined_objective_exception_handlers_with_mpi():
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.nan_exception_handler
 
-    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+    with mpi_scheduler.MPITreeScheduler(mpi_debug_log=False).prepare(ob) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = ob(PARAMS, ctx)
+            res = mpi.evaluate(PARAMS, ctx)
             assert math.isnan(res)
             assert ctx.loss is not None
             assert math.isnan(ctx.loss)
@@ -313,10 +314,10 @@ def test_combined_objective_exception_handlers_with_mpi():
     ob = combined_objective_function.CombinedObjectiveFunction([func1, whoops])
     ob.exception_handler = combined_objective_function.skip_exception_handler
 
-    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+    with mpi_scheduler.MPITreeScheduler(mpi_debug_log=False).prepare(ob) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            res = ob(PARAMS, ctx)
+            res = mpi.evaluate(PARAMS, ctx)
             assert math.isclose(res, func1(PARAMS))
             assert ctx.loss is not None
             assert math.isclose(ctx.loss, func1(PARAMS))
@@ -348,10 +349,9 @@ def test_aggregator(executor: Executor):
         reduction=custom_aggregator,
     )
 
-    cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
-
-    ctx = EvaluateContext()
-    res = cob(PARAMS, ctx)
+    with ExecutorTreeScheduler(executor=executor).prepare(cob) as schedule:
+        ctx = EvaluateContext()
+        res = schedule.evaluate(PARAMS, ctx)
 
     assert math.isclose(res, 8.0)
     assert ctx.meta["foo"] == "bar"
@@ -364,9 +364,9 @@ def test_executor_scheduler_matches_serial_result(executor: Executor):
     ctx_serial = EvaluateContext()
     res_serial = cob(PARAMS, ctx_serial)
 
-    ctx_exec = EvaluateContext()
-    cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
-    res_exec = cob(PARAMS, ctx_exec)
+    with ExecutorTreeScheduler(executor=executor).prepare(cob) as schedule:
+        ctx_exec = EvaluateContext()
+        res_exec = schedule.evaluate(PARAMS, ctx_exec)
 
     assert np.isclose(res_exec, res_serial)
     assert ctx_exec.loss is not None
@@ -389,7 +389,7 @@ N_EVALS = 4
 def test_executor_scheduler_evaluates_batch(executor: Executor):
     serial_cob = make_cob()
     cob = make_cob()
-    schedule = cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
+    schedule = ExecutorTreeScheduler(executor=executor).prepare(cob)
 
     params_list = [
         {"x": float(i) / N_EVALS, "y": float(N_EVALS - i) / N_EVALS}
@@ -402,9 +402,10 @@ def test_executor_scheduler_evaluates_batch(executor: Executor):
         EvaluationRequest(parameters=params, ctx=ctx)
         for params, ctx in zip(params_list, ctxs, strict=True)
     ]
-    completed = sorted(
-        schedule.evaluate_many(requests), key=lambda result: result.index
-    )
+    with schedule:
+        completed = sorted(
+            schedule.evaluate_many(requests), key=lambda result: result.index
+        )
     results = []
     for result in completed:
         assert result.success

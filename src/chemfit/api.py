@@ -14,17 +14,21 @@ from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFuncto
 from chemfit.ase_objective_function import ASEComputer, PathAtomsFactory
 from chemfit.combined_objective_function import (
     Aggregator,
+    ChildContextConfigurator,
     CombinedObjectiveFunction,
     ExceptionHandler,
     Reducer,
-    SerialScheduler,
     raising_exception_handler,
     sum_reducer,
 )
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.external_computer import ExternalQuantityComputer
 from chemfit.fitter import CallbackT, Fitter, FitterEvaluateContext
-from chemfit.scheduling import EvaluationRequest, Scheduler
+from chemfit.scheduling import (
+    EvaluationRequest,
+    Scheduler,
+    SerialScheduler,
+)
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
 ParamsT = TypeVar("ParamsT", bound=Mapping[str, Any])
@@ -36,12 +40,14 @@ def combine(
     weights: Sequence[float] | None = None,
     reduction: Reducer | Aggregator = sum_reducer,
     exception_handler: ExceptionHandler = raising_exception_handler,
+    child_context_configurator: ChildContextConfigurator | None = None,
 ) -> CombinedObjectiveFunction[ParamsT]:
     return CombinedObjectiveFunction(
         objective_functions=args,
         weights=weights,
         reduction=reduction,
         exception_handler=exception_handler,
+        child_context_configurator=child_context_configurator,
     )
 
 

@@ -232,21 +232,30 @@ def test_lj_mpi():
     ob = get_ob_func(eps, sigma)
 
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
+    scheduler = mpi_scheduler.MPITreeScheduler()
 
-    with ob.set_scheduler(mpi_scheduler.MPITreeScheduler()) as mpi:
-        if mpi.rank == 0:
-            fitter = Fitter(ob, initial_params=initial_params)
-            opt_params = fitter.fit_scipy()
+    if scheduler.comm.Get_rank() == 0:
+        fitter = Fitter(
+            ob,
+            initial_params=initial_params,
+            scheduler=scheduler,
+        )
+        opt_params = fitter.fit_scipy()
+    else:
+        with scheduler.prepare(ob) as schedule:
+            schedule.worker_loop()
 
+    with scheduler.prepare(ob) as schedule:
+        if schedule.rank == 0:
             ctx = EvaluateContext()
-            ob(opt_params, ctx)
+            schedule.evaluate(opt_params, ctx)
             terms_meta_data = ctx.to_meta_data()["meta"]["children"]
 
             assert ob.n_terms() == len(terms_meta_data)
             assert np.isclose(opt_params["epsilon"], eps)
             assert np.isclose(opt_params["sigma"], sigma)
         else:
-            mpi.worker_loop()
+            schedule.worker_loop()
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 import math
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any, Generic, Protocol, TypeVar, cast
 
 from typing_extensions import Self
@@ -13,14 +13,8 @@ from chemfit.abstract_objective_function import (
     ObjectiveFunctor,
 )
 from chemfit.scheduling import (
-    EvaluationRequest,
-    EvaluationResult,
     NodeOutcome,
-    PreparedSchedule,
-    PreparedScheduleBase,
     SchedulableCompositeObjective,
-    Scheduler,
-    SchedulingProfile,
 )
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
@@ -29,8 +23,6 @@ from chemfit.wrap_funcs import WrappedObjectiveFunctor
 # parameter type could then allow an incompatible objective to be appended.
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 ObjectiveLike = Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
-
-PreparedScheduleT = TypeVar("PreparedScheduleT", bound=PreparedSchedule[Any])
 
 
 def transform_generic_callables(
@@ -118,52 +110,10 @@ class WrappedReducer(Aggregator):
         return self.reducer
 
 
-class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
-    def __init__(self, cob: ObjectiveFunctor[ParametersT]) -> None:
-        """Initialize the serial schedule."""
-        super().__init__()
-        self.cob = cob
-
-    def evaluate_many(
-        self, requests: Sequence[EvaluationRequest[ParametersT]]
-    ) -> Iterator[EvaluationResult]:
-        for idx, req in enumerate(requests):
-            parameters = req.parameters
-            ctx = req.ctx
-            try:
-                self.cob._begin_evaluation(parameters, ctx)  # noqa: SLF001
-                value = self.cob._evaluate(parameters, ctx)  # noqa: SLF001
-                ctx.loss = value
-            except BaseException as e:
-                self.cob._end_evaluation(ctx, e)  # noqa: SLF001
-                raise
-            else:
-                self.cob._end_evaluation(ctx, None)  # noqa: SLF001
-
-            yield EvaluationResult(index=idx, value=value)
-
-
-class SerialScheduler(Scheduler[SerialSchedule[Any]]):
-    def prepare(
-        self,
-        objective: ObjectiveFunctor[ParametersT],
-        /,
-        *,
-        profile: Mapping[tuple[int, ...], float] | None = None,  # noqa: ARG002
-    ) -> SerialSchedule[ParametersT]:
-        if isinstance(objective, CombinedObjectiveFunction):
-            for term in objective.objective_functions:
-                if isinstance(term, CombinedObjectiveFunction):
-                    term.prepare()
-
-        return SerialSchedule(objective)
-
-
 class CombinedObjectiveFunction(
     ObjectiveFunctor[ParametersT],
     SchedulableCompositeObjective[ParametersT],
     Generic[ParametersT],
-    allow_custom_call=True,
 ):
     def __init__(
         self,
@@ -172,7 +122,6 @@ class CombinedObjectiveFunction(
         child_context_configurator: ChildContextConfigurator | None = None,
         reduction: Reducer | Aggregator = sum_reducer,
         exception_handler: ExceptionHandler = raising_exception_handler,
-        scheduler: Scheduler[PreparedSchedule[Any]] | None = None,
     ) -> None:
         """
         Initialize a combined objective from multiple weighted terms.
@@ -200,8 +149,6 @@ class CombinedObjectiveFunction(
             exception_handler: Callable used to handle exceptions raised
                 during term evaluation. It may return a replacement value or
                 ``None`` to skip the term entirely.
-            scheduler: Scheduler used to prepare this objective for evaluation.
-                If omitted, the direct serial scheduler is used.
 
         Raises:
             AssertionError: If the number of weights does not match the
@@ -239,53 +186,6 @@ class CombinedObjectiveFunction(
         )
         # Ensure all weights are non-negative
         assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
-
-        self._scheduler: Scheduler[PreparedSchedule[Any]] = SerialScheduler()
-        self._schedule: PreparedSchedule[Any] | None = None
-        self.set_scheduler(SerialScheduler() if scheduler is None else scheduler)
-
-    def prepare(
-        self,
-        profile: SchedulingProfile | None = None,
-    ) -> PreparedSchedule[ParametersT]:
-        """Reprepare using the currently configured scheduler."""
-
-        old_schedule = self._schedule
-
-        schedule = self._scheduler.prepare(
-            self,
-            profile=profile,
-        )
-
-        self._schedule = schedule
-
-        if old_schedule is not None:
-            old_schedule.close()
-
-        return schedule
-
-    def set_scheduler(
-        self,
-        scheduler: Scheduler[PreparedScheduleT],
-        *,
-        profile: SchedulingProfile | None = None,
-    ) -> PreparedScheduleT:
-        """Set the scheduler, prepare it, and return its concrete schedule."""
-
-        schedule = scheduler.prepare(
-            self,
-            profile=profile,
-        )
-
-        old_schedule = self._schedule
-
-        self._scheduler = scheduler
-        self._schedule = schedule
-
-        if old_schedule is not None:
-            old_schedule.close()
-
-        return schedule
 
     def child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the immediate objective terms in evaluation order."""
@@ -392,9 +292,6 @@ class CombinedObjectiveFunction(
                 if any provided weight is negative.
 
         """
-
-        # Structural mutation invalidates the prepared schedule.
-        self._schedule = None
 
         # Determine how many new functions are being added
         if isinstance(obj_funcs, Sequence) and not callable(obj_funcs):
@@ -513,19 +410,3 @@ class CombinedObjectiveFunction(
             ]
 
         return self._reduce_terms(terms, ctx)
-
-    def __call__(
-        self, parameters: ParametersT, ctx: EvaluateContext | None = None
-    ) -> float:
-        schedule = self._schedule
-        if schedule is None or schedule.closed:
-            msg = (
-                "Either no `_schedule` is found or the schedule is closed!"
-                "Call the `.prepare` or `set_scheduler` function, before invoking the objective."
-            )
-            raise Exception(msg)
-
-        if ctx is None:
-            ctx = EvaluateContext()
-
-        return schedule.evaluate(parameters, ctx)

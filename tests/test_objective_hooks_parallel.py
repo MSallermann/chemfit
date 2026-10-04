@@ -115,11 +115,12 @@ def test_objective_hooks_with_loky_process_pool():
     cob = make_hooked_cob()
     register_combined_hooks(cob)
 
-    with loky.ProcessPoolExecutor(2) as executor:
-        cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
-
+    with (
+        loky.ProcessPoolExecutor(2) as executor,
+        ExecutorTreeScheduler(executor=executor).prepare(cob) as schedule,
+    ):
         ctx = EvaluateContext()
-        result = cob(PARAMETERS, ctx)
+        result = schedule.evaluate(PARAMETERS, ctx)
 
     assert_successful_parallel_evaluation(result, ctx, expected_worker_count=None)
     child_pids = {child["meta"]["evaluation_pid"] for child in ctx.meta["children"]}
@@ -130,12 +131,14 @@ def test_post_hook_error_crosses_loky_process_boundary():
     loky = pytest.importorskip("loky", reason="Missing loky")
     cob = make_hooked_cob(failing=True)
 
-    with loky.ProcessPoolExecutor(2) as executor:
-        cob.set_scheduler(ExecutorTreeScheduler(executor=executor))
+    with (
+        loky.ProcessPoolExecutor(2) as executor,
+        ExecutorTreeScheduler(executor=executor).prepare(cob) as schedule,
+        pytest.raises(ObjectiveFunctor.PostEvalHookError) as exc_info,
+    ):
         # This also exercises PostEvalHookError.__reduce__: loky must serialize
         # both the aggregate error and its nested ValueError back to this process.
-        with pytest.raises(ObjectiveFunctor.PostEvalHookError) as exc_info:
-            cob(PARAMETERS)
+        schedule.evaluate(PARAMETERS, EvaluateContext())
 
     assert_post_hook_error(exc_info.value)
 
@@ -146,12 +149,13 @@ def test_objective_hooks_with_mpi():
     )
 
     cob = make_hooked_cob()
+    register_combined_hooks(cob)
 
-    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
-        register_combined_hooks(cob)
+    scheduler = mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)
+    with scheduler.prepare(cob) as mpi:
         if mpi.rank == 0:
             ctx = EvaluateContext()
-            result = cob(PARAMETERS, ctx)
+            result = mpi.evaluate(PARAMETERS, ctx)
             active_ranks = 1 if mpi.size == 1 else min(N_TERMS, mpi.size - 1)
             assert_successful_parallel_evaluation(
                 result,
@@ -169,12 +173,13 @@ def test_post_hook_error_crosses_mpi_process_boundary():
 
     cob = make_hooked_cob(failing=True)
 
-    with cob.set_scheduler(mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)) as mpi:
+    scheduler = mpi_scheduler.MPITreeScheduler(mpi_debug_log=False)
+    with scheduler.prepare(cob) as mpi:
         if mpi.rank == 0:
             # The failing term is the last one, which runs on a worker rank in
             # the four-rank test. MPI must transport the aggregate hook error.
             with pytest.raises(ObjectiveFunctor.PostEvalHookError) as exc_info:
-                cob(PARAMETERS)
+                mpi.evaluate(PARAMETERS, EvaluateContext())
             assert_post_hook_error(exc_info.value)
         else:
             mpi.worker_loop()
