@@ -29,11 +29,11 @@ autosummary_generate = False  # <== key setting
 napoleon_google_docstring = True
 napoleon_numpy_docstring = True
 napoleon_include_init_with_doc = False
-
 # Auto-generate members by default
 autodoc_default_options = {
     "members": True,
     "undoc-members": True,
+    "ignore-module-all": True,
     "show-inheritance": True,
     "special-members": "__init__,__call__",
     "member-order": "groupwise",  # or 'alphabetical'

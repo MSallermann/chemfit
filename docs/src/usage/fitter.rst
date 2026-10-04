@@ -48,7 +48,7 @@ The minimal setup requires:
 
     from chemfit.fitter import Fitter
 
-    def objective(params, ctx=None):
+    def objective(params):
         return 2.0 * (params["x"] - 2)**2 + 3.0 * (params["y"] + 1)**2
 
     fitter = Fitter(
@@ -74,25 +74,34 @@ The fitter accepts either:
 - a plain callable ``f(params) -> float``
 - an :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`
 
-Internally, the objective is wrapped in a
-:py:class:`~chemfit.fitter.FitterObjectiveFunctor`, which adds
-robustness checks and bookkeeping.
+A plain callable is wrapped in a
+:py:class:`~chemfit.wrap_funcs.WrappedObjectiveFunctor`. Existing
+``ObjectiveFunctor`` instances are used directly. Loss normalization and
+incumbent bookkeeping are applied by the fitter around scheduled evaluations.
 
-Advanced objectives may also accept an evaluation context:
+To use an evaluation context, supply an ``ObjectiveFunctor``. The
+:py:func:`~chemfit.wrap_funcs.objective` decorator is the shortest route:
 
 .. code-block:: python
 
-    f(params, ctx) -> float
+    from chemfit.wrap_funcs import objective
 
-If no context is provided, ChemFit creates one automatically.
+    @objective(pass_ctx=True)
+    def contextual_objective(params, *, ctx):
+        ctx.meta["x"] = params["x"]
+        return params["x"] ** 2
+
+The fitter creates and supplies the context. A plain callable passed directly
+to ``Fitter`` receives only the parameter mapping.
 
 ----------------------------------
 Parameter dictionaries
 ----------------------------------
 
-The top-level parameter container must be a dictionary or another mutable
-mapping. It may contain nested mappings; non-mapping values are treated as
-leaves. The objective receives the same nested shape.
+The top-level parameter container must be a mapping. The fitter copies its
+top-level entries into a dictionary; nested mappings are supported and
+non-mapping values are treated as leaves. The objective receives the same
+nested shape.
 
 .. code-block:: python
 
@@ -208,9 +217,10 @@ with optimization-specific fields:
 - ``opt_loss``: best loss seen so far
 - ``opt_params``: best parameters seen so far
 - ``opt_meta``: metadata associated with the best evaluation
+- ``opt_quantities``: quantities associated with the best evaluation
 
 For SciPy, a single context is used for the entire optimization.
-For Nevergrad, one context is used per worker.
+For Nevergrad, one context is used per candidate slot.
 
 These contexts are available via ``fitter.contexts``.
 
@@ -228,7 +238,9 @@ Each callback has the form:
     def callback(step: int, contexts: list[FitterEvaluateContext]) -> None:
         ...
 
-Callbacks are invoked every ``n_steps`` optimizer steps.
+Callbacks are invoked every ``n_steps`` completed optimizer steps. At the end
+of a fit, each callback is also invoked if the final step did not fall exactly
+on its requested interval.
 
 .. code-block:: python
 
@@ -324,7 +336,7 @@ ask/tell interface.
     )
 
 ----------------------------------
-User-supplied ask/tell interface
+User-supplied optimizer loop
 ----------------------------------
 
 An optimizer can be integrated without a dedicated backend. The user owns the
@@ -337,17 +349,17 @@ dispatches its callbacks.
     fitter.init()
 
     for _ in range(100):
-        params = optimizer.ask() # <-- or any other api that your optimizer might have
-        loss = fitter.ask(params)
+        params = optimizer.ask()
+        loss = fitter.evaluate(params)
         optimizer.tell(params, loss)
-        fitter.tell()  # dispatch registered progress callbacks
+        fitter.step()  # dispatch callbacks for the completed optimizer step
 
     opt_params = fitter.finish(optimizer.recommendation())
 
-``fitter.ask`` also accepts a list of candidates and evaluates it in parallel
-when ``fitter.init`` is configured with ``num_workers`` and an executor. If no
-recommendation is passed to ``finish``, ChemFit returns the best parameters it
-actually evaluated.
+``fitter.evaluate`` also accepts a list of candidates, up to the
+``num_workers`` configured by ``init``. The fitter's scheduler determines how
+that batch executes. If no recommendation is passed to ``finish``, ChemFit
+returns the best parameters it actually evaluated.
 
 A complete custom-loop example
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -384,17 +396,17 @@ losses. For example, this small optimizer searches a predefined set of points:
 
     for _ in range(3):
         params = optimizer.ask()
-        loss = fitter.ask(params)
+        loss = fitter.evaluate(params)
         optimizer.tell(params, loss)
-        fitter.tell()
+        fitter.step()
 
     opt_params = fitter.finish(optimizer.recommendation())
 
-Calling ``fitter.ask`` applies the same objective wrapping, invalid-value
+Calling ``fitter.evaluate`` applies the same objective wrapping, invalid-value
 handling and context bookkeeping as the built-in SciPy and Nevergrad fitting
-methods. Calling ``fitter.tell`` marks the end of an optimizer step and invokes
+methods. Calling ``fitter.step`` marks the end of an optimizer step and invokes
 callbacks registered for that step. ``fitter.finish`` runs the usual post-fit
-checks.
+checks and closes the prepared schedule.
 
 User-driven parallel batches
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -405,31 +417,38 @@ the optimizer loop:
 .. code-block:: python
 
     from concurrent.futures import ThreadPoolExecutor
+    from chemfit.executor_scheduler import ExecutorTreeScheduler
 
     with ThreadPoolExecutor(4) as executor:
-        fitter.init(num_workers=4, executor=executor)
+        scheduler = ExecutorTreeScheduler(executor=executor)
+        fitter = Fitter(
+            objective,
+            initial_params={"x": 0.0},
+            scheduler=scheduler,
+        )
+        fitter.init(num_workers=4)
 
         for _ in range(25):
             candidates = [optimizer.ask() for _ in range(4)]
-            losses = fitter.ask(candidates)
+            losses = fitter.evaluate(candidates)
 
             for params, loss in zip(candidates, losses):
                 optimizer.tell(params, loss)
 
-            fitter.tell()
+            fitter.step()
 
         opt_params = fitter.finish(optimizer.recommendation())
 
-One :class:`~chemfit.fitter.FitterEvaluateContext` is maintained per worker.
-The losses returned by ``fitter.ask`` have the same order as the candidate
-list. If no executor is supplied, ``fitter.init(num_workers=...)`` creates and
-later shuts down a thread pool automatically.
+One :class:`~chemfit.fitter.FitterEvaluateContext` is maintained per candidate
+slot. The losses returned by ``fitter.evaluate`` have the same order as the
+candidate list. A caller-supplied executor remains caller-owned; closing the
+prepared schedule does not shut it down.
 
 ----------------------------------
-Parallel Nevergrad execution
+Nevergrad batching and execution
 ----------------------------------
 
-Parallel evaluation is supported via ``num_workers``:
+``num_workers`` controls the maximum candidate batch size:
 
 .. code-block:: python
 
@@ -442,19 +461,33 @@ The evaluation budget is exact. When it is not divisible by ``num_workers``,
 the final batch contains only the remaining candidates. For example,
 ``budget=10`` with four workers evaluates batches of four, four and two.
 
-Each worker uses its own
-:py:class:`~chemfit.fitter.FitterEvaluateContext`.
+Each candidate slot uses its own
+:py:class:`~chemfit.fitter.FitterEvaluateContext`. Actual concurrency is
+determined by the scheduler configured on ``Fitter``. The default
+:class:`~chemfit.tree_schedule.SerialTreeScheduler` evaluates the batch
+serially.
 
-An executor may be provided:
+For concurrent execution, configure an executor-backed scheduler on the
+fitter:
 
 .. code-block:: python
 
     from concurrent.futures import ThreadPoolExecutor
+    from functools import partial
 
-    opt_params = fitter.fit_nevergrad(
+    from chemfit.executor_scheduler import ExecutorTreeScheduler
+
+    scheduler = ExecutorTreeScheduler(
+        executor_factory=partial(ThreadPoolExecutor, max_workers=4),
+    )
+    parallel_fitter = Fitter(
+        objective,
+        initial_params={"x": 0.0},
+        scheduler=scheduler,
+    )
+    opt_params = parallel_fitter.fit_nevergrad(
         budget=100,
         num_workers=4,
-        executor=ThreadPoolExecutor(4),
     )
 
 When using parallel execution, objective functions must avoid modifying
@@ -485,7 +518,7 @@ For example:
     for ctx in ctxs:
         ctx.config.gandalf = "the white" # <-- make sure it's not the grey
 
-    fitter.fit_nevergrad(..., ctxs)
+    fitter.fit_nevergrad(..., contexts=ctxs)
 
 .. important::
 
@@ -549,10 +582,10 @@ Near-bound warnings
 Lifecycle hooks
 ----------------------------------
 
-Each fit runs through:
+Each fit runs through the private lifecycle methods:
 
-- :py:meth:`~chemfit.fitter.Fitter._hook_pre_fit`
-- :py:meth:`~chemfit.fitter.Fitter._hook_post_fit`
+- ``Fitter._hook_pre_fit``
+- ``Fitter._hook_post_fit``
 
 These are mainly intended for subclassing.
 
@@ -563,7 +596,7 @@ Summary
 - Works with parameter dictionaries (possibly nested)
 - Supports native Nevergrad parameter types in ``fit_nevergrad``
 - Supports SciPy and Nevergrad backends
-- Adds robustness and tracking via a wrapper objective
+- Normalizes losses and tracks the best optimizer-visible evaluation
 - Uses ``FitterEvaluateContext`` for evaluation bookkeeping
 - Supports callbacks and predefined callback utilities
 - Allows replaying observations for warm-starting

@@ -52,16 +52,16 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
 
 .. testcode::
 
-    from chemfit.wrap_funcs import quantity
+    import chemfit
 
-    @quantity()
-    def computer(params):
+    @chemfit.quantity()
+    def simulate(params):
         return {"x2": params["x"] ** 2, "y2": params["y"] ** 2}
 
     def square_deviation(q, target):
         return (q["x2"] + q["y2"] - target)**2
 
-    ob = computer.with_loss(square_deviation, target=2)
+    ob = simulate.with_loss(square_deviation, target=2.0)
 
     PARAMS = {"x": 1.0, "y": 2.0}
     print(ob(PARAMS)) # <-- 9.0
@@ -72,7 +72,8 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
     9.0
 
 The quantity computer is defined via a simple Python function, mapping a :class:`dict` of parameters to a :class:`dict` of quantities.
-The :func:`quantity` decorator turns this function into a :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` instance.
+The :func:`~chemfit.wrap_funcs.quantity` decorator turns this function into a
+:class:`~chemfit.wrap_funcs.WrappedQuantityComputer` instance.
 
 The :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
 method combines a quantity computer with a loss function to form a complete objective.
@@ -94,7 +95,7 @@ Combining functions
 ====================
 
 Often an objective consists of many independent contributions.
-ChemFit provides :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` to combine multiple objective terms into a single loss.
+ChemFit provides :func:`~chemfit.api.combine` to combine multiple objective terms into a single loss.
 
 In the next example, we first define a parametrized loss term
 
@@ -110,24 +111,20 @@ where :math:`f` is an external parameter and then we combine them into an overal
 
 .. testcode::
 
-    from chemfit.wrap_funcs import quantity
-    from chemfit.combined_objective_function import CombinedObjectiveFunction
+    import chemfit
 
-    @quantity()
+    @chemfit.quantity()
     def computer(params, f):
         return {"fx2": f * params["x"] ** 2, "fy2": f * params["y"] ** 2}
 
     def loss(q, target):
         return (q["fx2"] + q["fy2"] - target) ** 2
 
-    terms = [
-        computer.bind(f=1).with_loss(loss, target=1),
-        computer.bind(f=2).with_loss(loss, target=2)
-    ]
-
-    PARAMS = {"x": 1, "y": 2}
-    combined = CombinedObjectiveFunction(terms)
-    print(combined(PARAMS)) # <-- 80.0
+    combined = chemfit.combine(
+        computer.bind(f=1.0).with_loss(loss, target=1),
+        computer.bind(f=2.0).with_loss(loss, target=2)
+    )
+    print(combined({"x": 1.0, "y": 2.0})) # <-- 80.0
 
 .. testoutput::
     :hide:
@@ -137,31 +134,23 @@ where :math:`f` is an external parameter and then we combine them into an overal
 The :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be customized in many ways.
 Details can be found in the dedicated :ref:`combined_objective_functions` page.
 
-.. warning::
-
-    **OUTDATED:** The following term-parallelism example uses the removed
-    execution-policy API. It is retained as a marker until the simplified
-    top-level API is finalized.
-
-The evaluation of the terms of a :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be parallelized in two alternate ways:
+The evaluation of the terms of a :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` can be parallelized in two ways:
 
 1. Executors which implement the :class:`~chemfit.abstract_objective_function.ExecutorLike` interface. For example from `concurrent.futures`.
 2. By launching multiple processes and using the message passing interface (MPI). See :ref:`mpi` for details.
 
-The following demonstrates the use of the "ExecutorLike" approach
+The following demonstrates executor-backed scheduling:
 
 .. testcode::
 
-    from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.executor_policy import ExecutorPolicy
+    from chemfit.abstract_objective_function import EvaluateContext
+    from chemfit.executor_scheduler import ExecutorTreeScheduler
     from concurrent.futures import ThreadPoolExecutor
 
-    executor = ThreadPoolExecutor(4)
-    cob = CombinedObjectiveFunction(
-        terms,
-        execution_policy=ExecutorPolicy(executor),
-    )
-    print(cob(PARAMS)) # <-- the policy parallelizes evaluation over the terms
+    with ThreadPoolExecutor(4) as executor:
+        scheduler = ExecutorTreeScheduler(executor=executor)
+        with scheduler.prepare(combined) as schedule:
+            print(schedule.evaluate(PARAMS, EvaluateContext()))
 
 .. testoutput::
     :hide:
@@ -182,7 +171,7 @@ It can be used as follows
     from chemfit.fitter import Fitter
     import math
 
-    fitter = Fitter(objective_function=cob, initial_params=PARAMS)
+    fitter = Fitter(objective_function=combined, initial_params=PARAMS)
 
     # fit with nevergrad
     optimal_params = fitter.fit_nevergrad(budget=10) # <--- search solutions with a budget of 10
@@ -204,6 +193,7 @@ Contents
 
    src/installation
    src/usage/concepts.rst
+   src/usage/public_api.rst
    src/usage/writing_quantity_computers.rst
    src/usage/fitter.rst
    src/usage/objective_hooks.rst

@@ -35,8 +35,7 @@ def log_progress(step: int, ctxs: list[FitterEvaluateContext]):
     Args:
         step: Current optimizer step index.
         ctxs: List of ``FitterEvaluateContext`` instances used by the
-            optimizer. Each context corresponds to one evaluation
-            worker.
+            optimizer. Each context corresponds to one candidate slot.
 
     """
 

@@ -165,13 +165,14 @@ class Fitter(Generic[ParametersT]):
         A `Fitter` evaluates an objective (either a plain callable or an
         `ObjectiveFunctor`) through a prepared scheduler and exposes
         convenience methods for running optimizations with nevergrad and
-        SciPy.
+        SciPy. Plain callables receive only the parameter mapping; wrap a
+        context-aware callable as an ``ObjectiveFunctor`` first.
 
         Args:
             objective_function (Callable | ObjectiveFunctor): Objective to
                 be minimized. If a plain callable is provided, it is
-                converted to an `ObjectiveFunctor` using
-                `objective`.
+                converted to a ``WrappedObjectiveFunctor`` without context
+                injection.
             initial_params: Nested mapping of concrete initial parameter
                 values passed to the objective.
             bounds (Mapping[str, object] | None, optional): Bounds for each
@@ -180,11 +181,15 @@ class Fitter(Generic[ParametersT]):
                 Defaults to None.
             near_bound_tol (float | None, optional): If provided, parameters
                 whose optimized values lie within this relative distance of
-                their bounds will trigger a warning in `hook_post_fit`.
+                their bounds will trigger a warning after fitting.
                 Defaults to None.
             value_bad_params (float, optional): Penalty used for invalid,
                 non-scalar, NaN, or swallowed-exception objective results.
                 Defaults to 1e5.
+            swallow_exceptions: Replace ordinary objective exceptions with
+                ``value_bad_params`` instead of re-raising them.
+            log_exceptions: Log ordinary objective exceptions before either
+                re-raising or replacing them.
             scheduler: Scheduler used to evaluate the objective. Defaults
                 to ``SerialTreeScheduler``.
 
@@ -379,13 +384,20 @@ class Fitter(Generic[ParametersT]):
 
         ``num_workers`` controls the maximum candidate batch size. Actual
         execution is delegated entirely to the configured scheduler.
+
+        Args:
+            num_workers: Maximum number of candidates accepted by one call to
+                :meth:`evaluate`.
+            contexts: Optional contexts for the candidate slots. The sequence
+                length must equal ``num_workers``.
+
         """
 
         if num_workers < 1:
             msg = "num_workers must be at least 1"
             raise ValueError(msg)
         if contexts is not None and len(contexts) != num_workers:
-            msg = "contexts must contain one context per worker"
+            msg = "contexts must contain one context per candidate slot"
             raise ValueError(msg)
 
         self._close_schedule()
@@ -431,7 +443,7 @@ class Fitter(Generic[ParametersT]):
             batch = parameters
 
             if len(batch) > self._session_num_workers:
-                msg = "a batch cannot contain more candidates than workers"
+                msg = "a batch cannot contain more candidates than candidate slots"
                 raise ValueError(msg)
             if len(batch) == 0:
                 return []
@@ -620,7 +632,7 @@ class Fitter(Generic[ParametersT]):
 
         Side Effects:
             - Initializes fitter bookkeeping via ``_hook_pre_fit()``.
-            - Populates ``self.contexts`` with one context per worker.
+            - Populates ``self.contexts`` with one context per candidate slot.
             - Invokes registered callbacks during optimization.
             - Runs post-fit checks via ``_hook_post_fit()``.
 

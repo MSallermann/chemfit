@@ -143,7 +143,8 @@ Instantiating the objective function
 ******************************************************
 
 
-For each configuration, we now instantiate a :py:func:`~chemfit.abstract_objective_function.QuantityComputerObjectiveFunction` from an :py:class:`~chemfit.ase_objective_function.ASEComputer` and combine them in a
+For each configuration, we create an objective term from an
+:py:class:`~chemfit.ase_objective_function.ASEComputer` and combine them in a
 :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
 As the loss function we use
@@ -154,22 +155,21 @@ As the loss function we use
 
 .. code-block:: python
 
-    from chemfit.abstract_objective_function import QuantityComputerObjectiveFunction
     from chemfit.ase_objective_function import ASEComputer, PathAtomsFactory
     from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-    def make_energy_term(path, e_ref):
+    def energy_loss(quantities, *, reference):
+        return (
+            (quantities["energy"] - reference) ** 2
+            / quantities["n_atoms"] ** 2
+        )
 
-        comp = ASEComputer(
+    def make_energy_term(path, reference):
+        computer = ASEComputer(
             calculator_factory=calc_factory,
             atoms_factory=PathAtomsFactory(path),
         )
-
-        # Example normalization by n_atoms**2 (as in tests)
-        return QuantityComputerObjectiveFunction(
-            loss_function=lambda q, e=e_ref: (q["energy"] - e) ** 2 / (q["n_atoms"] ** 2),
-            quantity_computer=comp,
-        )
+        return computer.with_loss(energy_loss, reference=reference)
 
     terms = [make_energy_term(p, e) for p, e in zip(paths, energies)]
     ob = CombinedObjectiveFunction(terms)
@@ -182,46 +182,56 @@ Pass the objective function to an instance of the ``Fitter`` class and write som
 
 .. code-block:: python
 
-    from chemfit.utils import dump_dict_to_file
+    from pathlib import Path
+
     from chemfit.fitter import Fitter
+    from chemfit.utils import dump_dict_to_file
 
     fitter = Fitter(
         objective_function = ob,
         initial_params = initial_params
     )
 
-    # All keyword arguments get forwarded to scipy.minimize
+    # Additional keyword arguments are forwarded to scipy.minimize.
     optimal_params = fitter.fit_scipy(
         tol=1e-4, options=dict(maxiter=50)
     )
 
-    # We can print the optimal parameters and some information about the fit
+    # Inspect the optimized parameters and fitter contexts.
     print(f"{optimal_params = }")
-    print(f"{fitter.info = }")
+    print(f"{fitter.contexts = }")
 
     # Optional: save the parameters to a JSON file
-    dump_dict_to_file("output_dimer_binding/optimal_params.json", optimal_params)
+    dump_dict_to_file(
+        Path("output_dimer_binding/optimal_params.json"),
+        optimal_params,
+    )
 
 
 Getting per-term data
 ************************************
 
-After the fit we can gather the meta data and thus evaluate per-term contributions.
+After the fit, evaluate the chosen parameters with an explicit context to
+inspect per-term quantities.
 
 .. note::
 
-   Since the meta data capture data for the *last* evaluation of `params` it is good practice to execute an evaluation of the objective function for the optimal parameters.
-   The reason for this is that it is not guaranteed that the last evaluated parameter set is the optimal one.
+   A fitter context describes the last candidate evaluated in that candidate
+   slot and separately stores its best observation. Nevergrad's recommendation
+   is not necessarily the last evaluated candidate, so evaluate it explicitly
+   when you need its complete child metadata.
 
 .. code-block:: python
 
-    ob(optimal_params)
+    from chemfit.abstract_objective_function import EvaluateContext
 
-    # Gather the meta data (a list of dict)
-    meta_data = ob.gather_meta_data()
+    ctx = EvaluateContext()
+    ob(optimal_params, ctx)
 
-    # Use a list comprehension to retrieve the fitted energies
-    energy_fitted = [md["computer"]["last"]["energy"] for md in meta_data]
+    energy_fitted = [
+        child["quantities"]["energy"]
+        for child in ctx.meta["children"]
+    ]
 
 
 Expected results
@@ -234,16 +244,7 @@ If the fitted energies are plotted against the reference it should look somethin
    :align: center
    :width: 80%
 
-The optimal parameters should be saved as a json file called ``output_dimer_binding/optimal_params.json``:
-
-.. code-block:: javascript
-
-    {
-        "td": 1.7307507548872705,
-        "te": 3.3319409063023553,
-        "C6": 334.4715463605395,
-        "C8": 1146.9930705691029,
-        "C10": 33441.07679944017
-    }
-
-Lastly, there should be a CSV file ``output_dimer_binding/energies.csv`` containing information about each reference configuration in each row.
+The call to :func:`~chemfit.utils.dump_dict_to_file` writes the nested optimized
+parameter mapping to ``output_dimer_binding/optimal_params.json``. ChemFit does
+not create an energies CSV automatically; write ``energy_fitted`` together
+with the reference energies and tags using the table library of your choice.

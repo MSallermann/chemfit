@@ -4,7 +4,9 @@
 
 # About
 
-ChemFit is a Python package for concurrent force-field parameter optimization. It can be used with ASE calculators and external executables.
+ChemFit is a Python package for concurrent simulation-based parameter
+optimization. It can be used with ASE calculators, external executables, and
+custom Python objectives.
 
 # Documentation
 
@@ -13,7 +15,7 @@ Please check the **documentation** for details [here](https://chemfit.readthedoc
 
 # Installation
 
-From PyPi:
+From PyPI:
 
 ```bash
 pip install chemfit
@@ -23,7 +25,7 @@ Or, locally:
 
 ```bash
 git clone git@github.com:MSallermann/chemfit.git
-pip install chemfit
+pip install -e chemfit
 ```
 
 # Citation

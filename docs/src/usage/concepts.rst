@@ -58,13 +58,6 @@ independent contributions.
 Independent terms and parallelism
 ==================================
 
-.. warning::
-
-    **OUTDATED:** The execution-policy description in this section predates
-    prepared schedulers. The independence and context model remains current,
-    but the mechanism for selecting serial, executor, or MPI execution does
-    not.
-
 A key design principle of ChemFit is that objective terms are evaluated
 independently.
 
@@ -80,9 +73,11 @@ This enables parallel evaluation:
 As a result, parallelization is built into the structure of the objective function,
 rather than being added on top.
 
-The combined objective delegates term evaluation to an execution policy.
-Changing the policy selects serial, executor-based, or MPI execution without
-changing the objective's terms or its call interface.
+Execution backends are selected with a
+:class:`~chemfit.scheduling.Scheduler`. A scheduler prepares an
+objective-specific schedule, which can evaluate one parameter mapping or a
+batch. Serial, executor-backed, and MPI tree schedulers all operate on the same
+objective definition; see :ref:`parallel_execution`.
 
 -------------------------
 
@@ -199,9 +194,9 @@ Contexts provide two namespaces for passing information:
     to nested evaluations.
 
 ``shared``
-    A namespace that is shared across related contexts.
-    This can be used for read-only data that should be reused
-    without duplication.
+    A namespace shared by related contexts during local execution. Process
+    executors serialize worker-input state and do not return worker mutations
+    to the driver.
 
 In most cases, you will not need to use these directly. They are primarily
 intended for advanced use cases and custom objective implementations.

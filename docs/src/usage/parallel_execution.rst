@@ -1,166 +1,191 @@
 .. _parallel_execution:
 
-Parallel Execution
-====================
+Parallel execution
+==================
 
-.. warning::
+ChemFit can overlap work at two related levels:
 
-   **OUTDATED:** This page predates the scheduler migration. In particular,
-   its manual batch-evaluation recommendations and all ``ExecutorPolicy`` and
-   ``MPIPolicy`` examples should not be treated as current API guidance. The
-   page is retained for revision after the simplified top-level API is chosen.
+1. several optimizer candidates can be evaluated in one batch;
+2. leaf terms of a combined objective can run concurrently.
 
-There are two ways in which parallel execution enters the picture while dealing with
-a ChemFit objective function:
+Tree schedulers handle both levels with the same pool of execution slots. A
+batch of candidates is expanded into its reachable objective leaves, and the
+backend executes those leaves serially, through an executor, or on MPI worker
+ranks.
 
-1. Evaluating the same objective function for different parameters in parallel.
+One-shot fitting
+----------------
 
-2. Evaluating the terms of a :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` in parallel.
-
-
-This page is meant to showcase example code, making use of these forms of parallelism.
-
-
-1. Evaluate parameter sets in parallel
------------------------------------------
-
-The main complication in this form of parallelism is that each evaluation carries state
-(e.g. metadata, intermediate results). ChemFit's context system ensures that this state
-is preserved and propagated correctly across parallel execution (see :ref:`concepts_parallel_eval`).
-
-In practice, if you use the :py:class:`~chemfit.fitter.Fitter` class you won't have to explicitly interact with these nitty gritty details
-(simply supply ``num_workers`` to :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`).
-
-If you, nonetheless, find yourself in the situation of wanting to evaluate an objective function for multiple parameters in parallel, this will work:
+The top-level :py:func:`chemfit.api.fit` function separates optimizer
+concurrency from execution concurrency:
 
 .. code-block:: python
 
-   from concurrent.futures import ThreadPoolExecutor
-
-   from chemfit.executor_utils import map_with_context
-   from chemfit.abstract_objective_function import EvaluateContext
-
-   executor = ThreadPoolExecutor(max_workers=4)
-
-   params_list = [...]
-   ctxs = [EvaluateContext() for _ in params_list]
-
-   results = map_with_context(
-       executor,
+   result = chemfit.fit(
        objective,
-       params_list,
-       ctxs=ctxs,
+       initial={"x": 1.0},
+       budget=100,
+       workers=4,
+       execution_workers=8,
    )
 
-.. note::
+``workers`` is the maximum number of candidates Nevergrad asks for in one
+batch. ``execution_workers`` is the number of threads in the built-in
+executor-backed scheduler; it defaults to ``workers``. Those execution slots
+are shared by all leaf terms from all candidates in the batch.
 
-    Why do we need :py:func:`~chemfit.executor_utils.map_with_context`?
+To choose a different executor, pass a caller-owned executor and omit
+``execution_workers``:
 
-    Yes, we would get the same results with the built-in ``map`` function of the ``executor``.
-    The difference is that :py:func:`~chemfit.executor_utils.map_with_context` correctly propagates the side-effects
-    of the function evaluation on the context.
+.. code-block:: python
 
-    With a :py:class:`~concurrent.futures.ThreadPoolExecutor` this is usually not an issue,
-    since execution happens in the same process, but a :py:class:`~concurrent.futures.ProcessPoolExecutor`
-    on the other hand will only pickle the **result** of the function and send it back the main process.
-    The :py:func:`~chemfit.executor_utils.map_with_context` function ensures that context updates
-    are propagated correctly by including the context in the returned results.
+   import loky
 
-.. note::
+   with loky.ProcessPoolExecutor(max_workers=4) as executor:
+       result = chemfit.fit(
+           objective,
+           initial={"x": 1.0},
+           budget=100,
+           workers=4,
+           executor=executor,
+       )
 
-    **Compute bound** pure python code (in non free-threading builds) will not be sped-up by using ``ThreadPoolExecutor``.
-    The reason is the global interpreter lock (GIL).
-    Generally it is recommended to avoids compute-heavy workloads in python...
+The executor controls leaf-task concurrency; ``workers`` still controls only
+Nevergrad's candidate batch size. Pass ``scheduler=`` instead for complete
+backend control. ``executor`` and ``scheduler`` are mutually exclusive.
 
-    But if you really have to, you can speed up compute-bound python code by using a process pool.
-    For example :py:class:`concurrent.futures.ProcessPoolExecutor` from the standard library.
-    Be warned though that the required serialization can mean a significant overhead (always measure!).
-    Furthermore, pickling certain functions can be tricky.
+Evaluating a parameter batch
+----------------------------
 
-.. tip::
+:py:func:`chemfit.api.evaluate_many` evaluates parameter mappings through an
+executor or scheduler and returns their populated contexts in input order:
 
-    The ``loky`` package provides a drop-in replacement for :py:class:`concurrent.futures.ProcessPoolExecutor`, which is able
-    to pickle many more functions than the standard library version.
+.. code-block:: python
 
+   from concurrent.futures import ThreadPoolExecutor
 
-2. Evaluate objective terms in parallel
-------------------------------------------
+   from chemfit import evaluate_many
 
-A :py:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-evaluates multiple terms for the same set of parameters.
+   parameters = [{"x": 1.0}, {"x": 2.0}, {"x": 3.0}]
 
-If these terms are independent and expensive, it can make sense to evaluate them in parallel.
+   with ThreadPoolExecutor(max_workers=4) as executor:
+       contexts = evaluate_many(objective, parameters, executor=executor)
 
-ChemFit provides two mechanisms for this:
+   losses = [ctx.loss for ctx in contexts]
 
-- executor-based parallelism
-- MPI-based parallelism
+The function creates one
+:class:`~chemfit.abstract_objective_function.EvaluateContext` per parameter
+mapping. It restores input order even when evaluations finish out of order and
+re-raises an exception from a failed evaluation.
 
+Preparing a scheduler directly
+------------------------------
 
-2.1 Executor-based parallelism
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Use :py:class:`~chemfit.executor_policy.ExecutorPolicy` to evaluate terms in
-parallel using an executor.
+The lower-level scheduler API is useful when a schedule should be reused or
+when individual results should be consumed as they complete. A scheduler is
+backend configuration; :meth:`~chemfit.scheduling.Scheduler.prepare` binds it
+to one objective and returns a prepared schedule.
 
 .. code-block:: python
 
    from concurrent.futures import ThreadPoolExecutor
 
    from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.executor_policy import ExecutorPolicy
+   from chemfit.executor_scheduler import ExecutorTreeScheduler
+   from chemfit.scheduling import EvaluationRequest
+
+   requests = [
+       EvaluationRequest(params, EvaluateContext())
+       for params in parameters
+   ]
 
    with ThreadPoolExecutor(max_workers=4) as executor:
-       objective.execution_policy = ExecutorPolicy(executor)
-       value = objective(parameters, EvaluateContext())
+       scheduler = ExecutorTreeScheduler(executor=executor)
+       with scheduler.prepare(objective) as schedule:
+           completed = list(schedule.evaluate_many(requests))
 
-This is the simplest way to parallelize a combined objective.
+   completed.sort(key=lambda result: result.index)
 
-Use this when:
+``evaluate_many`` yields
+:class:`~chemfit.scheduling.EvaluationResult` objects in completion order.
+Each result contains its original request index and either a numerical value or
+an ordinary evaluation exception. The convenience method ``schedule.evaluate``
+handles one parameter mapping synchronously and raises its evaluation
+exception directly.
 
-- each term performs a non-trivial amount of work
-- the overhead of the executor is small compared to the cost of each term
+Executor ownership
+~~~~~~~~~~~~~~~~~~
 
-.. note::
-
-   As in the previous section, the choice of executor matters.
-
-   - :py:class:`~concurrent.futures.ThreadPoolExecutor` has low overhead, but is limited by the GIL
-   - :py:class:`~concurrent.futures.ProcessPoolExecutor` allows true parallelism, but introduces serialization overhead
-
-
-2.2 MPI-based parallelism
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-Use :py:class:`~chemfit.mpi_policy.MPIPolicy` to distribute terms across MPI
-processes.
+An executor supplied with ``executor=`` remains owned by the caller and is not
+shut down when the prepared schedule closes. Alternatively, configure an
+executor factory:
 
 .. code-block:: python
 
-   from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.mpi_policy import MPIPolicy
+   from functools import partial
 
-   with MPIPolicy() as mpi:
-       objective.execution_policy = mpi
-       if mpi.rank == 0:
-           value = objective(parameters, EvaluateContext())
-       else:
-           mpi.worker_loop(objective)
+   scheduler = ExecutorTreeScheduler(
+       executor_factory=partial(ThreadPoolExecutor, max_workers=4),
+   )
 
-MPI does not behave like an executor.
+Every call to ``prepare`` then creates a new executor. Its prepared schedule
+owns that executor and shuts it down on ``close`` or when its context manager
+exits. Exactly one of ``executor`` and ``executor_factory`` is required.
 
-One process drives the evaluation, while the others wait for work in a loop.
+Threads and processes
+~~~~~~~~~~~~~~~~~~~~~
 
-Use this when:
+:class:`concurrent.futures.ThreadPoolExecutor` has low overhead and works well
+for external programs and native libraries that release the GIL. CPU-bound
+Python code normally needs a process executor for actual parallelism. Process
+execution adds serialization overhead, and objectives, hooks, parameters, and
+worker input context state must be serializable.
 
-- you already run your code under MPI
-- you have many small terms
-- executor overhead becomes a bottleneck
+Executor and MPI schedules return result-bearing context state to the driver:
+parameters, loss, quantities, and metadata. ``ctx.temp`` is scratch state and
+``ctx.shared`` is not transported back. Store results that must survive worker
+execution in ``ctx.meta`` or in the returned quantities.
 
+Fitter concurrency
+------------------
 
-Remarks
-^^^^^^^^^
+At the lower level,
+:meth:`~chemfit.fitter.Fitter.fit_nevergrad` uses ``num_workers`` only as the
+maximum candidate batch size. The scheduler passed to
+:class:`~chemfit.fitter.Fitter` determines whether and how that batch executes
+concurrently:
 
-Parallelizing a combined objective only helps if the individual terms are sufficiently expensive.
+.. code-block:: python
 
-If terms are cheap, the overhead of parallel execution will dominate and performance may degrade.
+   from functools import partial
+
+   from concurrent.futures import ThreadPoolExecutor
+   from chemfit.executor_scheduler import ExecutorTreeScheduler
+   from chemfit.fitter import Fitter
+
+   scheduler = ExecutorTreeScheduler(
+       executor_factory=partial(ThreadPoolExecutor, max_workers=8),
+   )
+   fitter = Fitter(objective, initial_params={"x": 1.0}, scheduler=scheduler)
+   optimum = fitter.fit_nevergrad(budget=100, num_workers=4)
+
+With the default
+:class:`~chemfit.tree_schedule.SerialTreeScheduler`, a Nevergrad batch is
+evaluated serially even when ``num_workers`` is greater than one.
+
+MPI
+---
+
+:class:`~chemfit.mpi_scheduler.MPITreeScheduler` uses persistent nonzero MPI
+ranks as leaf-task workers while rank zero coordinates objective-tree
+semantics and fitting. MPI programs must enter the worker loop on every
+nonzero rank. See :ref:`mpi` for the complete lifecycle and launch example.
+
+Practical guidance
+------------------
+
+Parallel execution is useful only when leaf work is large enough to outweigh
+scheduling and serialization overhead. Measure representative workloads.
+Avoid mutable global or objective-instance state, allocate a distinct context
+for every overlapping evaluation, and use a process backend only when all
+worker inputs are serializable.

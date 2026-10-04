@@ -68,19 +68,14 @@ objectives constructed from quantity computers.
 What actually happens during evaluation
 ---------------------------------------
 
-.. warning::
-
-   **OUTDATED IN PART:** The execution-policy sentence below predates the
-   scheduler migration. The child-context, exception-handling, and reduction
-   semantics described by the rest of this section remain current.
-
 Calling a combined objective does three things.
 
 First, it spawns one child :py:class:`~chemfit.abstract_objective_function.EvaluateContext`
 per term.
 
-Second, its configured execution policy evaluates every term in its own child
-context.
+Second, direct calls evaluate every term serially in its own child context.
+Prepared tree schedules use their configured backend for the leaf work while
+preserving the same context and reduction semantics.
 
 Third, it filters skipped terms and applies the configured reduction. The final
 result is stored in ``ctx.loss``.
@@ -225,7 +220,7 @@ An aggregator has the richer signature
 
    def aggregator(
        terms: list[float],
-       quantities: list[dict[str, object]],
+       quantities: list[dict[str, object] | None],
        ctx : EvaluateContext,
    ) -> float:
        ...
@@ -489,31 +484,36 @@ This mutates the existing combined objective and returns it again.
 
 The same weight rules apply as in the constructor. A single weight is broadcast
 to all added terms, while a sequence of weights must match the number of added
-terms.
+terms. Add every term before preparing a scheduler: a prepared schedule is
+bound to the objective structure that existed at preparation time.
 
 
 Parallel execution
 ------------------
 
-.. warning::
-
-   **OUTDATED:** This section describes the removed execution-policy API.
-   Term-level parallelism now uses prepared schedulers, but replacement usage
-   guidance is intentionally deferred until the simplified top-level API is
-   finalized.
-
 Combined objectives are the main place where term-level parallelism makes sense.
 
-By default, a
-:py:class:`~chemfit.combined_objective_function.SerialExecutionPolicy`
-evaluates terms in order. Supply a different ``execution_policy`` to the
-constructor, or assign ``objective.execution_policy`` later, to change how
-those terms are scheduled. See :ref:`parallel_execution`.
+Calling a combined objective directly evaluates its terms serially. To use a
+different backend, prepare the objective with a scheduler and evaluate through
+the returned schedule:
+
+.. code-block:: python
+
+   from concurrent.futures import ThreadPoolExecutor
+
+   from chemfit.abstract_objective_function import EvaluateContext
+   from chemfit.executor_scheduler import ExecutorTreeScheduler
+
+   with ThreadPoolExecutor(max_workers=4) as executor:
+       scheduler = ExecutorTreeScheduler(executor=executor)
+       with scheduler.prepare(objective) as schedule:
+           value = schedule.evaluate(parameters, EvaluateContext())
 
 In practice this means the same combined objective can be used
 
 - serially
-- with :py:class:`~chemfit.executor_policy.ExecutorPolicy`
-- with :py:class:`~chemfit.mpi_policy.MPIPolicy`
+- with :py:class:`~chemfit.executor_scheduler.ExecutorTreeScheduler`
+- with :py:class:`~chemfit.mpi_scheduler.MPITreeScheduler`
 
-without changing the terms themselves.
+without changing the terms themselves. See :ref:`parallel_execution` for
+batch, executor, and MPI examples.

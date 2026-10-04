@@ -91,7 +91,9 @@ class EvaluateContext:
             shared:
                 Optional namespace for state shared by related contexts, such
                 as parent/child evaluations. Mutable contents require
-                synchronization when contexts can execute concurrently.
+                synchronization when contexts can execute concurrently. A
+                process backend serializes this namespace as worker input;
+                worker mutations are not returned to the caller.
 
         Attributes:
             quantities (dict[str, Any] | None): Intermediate quantities
@@ -555,8 +557,7 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         into the provided `ctx`.
 
         Args:
-            parameters (dict[str, Any]): Mapping of parameter names to
-                float values.
+            parameters: Parameter mapping for the current evaluation.
             ctx (EvaluateContext): Evaluation context.
 
         Returns:
@@ -647,17 +648,16 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         Evaluate the objective function.
 
         Args:
-            parameters (dict[str, Any]): Mapping of parameter names to
-                float values.
+            parameters: Parameter mapping for the current evaluation.
             ctx (EvaluateContext | None): Optional evaluation context. If
                 None, a new `EvaluateContext` is created.
 
         Notes:
             - Derived classes must implement ``_evaluate`` rather than
               overriding ``__call__``.
-            - This method is synchronous. For concurrent or asynchronous
-              evaluation, use one `EvaluateContext` per call and invoke
-              this method in multiple threads/tasks.
+            - This method is synchronous. For batch or concurrent execution,
+              prepare the objective with a scheduler. Distinct overlapping
+              evaluations must use distinct contexts.
 
         Raises:
             PostEvalHookError: If evaluation succeeds and one or more
@@ -760,7 +760,7 @@ class QuantityComputer(Generic[ParametersT_contra, QuantitiesT_co]):
         Compute quantities for the given parameters.
 
         Args:
-            parameters (dict[str, Any]): Parameter dictionary.
+            parameters: Parameter mapping for the current computation.
             ctx (EvaluateContext | None): Optional context. If None, a
                 new one is created.
 
@@ -884,7 +884,7 @@ class QuantityComputerObjectiveFunction(
         method stores the returned loss in ``ctx.loss``.
 
         Args:
-            parameters (dict[str, Any]): Parameter dictionary.
+            parameters: Parameter mapping for the current evaluation.
             ctx (EvaluateContext): Evaluation context.
 
         Returns:
