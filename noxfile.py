@@ -6,6 +6,12 @@ import nox
 def tests_all_versions(session):  # noqa: ANN001
     session.install(".[test,mpi]")
     session.run("pytest", "tests/")
+
+
+# mpi tests
+@nox.session(python=["3.10"])
+def tests_mpi(session):  # noqa: ANN001
+    session.install(".[test,mpi]")
     session.run("mpiexec", "-n", "4", "pytest", "tests", "-k", "mpi")
 
 
