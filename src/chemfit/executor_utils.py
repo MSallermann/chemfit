@@ -1,14 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Generic,
-    ParamSpec,
-    TypeVar,
-    cast,
-)
+from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar
 
 from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
 
@@ -61,13 +54,16 @@ class AttachContextAsReturnValue(Generic[T_co]):
                 - The serialized state of the provided ``EvaluateContext``.
 
         Raises:
-            AssertionError: If the final positional argument is not an
+            TypeError: If the final positional argument is not an
                 ``EvaluateContext``.
 
         """
 
-        ctx = cast("EvaluateContext", args[-1])
-        assert isinstance(ctx, EvaluateContext)
+        if not args or not isinstance(args[-1], EvaluateContext):
+            msg = "The final positional argument must be an EvaluateContext."
+            raise TypeError(msg)
+
+        ctx = args[-1]
         return (self.func(*args), ctx.to_result_state())
 
 

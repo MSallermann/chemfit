@@ -1,7 +1,29 @@
+from pathlib import Path
+
 import pytest
 
+from chemfit.data_utils import process_single_csv
 from chemfit.debug_utils import log_all_methods
+from chemfit.executor_utils import AttachContextAsReturnValue
 from chemfit.utils import check_params_near_bounds
+
+
+def test_context_wrapper_requires_context_as_final_argument():
+    wrapped = AttachContextAsReturnValue(lambda value: value)
+
+    with pytest.raises(TypeError, match="final positional argument"):
+        wrapped("not a context")
+
+
+def test_csv_rejects_non_string_tags(tmp_path: Path):
+    csv_path = tmp_path / "data.csv"
+    csv_path.write_text(
+        "file,tag,reference_energy\nstructure.xyz,12,0.0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="'tag' entries must be strings"):
+        process_single_csv(csv_path)
 
 
 def test_check_params():

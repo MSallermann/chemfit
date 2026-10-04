@@ -36,6 +36,19 @@ def transform_generic_callables(
     return res
 
 
+def _validate_weights(weights: Sequence[float], n_objectives: int) -> None:
+    if len(weights) != n_objectives:
+        msg = (
+            "`weights` must contain one value per objective function "
+            f"(expected {n_objectives}, got {len(weights)})."
+        )
+        raise ValueError(msg)
+
+    if any(weight < 0 for weight in weights):
+        msg = "`weights` must be non-negative."
+        raise ValueError(msg)
+
+
 class Reducer(Protocol):
     def __call__(self, terms: list[float], /) -> float: ...
 
@@ -153,9 +166,9 @@ class CombinedObjectiveFunction(
                 with ``reduction``.
 
         Raises:
-            AssertionError: If the number of weights does not match the
-                number of objective functions, or if any weight is negative.
-            ValueError: If both ``reduction`` and ``aggregator`` are supplied.
+            ValueError: If both ``reduction`` and ``aggregator`` are supplied,
+                the number of weights does not match the number of objective
+                functions, or any weight is negative.
 
         """
 
@@ -184,12 +197,7 @@ class CombinedObjectiveFunction(
         else:
             self.weights = list(weights)
 
-        # Ensure alignment between objective functions and weights
-        assert len(self.weights) == len(self.objective_functions), (
-            "Number of weights must match number of objective functions."
-        )
-        # Ensure all weights are non-negative
-        assert all(w >= 0 for w in self.weights), "All weights must be non-negative."
+        _validate_weights(self.weights, len(self.objective_functions))
 
     def child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the immediate objective terms in evaluation order."""
@@ -291,9 +299,8 @@ class CombinedObjectiveFunction(
             The current instance.
 
         Raises:
-            AssertionError: If a sequence of weights is provided with a
-                length that does not match the number of added callables, or
-                if any provided weight is negative.
+            ValueError: If a sequence of weights does not match the number of
+                added callables, or if any provided weight is negative.
 
         """
 
@@ -305,25 +312,16 @@ class CombinedObjectiveFunction(
 
         funcs_to_add = transform_generic_callables(funcs_to_add)
 
-        # Append each new objective function
-        for fn in funcs_to_add:
-            self.objective_functions.append(fn)
-
         # Handle weights
         if isinstance(weights, Sequence) and not isinstance(weights, (str, bytes)):
             weights_to_add = list(weights)  # type: ignore[assignment]
-            # Must match number of new functions
-            assert len(weights_to_add) == len(funcs_to_add), (
-                "Length of weights sequence must equal number of functions added."
-            )
         else:
             # Single weight repeated for each new function
             weights_to_add = [float(weights) for _ in funcs_to_add]
 
-        # Ensure all new weights are non-negative
-        assert all(w >= 0 for w in weights_to_add), "All weights must be non-negative."
+        _validate_weights(weights_to_add, len(funcs_to_add))
 
-        # Append the new weights
+        self.objective_functions.extend(funcs_to_add)
         self.weights.extend(weights_to_add)
 
         # Final sanity check that lists remain aligned

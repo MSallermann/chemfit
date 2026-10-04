@@ -78,7 +78,8 @@ def process_single_csv(
     Raises:
         FileNotFoundError: If the CSV file does not exist.
         KeyError: If neither `path` nor `file`, or if `tag` or `reference_energy` columns are missing.
-        ValueError: If any `reference_energy` value cannot be converted to float.
+        ValueError: If any tag is not a string or any `reference_energy` value
+            cannot be converted to float.
 
     """
     df = pd.read_csv(path_to_csv)
@@ -95,9 +96,13 @@ def process_single_csv(
         msg = "Error while processing {path_to_csv}. CSV must contain 'tag' and 'reference_energy' columns."
         raise KeyError(msg)
 
-    assert isinstance(df["tag"][0], str)
-
     tags: list[str] = list(df["tag"])
+    if not all(isinstance(tag, str) for tag in tags):
+        msg = (
+            f"Error while processing {path_to_csv}. All 'tag' entries must be strings."
+        )
+        raise ValueError(msg)
+
     try:
         energies = [float(e) for e in df["reference_energy"]]
     except Exception as err:
