@@ -110,6 +110,39 @@ def test_with_meta_is_copy_on_write_and_merges() -> None:
     assert computer_ctx.meta == {"source": "cache", "replica": 3}
 
 
+def test_objective_fluent_variants_have_independent_hook_lists() -> None:
+    @objective()
+    def base(parameters: dict, *, extra: str = "") -> float:
+        del extra
+        return parameters["x"]
+
+    def hook_a(ctx: EvaluateContext) -> None:
+        del ctx
+
+    def hook_b(ctx: EvaluateContext) -> None:
+        del ctx
+
+    base = base.with_meta(dataset="source")
+    base.register_eval_hook(pre=hook_a, post=hook_a)
+
+    tagged = base.with_meta(dataset="training")
+    tagged.register_eval_hook(pre=hook_b, post=hook_b)
+
+    assert base.pre_eval_hooks == [hook_a]
+    assert tagged.pre_eval_hooks == [hook_a, hook_b]
+    assert base.post_eval_hooks == [hook_a]
+    assert tagged.post_eval_hooks == [hook_a, hook_b]
+
+    bound = base.bind(extra="value")
+    bound.register_eval_hook(pre=hook_b, post=hook_b)
+
+    assert base.pre_eval_hooks == [hook_a]
+    assert bound.pre_eval_hooks == [hook_a, hook_b]
+    assert base.post_eval_hooks == [hook_a]
+    assert bound.post_eval_hooks == [hook_a, hook_b]
+    assert bound.static_meta_data == base.static_meta_data
+
+
 def test_composed_static_metadata_precedence_in_child_context() -> None:
     computer = quants.with_meta(dataset="liquid", owner="quantity")
     term = computer.with_loss(loss).with_meta(
