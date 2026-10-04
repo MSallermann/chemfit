@@ -12,6 +12,7 @@ from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.fitter import Fitter, FitterEvaluateContext
+from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 from pydictnest import get_nested, has_nested, items_nested
@@ -73,6 +74,53 @@ def test_scipy_converges_on_combined_objective():
 
     assert np.isclose(optimal_params["x"], 2.0)
     assert np.isclose(optimal_params["y"], -1.0)
+
+
+@pytest.mark.parametrize("backend", ["nevergrad", "scipy"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_fit_closes_prepared_schedule_after_evaluation_failure(
+    backend: str,
+    cleanup_fails: bool,
+):
+    class RecordingScheduler:
+        def __init__(self) -> None:
+            self.schedule = None
+
+        def prepare(self, objective: Any):
+            self.schedule = SerialTreeScheduler().prepare(objective)
+            if cleanup_fails:
+                close = self.schedule.close
+
+                def failing_close() -> None:
+                    close()
+                    msg = "cleanup failed"
+                    raise RuntimeError(msg)
+
+                self.schedule.close = failing_close
+            return self.schedule
+
+    def failing_objective(_params: dict[str, float]) -> float:
+        msg = "evaluation failed"
+        raise ValueError(msg)
+
+    scheduler = RecordingScheduler()
+    fitter = Fitter(
+        failing_objective,
+        initial_params={"x": 1.0},
+        scheduler=scheduler,
+        log_exceptions=False,
+    )
+
+    with pytest.raises(ValueError, match="evaluation failed") as exc_info:
+        if backend == "nevergrad":
+            fitter.fit_nevergrad(budget=1, optimizer_str="OnePlusOne")
+        else:
+            fitter.fit_scipy()
+
+    assert scheduler.schedule is not None
+    assert scheduler.schedule.closed
+    if cleanup_fails and hasattr(exc_info.value, "__notes__"):
+        assert "cleanup failed" in exc_info.value.__notes__[0]
 
 
 @pytest.mark.parametrize("optimizer", NG_SOLVERS)

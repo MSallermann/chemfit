@@ -430,10 +430,14 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         Return a copy with additional static evaluation metadata.
 
         Existing metadata is preserved unless a key is supplied again. The
-        source objective is unchanged.
+        source objective is unchanged. Existing hook objects are retained, but
+        the returned objective has independent registration lists, so later
+        hook registration does not affect the source.
         """
 
         new = copy.copy(self)
+        new.pre_eval_hooks = self.pre_eval_hooks.copy()
+        new.post_eval_hooks = self.post_eval_hooks.copy()
         new.static_meta_data = {**self.static_meta_data, **meta}
         return new
 

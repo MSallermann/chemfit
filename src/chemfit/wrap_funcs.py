@@ -72,7 +72,9 @@ class WrappedObjectiveFunctor(
         Return a new objective functor with extra arguments bound.
 
         The bound arguments are passed to the wrapped function in addition
-        to the usual ChemFit arguments.
+        to the usual ChemFit arguments. Static metadata and registered hook
+        objects are retained, while the returned functor has independent hook
+        registration lists.
 
         Args:
             *args: Positional arguments to bind after ``parameters`` (and
@@ -92,6 +94,8 @@ class WrappedObjectiveFunctor(
             resources=self.resources,
         )
         new.static_meta_data = self.static_meta_data.copy()
+        new.pre_eval_hooks = self.pre_eval_hooks.copy()
+        new.post_eval_hooks = self.post_eval_hooks.copy()
         return new
 
     def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
@@ -128,17 +132,47 @@ def objective(
     WrappedObjectiveFunctor[ParametersT_contra],
 ]:
     """
-    Create a decorator that wraps a callable as an objective functor.
+    Wrap a Python loss function as a ChemFit objective.
+
+    The decorated callable receives the parameter mapping and returns a scalar
+    loss. The resulting :class:`WrappedObjectiveFunctor` participates in
+    scheduling, evaluation hooks, static metadata, and objective composition.
+    Extra function arguments can be configured later with ``bind()``.
 
     Args:
-        pass_ctx: If ``True``, the decorated callable is expected to accept
-            ``(parameters, ctx)``. Otherwise, it is expected to accept only
-            ``(parameters)``.
+        pass_ctx: If ``True``, pass the current context as the keyword argument
+            ``ctx`` in addition to the parameter mapping. Otherwise the
+            callable receives only the parameters and any bound arguments.
         resources: Static resources required for one evaluation.
 
     Returns:
-        Decorator that converts a compatible callable into a
-        ``WrappedObjectiveFunctor``.
+        A decorator that converts a compatible callable into a
+        :class:`WrappedObjectiveFunctor`.
+
+    Examples:
+        Define and tag a directly computed objective term::
+
+            @chemfit.objective(resources={"cpu": 1})
+            def regularization(parameters, *, strength):
+                return strength * parameters["epsilon"] ** 2
+
+            term = (
+                regularization.bind(strength=0.01)
+                .with_meta(kind="regularization")
+            )
+
+        Request the evaluation context when the function needs to record
+        metadata::
+
+            @chemfit.objective(pass_ctx=True)
+            def monitored_loss(parameters, *, ctx):
+                ctx.meta["model"] = "lj"
+                return parameters["epsilon"] ** 2
+
+    Notes:
+        ``with_meta()`` and ``bind()`` return fluent variants without changing
+        the source objective. Hook registrations already present on the source
+        are retained, while later registrations on a variant are independent.
 
     """
 
@@ -263,17 +297,42 @@ def quantity(
     WrappedQuantityComputer[ParametersT_contra, QuantitiesT_co],
 ]:
     """
-    Create a decorator that wraps a callable as a quantity computer.
+    Wrap a Python function as a ChemFit quantity computer.
+
+    The decorated callable converts a parameter mapping into a quantity
+    dictionary. The returned :class:`WrappedQuantityComputer` can be configured
+    fluently with bound arguments and static metadata, then converted into an
+    objective with ``with_loss()``.
 
     Args:
-        pass_ctx: If ``True``, the decorated callable is expected to accept
-            ``(parameters, ctx)``. Otherwise, it is expected to accept only
-            ``(parameters)``.
+        pass_ctx: If ``True``, pass the current context as the keyword argument
+            ``ctx`` in addition to the parameter mapping. Otherwise the
+            callable receives only the parameters and any bound arguments.
         resources: Static resources required for one computation.
 
     Returns:
-        Decorator that converts a compatible callable into a
-        ``WrappedQuantityComputer``.
+        A decorator that converts a compatible callable into a
+        :class:`WrappedQuantityComputer`.
+
+    Examples:
+        Build a reusable quantity stage and attach a loss::
+
+            @chemfit.quantity(resources={"cpu": 1})
+            def model(parameters, *, scale):
+                return {"prediction": scale * parameters["x"]}
+
+            term = (
+                model.bind(scale=2.0)
+                .with_meta(dataset="training")
+                .with_loss(squared_error, target=4.0)
+                .with_meta(observable="prediction")
+            )
+
+    Notes:
+        Static metadata is merged into the shared ``ctx.meta`` mapping. Existing
+        context metadata is updated first, followed by quantity-computer
+        metadata and then objective metadata, so the objective wins on key
+        collisions.
 
     """
 

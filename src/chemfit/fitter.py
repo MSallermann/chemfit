@@ -294,9 +294,10 @@ class Fitter(Generic[ParametersT]):
     def _close_schedule(self) -> None:
         """Close the currently prepared schedule, if any."""
 
-        if self._schedule is not None:
-            self._schedule.close()
-            self._schedule = None
+        schedule = self._schedule
+        self._schedule = None
+        if schedule is not None:
+            schedule.close()
 
     def register_callback(self, func: CallbackT, n_steps: int) -> None:
         """
@@ -527,9 +528,18 @@ class Fitter(Generic[ParametersT]):
         try:
             self._hook_post_fit(opt_params)
             self._dispatch_callbacks(final=True)
-            return opt_params
-        finally:
+        except BaseException as exception:
+            try:
+                self._close_schedule()
+            except BaseException as cleanup_exception:
+                if hasattr(exception, "add_note"):
+                    exception.add_note(
+                        f"Schedule cleanup failed: {cleanup_exception!r}"
+                    )
+            raise
+        else:
             self._close_schedule()
+            return opt_params
 
     def _make_nevergrad_parameterization(
         self, parametrization: Mapping[str, object] | None
@@ -658,65 +668,75 @@ class Fitter(Generic[ParametersT]):
 
         self.init(num_workers=num_workers, contexts=contexts)
 
-        if initial_observations is not None:
-            for restart_params, restart_loss_value in initial_observations:
-                skip = False
-                flat_params = flatten_dict(restart_params)
+        try:
+            if initial_observations is not None:
+                for restart_params, restart_loss_value in initial_observations:
+                    skip = False
+                    flat_params = flatten_dict(restart_params)
 
-                for key, (lower, upper) in flat_bounds.items():
-                    restart_value = flat_params.get(key)
-                    if restart_value is not None and (
-                        restart_value < lower or restart_value > upper
-                    ):
-                        skip = True
+                    for key, (lower, upper) in flat_bounds.items():
+                        restart_value = flat_params.get(key)
+                        if restart_value is not None and (
+                            restart_value < lower or restart_value > upper
+                        ):
+                            skip = True
 
-                if skip:
-                    continue
+                    if skip:
+                        continue
 
-                optimizer.suggest(flat_params)
-                asked_params = optimizer.ask()
+                    optimizer.suggest(flat_params)
+                    asked_params = optimizer.ask()
 
-                # Replay the recorded value through the same fitter-side
-                # normalization and incumbent bookkeeping used for live results.
-                post_processed_loss_value = self._record_loss(
-                    parameters=restart_params,
-                    value=restart_loss_value,
-                    ctx=self.contexts[0],
-                )
-                optimizer.tell(asked_params, post_processed_loss_value)
+                    # Replay the recorded value through the same fitter-side
+                    # normalization and incumbent bookkeeping used for live results.
+                    post_processed_loss_value = self._record_loss(
+                        parameters=restart_params,
+                        value=restart_loss_value,
+                        ctx=self.contexts[0],
+                    )
+                    optimizer.tell(asked_params, post_processed_loss_value)
 
-        for step, batch_start in enumerate(range(0, budget, num_workers)):
-            batch_size = min(num_workers, budget - batch_start)
+            for step, batch_start in enumerate(range(0, budget, num_workers)):
+                batch_size = min(num_workers, budget - batch_start)
 
-            if step == 0:
-                optimizer.suggest(flat_initial_params)
+                if step == 0:
+                    optimizer.suggest(flat_initial_params)
 
-            asked_params = [optimizer.ask() for _ in range(batch_size)]
-            flat_params = [candidate.value[0][0] for candidate in asked_params]
-            nested_params = [
-                cast(
-                    "ParametersT",
-                    unflatten_dict(parameters, dict_factory=dict[str, Any]),
-                )
-                for parameters in flat_params
-            ]
-            asked_losses = self.evaluate(nested_params)
-            assert isinstance(asked_losses, list)
+                asked_params = [optimizer.ask() for _ in range(batch_size)]
+                flat_params = [candidate.value[0][0] for candidate in asked_params]
+                nested_params = [
+                    cast(
+                        "ParametersT",
+                        unflatten_dict(parameters, dict_factory=dict[str, Any]),
+                    )
+                    for parameters in flat_params
+                ]
+                asked_losses = self.evaluate(nested_params)
+                assert isinstance(asked_losses, list)
 
-            for params, loss in zip(asked_params, asked_losses, strict=True):
-                optimizer.tell(params, loss)
+                for params, loss in zip(asked_params, asked_losses, strict=True):
+                    optimizer.tell(params, loss)
 
-            self.step()
+                self.step()
 
-        recommendation = optimizer.provide_recommendation()
-        args, _ = recommendation.value
-        flat_opt_params = args[0]
-        opt_params = cast(
-            "ParametersT",
-            unflatten_dict(flat_opt_params, dict_factory=dict[str, Any]),
-        )
+            recommendation = optimizer.provide_recommendation()
+            args, _ = recommendation.value
+            flat_opt_params = args[0]
+            opt_params = cast(
+                "ParametersT",
+                unflatten_dict(flat_opt_params, dict_factory=dict[str, Any]),
+            )
 
-        return self.finish(opt_params)
+            return self.finish(opt_params)
+        except BaseException as exception:
+            try:
+                self._close_schedule()
+            except BaseException as cleanup_exception:
+                if hasattr(exception, "add_note"):
+                    exception.add_note(
+                        f"Schedule cleanup failed: {cleanup_exception!r}"
+                    )
+            raise
 
     def fit_scipy(
         self,
@@ -777,29 +797,47 @@ class Fitter(Generic[ParametersT]):
         # Since we know that scipy.optimize works synchronously, we create a single context, which we'll keep alive.
         self.init(contexts=None if ctx is None else [ctx])
 
-        def f_scipy(x: npt.NDArray) -> float:
-            parameters = cast(
-                "ParametersT",
-                unflatten_dict(
-                    dict(zip(self._keys, x, strict=False)), dict_factory=dict[str, Any]
-                ),
+        try:
+
+            def f_scipy(x: npt.NDArray) -> float:
+                parameters = cast(
+                    "ParametersT",
+                    unflatten_dict(
+                        dict(zip(self._keys, x, strict=False)),
+                        dict_factory=dict[str, Any],
+                    ),
+                )
+                loss = self.evaluate(parameters)
+                assert isinstance(loss, float)
+                return loss
+
+            def callback_scipy(_intermediate_result: OptimizeResult):
+                self.step()
+
+            res = minimize(
+                f_scipy,
+                x0,
+                method=method,
+                bounds=bounds,
+                **kwargs,
+                callback=callback_scipy,
             )
-            loss = self.evaluate(parameters)
-            assert isinstance(loss, float)
-            return loss
 
-        def callback_scipy(_intermediate_result: OptimizeResult):
-            self.step()
+            if not res.success:
+                logger.warning(f"Fit did not converge: {res.message}")
 
-        res = minimize(
-            f_scipy, x0, method=method, bounds=bounds, **kwargs, callback=callback_scipy
-        )
+            opt_params = cast(
+                "ParametersT",
+                unflatten_dict(dict(zip(self._keys, res.x, strict=False))),
+            )
 
-        if not res.success:
-            logger.warning(f"Fit did not converge: {res.message}")
-
-        opt_params = cast(
-            "ParametersT", unflatten_dict(dict(zip(self._keys, res.x, strict=False)))
-        )
-
-        return self.finish(opt_params)
+            return self.finish(opt_params)
+        except BaseException as exception:
+            try:
+                self._close_schedule()
+            except BaseException as cleanup_exception:
+                if hasattr(exception, "add_note"):
+                    exception.add_note(
+                        f"Schedule cleanup failed: {cleanup_exception!r}"
+                    )
+            raise
