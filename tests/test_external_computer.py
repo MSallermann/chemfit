@@ -535,6 +535,18 @@ def test_subprocess_exception_does_not_parse_by_default(
     assert "fatal stderr" in dump
 
 
+def test_unsafe_relative_paths():
+    unsafe_path = "../bla/../../out.txt"
+
+    with pytest.raises(ValueError, match="Relative path"):
+        ExternalQuantityComputer(base_working_directory="workdir").wait_for(unsafe_path)
+
+    with pytest.raises(ValueError, match="Relative path"):
+        ExternalQuantityComputer(base_working_directory="workdir").with_parser(
+            MyParser(), unsafe_path
+        )
+
+
 if __name__ == "__main__":
     logging.basicConfig(filename="test_external.log")
 
