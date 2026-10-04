@@ -102,6 +102,137 @@ def test_constructor_rejects_invalid_weights():
         )
 
 
+def test_fluent_weights_copy_mutable_configuration() -> None:
+    def term_a(_params: dict[str, float]) -> float:
+        return 1.0
+
+    def term_b(_params: dict[str, float]) -> float:
+        return 3.0
+
+    def hook_a(ctx: EvaluateContext) -> None:
+        del ctx
+
+    def hook_b(ctx: EvaluateContext) -> None:
+        del ctx
+
+    source = combined_objective_function.CombinedObjectiveFunction(
+        [term_a, term_b]
+    ).with_meta(dataset="source")
+    source.register_eval_hook(pre=hook_a, post=hook_a)
+    variant = source.with_weights([1.0, 0.2])
+    variant.register_eval_hook(pre=hook_b, post=hook_b)
+
+    assert variant is not source
+    assert source.weights == [1.0, 1.0]
+    assert variant.weights == [1.0, 0.2]
+    assert variant.weights is not source.weights
+    assert variant.objective_functions is not source.objective_functions
+    assert all(
+        variant_term is source_term
+        for variant_term, source_term in zip(
+            variant.objective_functions,
+            source.objective_functions,
+            strict=True,
+        )
+    )
+    assert source.pre_eval_hooks == [hook_a]
+    assert variant.pre_eval_hooks == [hook_a, hook_b]
+    assert source.post_eval_hooks == [hook_a]
+    assert variant.post_eval_hooks == [hook_a, hook_b]
+    assert math.isclose(source({}, EvaluateContext()), 4.0)
+    assert math.isclose(variant({}, EvaluateContext()), 1.6)
+
+    retagged = variant.with_meta(dataset="variant")
+    assert retagged.static_meta_data == {"dataset": "variant"}
+    assert variant.static_meta_data == {"dataset": "source"}
+    assert retagged.objective_functions is not variant.objective_functions
+    assert retagged.weights is not variant.weights
+
+
+@pytest.mark.parametrize("weights", [[1.0], [1.0, -0.2]])
+def test_with_weights_rejects_invalid_values(weights: list[float]) -> None:
+    source = combined_objective_function.CombinedObjectiveFunction(make_funcs(2))
+
+    with pytest.raises(ValueError, match="weights"):
+        source.with_weights(weights)
+
+    assert source.weights == [1.0, 1.0]
+
+
+def test_fluent_reduction_and_aggregator_use_last_configuration() -> None:
+    source = combined_objective_function.CombinedObjectiveFunction(
+        [lambda _params: 1.0, lambda _params: 3.0]
+    )
+
+    def aggregator(
+        terms: list[float],
+        _quantities: list[dict[str, Any] | None],
+        ctx: EvaluateContext,
+    ) -> float:
+        ctx.meta["aggregated"] = True
+        return max(terms) + 10.0
+
+    reduced = source.with_reduction(combined_objective_function.mean_reducer)
+    aggregated = source.with_aggregator(aggregator)
+    aggregator_last = reduced.with_aggregator(aggregator)
+    reducer_last = aggregated.with_reduction(combined_objective_function.sum_reducer)
+
+    assert reduced is not source
+    assert aggregated is not source
+    assert isinstance(source.reduction, combined_objective_function.WrappedReducer)
+    assert source.reduction.to_reducer() is combined_objective_function.sum_reducer
+    assert isinstance(reduced.reduction, combined_objective_function.WrappedReducer)
+    assert reduced.reduction.to_reducer() is combined_objective_function.mean_reducer
+    assert aggregated.reduction is aggregator
+    assert aggregator_last.reduction is aggregator
+    assert isinstance(
+        reducer_last.reduction, combined_objective_function.WrappedReducer
+    )
+    assert (
+        reducer_last.reduction.to_reducer() is combined_objective_function.sum_reducer
+    )
+    assert math.isclose(source({}, EvaluateContext()), 4.0)
+    assert math.isclose(reduced({}, EvaluateContext()), 2.0)
+    aggregated_ctx = EvaluateContext()
+    assert math.isclose(aggregated({}, aggregated_ctx), 13.0)
+    assert aggregated_ctx.meta["aggregated"] is True
+    assert math.isclose(aggregator_last({}, EvaluateContext()), 13.0)
+    assert math.isclose(reducer_last({}, EvaluateContext()), 4.0)
+
+
+def test_fluent_exception_handler_uses_last_configuration() -> None:
+    def ok(_params: dict[str, float]) -> float:
+        return 2.0
+
+    def broken(_params: dict[str, float]) -> float:
+        msg = "broken term"
+        raise RuntimeError(msg)
+
+    source = combined_objective_function.CombinedObjectiveFunction([ok, broken])
+    skipped = source.with_exception_handler(
+        combined_objective_function.skip_exception_handler
+    )
+    replaced = skipped.with_exception_handler(
+        combined_objective_function.nan_exception_handler
+    )
+
+    assert skipped is not source
+    assert (
+        source.exception_handler
+        is combined_objective_function.raising_exception_handler
+    )
+    assert (
+        skipped.exception_handler is combined_objective_function.skip_exception_handler
+    )
+    assert (
+        replaced.exception_handler is combined_objective_function.nan_exception_handler
+    )
+    with pytest.raises(RuntimeError, match="broken term"):
+        source({}, EvaluateContext())
+    assert math.isclose(skipped({}, EvaluateContext()), 2.0)
+    assert math.isnan(replaced({}, EvaluateContext()))
+
+
 def test_add_rejects_invalid_weights_without_mutating_objective():
     cob = combined_objective_function.CombinedObjectiveFunction(make_funcs(1))
 
