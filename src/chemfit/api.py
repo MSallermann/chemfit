@@ -445,6 +445,7 @@ def fit(
     scheduler: Scheduler | None = None,
     callbacks: Sequence[tuple[CallbackT, int]] | None = None,
     parametrization: Mapping[str, object] | None = None,
+    initial_observations: Iterable[tuple[ParamsT, float | None]] | None = None,
 ) -> FitResult[ParamsT]:
     """
     Fit an objective with Nevergrad through ChemFit's recommended interface.
@@ -475,6 +476,10 @@ def fit(
             interval and once for a final partial interval.
         parametrization: Optional nested mapping of explicit Nevergrad
             parameter objects. It may replace selected leaves of ``initial``.
+        initial_observations: Previously evaluated ``(parameters, loss)``
+            pairs used to seed Nevergrad before live optimization. Entries
+            outside ``bounds`` are skipped. Replayed observations do not
+            consume ``budget`` or trigger callbacks.
 
     Returns:
         A :class:`FitResult` containing Nevergrad's recommendation and the
@@ -515,6 +520,18 @@ def fit(
                 execution_workers=8,
             )
 
+        Seed a new run with results from earlier evaluations::
+
+            result = chemfit.fit(
+                objective,
+                initial=initial,
+                budget=200,
+                initial_observations=[
+                    ({"epsilon": 0.7, "sigma": 1.0}, 0.42),
+                    ({"epsilon": 0.9, "sigma": 1.2}, 0.31),
+                ],
+            )
+
     Notes:
         ``workers`` controls how many candidates Nevergrad asks for in a batch;
         it does not impose a leaf-execution limit on a custom backend.
@@ -526,6 +543,9 @@ def fit(
         The returned ``recommendation`` is Nevergrad's final recommendation.
         ``best_parameters`` and ``best_loss`` instead identify the best
         successful optimizer-visible evaluation recorded by ChemFit.
+
+        Initial observations provide an approximate warm start; they do not
+        restore Nevergrad's internal optimizer state.
 
     """
 
@@ -583,6 +603,7 @@ def fit(
         optimizer_str=optimizer,
         num_workers=workers,
         parametrization=parametrization,
+        initial_observations=initial_observations,
     )
 
     return FitResult(recommendation=recommendation, contexts=tuple(fitter.contexts))

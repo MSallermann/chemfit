@@ -8,6 +8,27 @@ from ase.calculators.lj import LennardJones
 import chemfit
 
 
+def test_fit_accepts_initial_observations():
+    evaluated: list[dict[str, float]] = []
+
+    def objective(parameters: dict[str, float]) -> float:
+        evaluated.append(parameters)
+        return parameters["x"] ** 2
+
+    observations = (({"x": 0.0}, 0.0) for _ in range(1))
+    result = chemfit.fit(
+        objective,
+        initial={"x": 1.0},
+        budget=1,
+        optimizer="OnePlusOne",
+        initial_observations=observations,
+    )
+
+    assert len(evaluated) == 1
+    assert result.best_parameters == {"x": 0.0}
+    assert result.best_loss == 0.0
+
+
 def test_public_api_workflow(tmp_path: Path):
     @chemfit.quantity()
     def model(parameters: dict[str, float], scale: float):

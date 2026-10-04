@@ -323,6 +323,7 @@ Saving and replaying evaluations
 
 The :class:`~chemfit.fitter_callbacks.SaveMetaData` callback pairs naturally
 with the ``initial_observations`` argument of
+:func:`chemfit.fit() <chemfit.api.fit>` or
 :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`.
 
 It allows evaluation results to be persisted and later reused to seed a
@@ -330,7 +331,9 @@ new optimization:
 
 .. code-block:: python
 
-    opt_params = fitter.fit_nevergrad(
+    result = chemfit.fit(
+        objective,
+        initial=initial,
         budget=100,
         initial_observations=loaded_observations,
     )
@@ -587,7 +590,9 @@ The Nevergrad backend can be seeded with previously observed
         ({"x": 2.0, "y": -1.0}, 0.0),
     ]
 
-    opt_params = fitter.fit_nevergrad(
+    result = chemfit.fit(
+        objective,
+        initial={"x": 1.0, "y": 1.0},
         budget=100,
         initial_observations=observations,
     )
