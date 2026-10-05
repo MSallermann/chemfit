@@ -15,6 +15,7 @@ and clean up their resources when closed.
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any, Generic, TypeVar
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
@@ -32,6 +33,11 @@ from chemfit.scheduling import (
     PreparedScheduleBase,
     Scheduler,
 )
+
+
+class BatchState(SimpleNamespace):
+    """Backend scratch state for one evaluate_many() call."""
+
 
 ParametersT_contra = TypeVar(
     "ParametersT_contra", contravariant=True, bound=Mapping[str, Any]
@@ -593,8 +599,7 @@ class TreeScheduleBase(
             current_node_id = parent_id
 
     def execute_leaf_tasks(
-        self,
-        tasks: Sequence[LeafTask[ParametersT_contra]],
+        self, tasks: Sequence[LeafTask[ParametersT_contra]], batch_state: BatchState
     ) -> Iterator[LeafCompletion]:
         """
         Execute backend-neutral leaf tasks.
@@ -614,8 +619,7 @@ class TreeScheduleBase(
         raise NotImplementedError
 
     def evaluate_leaves(
-        self,
-        runs: Sequence[EvaluationRun[ParametersT_contra]],
+        self, runs: Sequence[EvaluationRun[ParametersT_contra]], batch_state: BatchState
     ) -> Iterator[tuple[int, NodeId, NodeOutcome]]:
         """
         Execute all pending leaves and restore their returned context state.
@@ -630,8 +634,22 @@ class TreeScheduleBase(
         """
 
         tasks = self.expand_leaf_tasks(runs)
-        for completion in self.execute_leaf_tasks(tasks):
+        for completion in self.execute_leaf_tasks(tasks, batch_state):
             yield self.restore_leaf_completion(completion, runs)
+
+    def abort_batch(self, batch_state: BatchState) -> None:
+        """Abort a batch after catastrophic failure. Default implementation does nothing."""
+
+    def _abort_batch_after_catastrophic_failure(
+        self,
+        batch_state: BatchState,
+        exception: BaseException,
+    ) -> None:
+        try:
+            self.abort_batch(batch_state)
+        except BaseException as cleanup_exception:
+            if hasattr(exception, "add_note"):
+                exception.add_note(f"Batch cleanup failed: {cleanup_exception!r}")
 
     def evaluate_many(
         self,
@@ -654,6 +672,9 @@ class TreeScheduleBase(
                 be reused; partial evaluation state is undefined.
 
         """
+
+        batch_state = BatchState()
+
         try:
             if self.closed:
                 msg = "Prepared schedule is closed."
@@ -692,16 +713,12 @@ class TreeScheduleBase(
 
             yield from setup_results
 
-            for run_id, node_id, outcome in self.evaluate_leaves(runs):
+            for run_id, node_id, outcome in self.evaluate_leaves(runs, batch_state):
                 run = runs[run_id]
 
                 # Propagate this completed node through its evaluation tree.
                 # A returned outcome means that the root has completed.
-                root_outcome = self.propagate_completion(
-                    node_id,
-                    outcome,
-                    run.state,
-                )
+                root_outcome = self.propagate_completion(node_id, outcome, run.state)
 
                 if not isinstance(root_outcome, _Pending):
                     yield EvaluationResult(
@@ -710,6 +727,7 @@ class TreeScheduleBase(
                     )
 
         except BaseException as exception:
+            self._abort_batch_after_catastrophic_failure(batch_state, exception)
             self._close_after_catastrophic_failure(exception)
             raise
 
@@ -726,6 +744,7 @@ class SerialTreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
     def execute_leaf_tasks(
         self,
         tasks: Sequence[LeafTask[ParametersT]],
+        batch_state: BatchState,  # noqa: ARG002
     ) -> Iterator[LeafCompletion]:
         """
         Evaluate leaf tasks serially in input order.
