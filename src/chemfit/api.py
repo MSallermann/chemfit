@@ -152,51 +152,100 @@ def combine(
 
 def external_quantity(
     workdir: Path | str,
-) -> ExternalQuantityComputer[Any, dict[str, Any]]:
+    *,
+    wait_timeout: float | None = 500.0,
+    poll_interval: float = 1.0,
+    subprocess_run_args: dict[str, Any] | None = None,
+    delete_temp_workdirs: bool = True,
+    write_dump_file_after_crash: bool = True,
+    keep_temp_workdir_after_crash: bool = True,
+    try_parsing_after_exception: bool = False,
+) -> ExternalQuantityComputer[dict[str, Any], dict[str, Any]]:
     """
     Create a quantity computer for an external program.
 
     Every evaluation runs in a fresh isolated directory below ``workdir``.
-    Commands and Python hooks execute as an ordered pipeline, after which
-    configured output files are parsed into quantities. Parser inputs and
-    completion paths are relative to that evaluation directory.
+    Hooks and commands can be added as an ordered execution pipeline, after
+    which configured output files are awaited and parsed into quantities.
+
+    The constructor arguments configure execution, polling, temporary-directory
+    handling, and failure behavior. The actual external workflow is configured
+    fluently using :meth:`ExternalQuantityComputer.with_hook`,
+    :meth:`ExternalQuantityComputer.with_cmd`,
+    :meth:`ExternalQuantityComputer.with_parser`, and
+    :meth:`ExternalQuantityComputer.wait_for`.
 
     Args:
-        workdir: Parent directory in which isolated evaluation directories
-            are created.
+        workdir: Parent directory in which isolated evaluation directories are
+            created.
+        wait_timeout: Maximum time in seconds to wait for required output files
+            after execution finishes. ``None`` disables the timeout.
+        poll_interval: Time in seconds between checks for required output files.
+        subprocess_run_args: Additional keyword arguments forwarded to
+            :func:`subprocess.run`. If ``None``,
+            ``{"capture_output": True}`` is used.
+        delete_temp_workdirs: Whether to remove evaluation working directories
+            after successful evaluations and, subject to
+            ``keep_temp_workdir_after_crash``, after failed evaluations.
+        write_dump_file_after_crash: Whether to write a diagnostic dump file
+            when execution, output waiting, or parsing fails.
+        keep_temp_workdir_after_crash: Whether to preserve the evaluation
+            working directory when an evaluation fails.
+        try_parsing_after_exception: Whether to continue to output waiting and
+            parsing when an external command raises
+            :class:`subprocess.CalledProcessError`.
 
     Returns:
-        A new :class:`ExternalQuantityComputer` for fluent configuration.
+        A configured :class:`ExternalQuantityComputer`. Hooks, commands,
+        parsers, completion files, metadata, and losses may be added fluently.
 
     Examples:
-        Configure an external energy term::
+        Configure execution behavior at construction time and then define the
+        external workflow::
 
-            term = (
-                chemfit.external_quantity("runs")
+            computer = (
+                chemfit.external_quantity(
+                    "runs",
+                    wait_timeout=None,
+                    poll_interval=5.0,
+                    subprocess_run_args={
+                        "capture_output": True,
+                        "text": True,
+                    },
+                )
+                .with_hook(write_input)
                 .with_cmd(run_simulation)
                 .with_parser(parse_energy, "energy.dat")
                 .wait_for("done")
-                .with_loss(loss, target=-10.0)
             )
 
-        Static metadata can be attached at any point in the fluent chain::
+        Convert the resulting quantities into an objective::
 
-            term = (
-                chemfit.external_quantity("runs")
-                .with_meta(dataset="training")
-                .with_cmd(run_simulation)
-                .with_parser(parse_energy, "energy.dat")
-                .with_loss(loss, target=-10.0)
-                .with_meta(observable="energy")
+            objective = computer.with_loss(
+                energy_loss,
+                target=-10.0,
             )
 
     Notes:
+        Pipeline stages are intentionally configured through the fluent API
+        rather than constructor arguments because their registration order is
+        part of the external evaluation workflow.
+
         Static quantity-computer metadata is merged into ``ctx.meta`` before
-        objective metadata. Consequently, metadata added after ``with_loss``
-        wins when both levels use the same key.
+        objective metadata. Consequently, metadata added after ``with_loss()``
+        wins when both levels define the same key.
 
     """
-    return ExternalQuantityComputer(base_working_directory=workdir)
+    return ExternalQuantityComputer(
+        base_working_directory=workdir,
+        wait_timeout=wait_timeout,
+        poll_interval=poll_interval,
+        subprocess_run_args=subprocess_run_args,
+        delete_temp_workdirs=delete_temp_workdirs,
+        write_dump_file_after_crash=write_dump_file_after_crash,
+        keep_temp_workdir_after_crash=keep_temp_workdir_after_crash,
+        try_parsing_after_exception=try_parsing_after_exception,
+    )
 
 
 AtomsSource = Atoms | str | Path | Callable[[], Atoms]
