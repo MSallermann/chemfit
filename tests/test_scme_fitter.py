@@ -210,8 +210,9 @@ def construct_objective_function(
 
     for p, t, e in zip(paths, tags, energies):
         ob_term = QuantityComputerObjectiveFunction(
-            loss_function=lambda quants, e=e: (quants["energy"] - e) ** 2
-            / quants["n_atoms"] ** 2,
+            loss_function=lambda quants, e=e: (
+                (quants["energy"] - e) ** 2 / quants["n_atoms"] ** 2
+            ),
             quantity_computer=SinglePointASEComputer(
                 calc_factory=scme_factories.SCMECalculatorFactory(
                     default_scme_params=DEFAULT_PARAMS,
