@@ -69,7 +69,8 @@ class WrappedObjectiveFunctor(
         The bound arguments are passed to the wrapped function in addition
         to the usual ChemFit arguments. Static metadata and registered hook
         objects are retained, while the returned functor has independent hook
-        registration lists.
+        registration lists. Repeated calls append positional arguments and
+        merge keyword arguments, with later keyword values taking precedence.
 
         Args:
             *args: Positional arguments to bind after ``parameters`` (and
@@ -84,8 +85,8 @@ class WrappedObjectiveFunctor(
         new = type(self)(
             func=self.func,
             pass_ctx=self.pass_ctx,
-            func_args=args,
-            func_kwargs=kwargs,
+            func_args=(*self.func_args, *args),
+            func_kwargs={**self.func_kwargs, **kwargs},
         )
         new.static_meta_data = self.static_meta_data.copy()
         new.pre_eval_hooks = self.pre_eval_hooks.copy()
@@ -226,7 +227,9 @@ class WrappedQuantityComputer(
         Return a new quantity computer with extra arguments bound.
 
         The bound arguments are passed to the wrapped function in addition
-        to the usual ChemFit arguments.
+        to the usual ChemFit arguments. Repeated calls append positional
+        arguments and merge keyword arguments, with later keyword values
+        taking precedence.
 
         Args:
             *args: Positional arguments to bind after ``parameters`` (and
@@ -241,8 +244,8 @@ class WrappedQuantityComputer(
         new = type(self)(
             func=self.func,
             pass_ctx=self.pass_ctx,
-            func_args=args,
-            func_kwargs=kwargs,
+            func_args=(*self.func_args, *args),
+            func_kwargs={**self.func_kwargs, **kwargs},
         )
         new.static_meta_data = self.static_meta_data.copy()
         return new
