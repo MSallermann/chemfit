@@ -353,16 +353,22 @@ class EvaluateContext:
 # * A loss function must consume the same quantity type produced by its paired
 #   computer. LossQuantitiesT is consequently kept invariant to tie those two
 #   sides together during inference.
+
 ParametersT_contra = TypeVar(
     "ParametersT_contra", bound=Mapping[str, object], contravariant=True
 )
+
 QuantitiesT_co = TypeVar(
     "QuantitiesT_co",
-    bound=dict[str, Any],
+    bound=Mapping[str, object],
     covariant=True,
     default=dict[str, Any],
 )
-LossQuantitiesT = TypeVar("LossQuantitiesT", bound=dict[str, Any])
+
+LossQuantitiesT = TypeVar(
+    "LossQuantitiesT",
+    bound=Mapping[str, object],
+)
 
 
 class PreEvaluationHook(Protocol):

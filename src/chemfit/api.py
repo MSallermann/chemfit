@@ -1,4 +1,4 @@
-from collections.abc import (
+from collections.abc import (  # noqa: I001
     Callable,
     Iterable,
     Mapping,
@@ -7,7 +7,8 @@ from collections.abc import (
 from concurrent.futures import Executor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Generic, TypeVar, cast, overload
+from typing import Any, Generic, cast, overload
+from typing_extensions import TypeVar
 
 from ase import Atoms
 
@@ -39,7 +40,12 @@ from chemfit.scheduling import (
 )
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
-ParamsT = TypeVar("ParamsT", bound=Mapping[str, Any])
+ParamsT = TypeVar("ParamsT", bound=Mapping[str, object], default=dict[str, Any])
+QuantityT = TypeVar(
+    "QuantityT",
+    bound=Mapping[str, object],
+    default=dict[str, Any],
+)
 ObjectiveLike = Callable[[ParamsT], float] | ObjectiveFunctor[ParamsT]
 
 
@@ -200,12 +206,12 @@ def ase_quantity(
     atoms: AtomsSource,
     *,
     index: int | None = None,
-    calculator_factory: CalculatorFactory[Any] | None = None,
+    calculator_factory: CalculatorFactory[ParamsT] | None = None,
     atoms_setups: Iterable[AtomsSetup] | None = None,
-    atoms_modifiers: Iterable[AtomsModifier[Any]] | None = None,
-    quantity_processors: Iterable[QuantityProcessor[Any]] | None = None,
-    evaluator: ASEEvaluator[Any] | None = None,
-) -> ASEComputer[Any, Any]:
+    atoms_modifiers: Iterable[AtomsModifier[ParamsT]] | None = None,
+    quantity_processors: Iterable[QuantityProcessor[QuantityT]] | None = None,
+    evaluator: ASEEvaluator[ParamsT] | None = None,
+) -> ASEComputer[ParamsT, QuantityT]:
     """
     Create an ASE-backed quantity computer from atoms or an atoms source.
 

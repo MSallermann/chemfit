@@ -213,7 +213,10 @@ if TYPE_CHECKING:
     )
 
     explicitly_typed_mixed_combination = CombinedObjectiveFunction[Parameters](
-        [wrapped_objective, incompatible_objective]  # pyright: ignore[reportArgumentType]
+        [
+            wrapped_objective,
+            incompatible_objective,  # pyright: ignore[reportArgumentType]
+        ]
     )
 
     # External computers connect the command callbacks' parameter type to

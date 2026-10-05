@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
-from typing import Any, Generic, TypeVar
+from collections.abc import Callable
+from typing import Any, Generic
 
 # Python 3.10 needs the backport for Concatenate[T, ...].
 from typing_extensions import Concatenate  # noqa: UP035
@@ -9,16 +9,10 @@ from typing_extensions import Concatenate  # noqa: UP035
 from chemfit.abstract_objective_function import (
     EvaluateContext,
     ObjectiveFunctor,
+    ParametersT_contra,
+    QuantitiesT_co,
     QuantityComputer,
 )
-
-# These mirror the input/output directions of the abstract interfaces:
-# wrapped functions consume parameters and produce quantities.  Keeping that
-# variance lets decorators preserve a user's concrete callback annotations.
-ParametersT_contra = TypeVar(
-    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
-)
-QuantitiesT_co = TypeVar("QuantitiesT_co", bound=dict[str, Any], covariant=True)
 
 # Concatenate preserves the first ChemFit argument while allowing bind() to
 # carry arbitrary additional positional or keyword parameters.
