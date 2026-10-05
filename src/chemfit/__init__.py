@@ -28,7 +28,6 @@ from chemfit.fitter_callbacks import (
     SaveMetaData,
     log_progress,
 )
-from chemfit.mpi_scheduler import MPITreeScheduler
 from chemfit.scheduling import Scheduler, SerialScheduler
 from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.wrap_funcs import objective, quantity
@@ -40,7 +39,6 @@ __all__ = [
     "ExecutorTreeScheduler",
     "Fitter",
     "FitterEvaluateContext",
-    "MPITreeScheduler",
     "ObjectiveFunctor",
     "QuantityComputer",
     "SaveMetaData",
