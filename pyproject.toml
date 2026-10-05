@@ -3,13 +3,14 @@ name = "chemfit"
 description = "A framework for concurrent simulation-based parameter optimization in computational chemistry and physics."
 version = "3.1.1"
 dependencies = [
-    "numpy < 2.4.0", # Nevergrad is not compatible with the newest numpy deprecations (see https://github.com/facebookresearch/nevergrad/issues/1707)
+    "numpy < 2.4.0",     # Nevergrad is not compatible with the newest numpy deprecations (see https://github.com/facebookresearch/nevergrad/issues/1707)
+    "scipy",
     "ase",
     "nevergrad",
     "pandas",
     "matplotlib",
     "pydictnest",
-    "typing_extensions"
+    "typing_extensions",
 ]
 requires-python = ">= 3.10"
 authors = [{ name = "Moritz Sallermann", email = "mos19@hi.is" }]
@@ -76,5 +77,5 @@ ignore = [
     'FBT002',  # boolean default args
     'N818',    # pep8 naming of exceptions (ussing <Nmae>Error)
     'PD901',   # I like df
-    'FIX002'
+    'FIX002',
 ]
