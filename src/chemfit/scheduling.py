@@ -278,6 +278,17 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
 
         return self._closed
 
+    def _close_after_catastrophic_failure(self, exception: BaseException) -> None:
+        """Poison this schedule without replacing the original failure."""
+
+        try:
+            self.close()
+        except BaseException as cleanup_exception:
+            if hasattr(exception, "add_note"):  # add_note was only introduced in 3.11
+                exception.add_note(f"Schedule cleanup failed: {cleanup_exception!r}")
+        finally:
+            self._closed = True
+
     def __enter__(self) -> Self:
         """Return this schedule, rejecting attempts to reuse a closed one."""
 
@@ -360,25 +371,25 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
         self.ob = ob
 
     def evaluate_many(
-        self, requests: Sequence[EvaluationRequest[ParametersT]]
+        self,
+        requests: Sequence[EvaluationRequest[ParametersT]],
     ) -> Iterator[EvaluationResult]:
         if self.closed:
             msg = "Prepared schedule is closed."
             raise RuntimeError(msg)
 
-        for idx, req in enumerate(requests):
-            parameters = req.parameters
-            ctx = req.ctx
-            try:
-                self.ob._begin_evaluation(parameters, ctx)  # noqa: SLF001
-                value = self.ob._evaluate(parameters, ctx)  # noqa: SLF001
-                ctx.loss = value
-            except Exception as e:
-                self.ob._end_evaluation(ctx, e)  # noqa: SLF001
-                yield EvaluationResult(index=idx, value=e)
-            else:
-                self.ob._end_evaluation(ctx, None)  # noqa: SLF001
-                yield EvaluationResult(index=idx, value=value)
+        try:
+            for idx, req in enumerate(requests):
+                try:
+                    value = self.ob(req.parameters, req.ctx)
+                except Exception as e:  # noqa: PERF203
+                    yield EvaluationResult(index=idx, value=e)
+                else:
+                    yield EvaluationResult(index=idx, value=value)
+
+        except BaseException as e:
+            self._close_after_catastrophic_failure(e)
+            raise
 
 
 class SerialScheduler(Scheduler[SerialSchedule[Any]]):
