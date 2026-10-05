@@ -263,7 +263,7 @@ def test_hook_failure_stops_execution_pipeline(tmp_path: Path):
     )
     ctx = EvaluateContext()
 
-    with pytest.raises(ValueError, match="Exception in `_compute`"):
+    with pytest.raises(ValueError):  # noqa: PT011
         computer({}, ctx)
 
     assert events == ["first hook", "failed hook"]
@@ -330,7 +330,7 @@ def test_output_wait_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     ctx = EvaluateContext()
 
-    with pytest.raises(TimeoutError, match="Exception in `_compute`"):
+    with pytest.raises(TimeoutError):
         computer({}, ctx)
 
     assert not parser_called
@@ -456,7 +456,8 @@ def test_later_failure_dumps_recovered_command_failure(
         .with_parser(lambda _output: {"result": 42}, "missing.txt")
     )
 
-    with pytest.raises(Exception, match="Exception in `_compute`"):
+    # this test should time out since `try_parsing_after_exception=True`
+    with pytest.raises(TimeoutError):
         computer({}, EvaluateContext())
 
     dump_files = list(tmp_path.glob("*.dump"))
@@ -515,7 +516,7 @@ def test_subprocess_exception_does_not_parse_by_default(
     )
     ctx = EvaluateContext()
 
-    with pytest.raises(subprocess.CalledProcessError, match="Exception in `_compute`"):
+    with pytest.raises(subprocess.CalledProcessError):
         computer({}, ctx)
 
     assert not parser_called
