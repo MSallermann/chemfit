@@ -7,11 +7,12 @@ Use :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>` to create an
 ASE-backed quantity computation from an ``ase.Atoms`` object, a structure
 path, or a zero-argument atoms factory. It returns the configurable
 :py:class:`~chemfit.ase_objective_function.ASEComputer` documented on this
-page. An ``ASEComputer`` separates evaluation into three stages:
+page. An ``ASEComputer`` separates evaluation into four stages:
 
-1. prepare a copy of the cached base structure and attach a fresh calculator;
-2. run one evaluation procedure;
-3. extract quantities from the resulting atoms and calculator.
+1. construct and cache the base structure, including one-time static setup;
+2. copy it and apply parameter-dependent atoms modifiers;
+3. attach a fresh calculator and run one evaluation procedure;
+4. extract quantities from the resulting atoms and calculator.
 
 Single-point calculations, geometry optimization, and custom ASE procedures all
 use this same lifecycle.
@@ -41,9 +42,28 @@ The default evaluator calls ``atoms.calc.calculate(atoms)``, so this is a
 single-point calculation. The default quantity processor returns the entries
 in ``calc.results`` and an additional ``"n_atoms"`` value.
 
+The important stages can also be configured directly in
+``ase_quantity()``:
+
+.. code-block:: python
+
+   computer = chemfit.ase_quantity(
+       "geometry.xyz",
+       calculator_factory=make_calculator,
+       atoms_setups=[configure_constraints],
+       atoms_modifiers=[apply_parameters],
+       quantity_processors=[extract_quantities],
+       evaluator=run_evaluation,
+   )
+
+Constructor-style and fluent configuration coexist. The equivalent fluent
+form uses ``with_atoms_setup()``, ``with_atoms_modifier()``,
+``with_calculator()``, ``with_processor()``, and ``with_evaluator()``.
+
 ``chemfit.ase_quantity(...)`` has constructed an
 :py:class:`~chemfit.ase_objective_function.ASEComputer`. The sections below
-document its full calculator, evaluator, processor, setup, and caching API.
+document its full calculator, evaluator, processor, setup, modifier, and
+caching API.
 
 Components
 ----------
@@ -52,6 +72,7 @@ An ASE computer contains:
 
 - an atoms factory;
 - zero or more base-atoms setup callbacks;
+- zero or more per-evaluation atoms modifiers;
 - one calculator factory;
 - one evaluator;
 - one or more quantity processors.
@@ -61,6 +82,7 @@ The context-aware callbacks use these contracts:
 .. code-block:: python
 
    calculator(parameters, atoms, ctx) -> Calculator
+   atoms_modifier(parameters, atoms, ctx) -> None
    evaluator(parameters, atoms, ctx) -> None
    processor(calc, atoms, ctx) -> dict[str, object]
 
@@ -117,9 +139,10 @@ The evaluator is the action stage between calculator construction and quantity
 extraction. For each call, ``ASEComputer``:
 
 1. copies the cached base atoms into ``ctx.temp.atoms``;
-2. creates and attaches a fresh calculator using the current parameters;
-3. calls ``evaluator(parameters, atoms, ctx)``;
-4. passes the resulting atoms and calculator state to the quantity processors.
+2. applies each atoms modifier using the current parameters;
+3. creates and attaches a fresh calculator;
+4. calls ``evaluator(parameters, atoms, ctx)``;
+5. passes the resulting atoms and calculator state to the quantity processors.
 
 The evaluator receives the evaluation-local atoms copy, with ``atoms.calc``
 already set. It should perform the calculation or simulation in place and
@@ -248,8 +271,8 @@ custom ones, register the default explicitly:
 Processor results are merged in order with ``dict.update()``, so later
 processors can replace values produced by earlier processors.
 
-Atoms factories and setup
--------------------------
+Atoms factories, setup, and modifiers
+-------------------------------------
 
 An atoms factory takes no arguments and returns one :py:class:`ase.Atoms`
 object. :py:class:`~chemfit.ase_objective_function.PathAtomsFactory` reads a
@@ -279,17 +302,45 @@ Setup callbacks are applied in registration order. Adding one invalidates the
 returned computer's inherited atoms cache because it changes construction of
 the base structure. The source computer is unchanged.
 
-By contrast, ``with_calculator()``, ``with_processor()``,
-``with_evaluator()``, and ``minimize()`` do not alter the base geometry and
-retain an already initialized cache.
+Use
+:py:meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_modifier`
+for parameter-dependent geometry changes. A modifier receives the current
+parameters, an evaluation-local atoms copy, and the context:
+
+.. code-block:: python
+
+   def apply_parameters(parameters, atoms, ctx):
+       positions = [
+           [parameters[f"p_{i}_{axis}"] for axis in range(3)]
+           for i in range(len(atoms))
+       ]
+       atoms.set_positions(positions)
+
+   fitted_geometry = computer.with_atoms_modifier(apply_parameters)
+
+Modifiers run for every evaluation, in registration order, before the
+calculator is created. Additional keyword-only arguments can be bound in the
+same way as for ``with_calculator()``. Each modifier acts only on the copied
+atoms, so adding one retains an already initialized base-atoms cache and does
+not change the source computer.
+
+This stage is independent of evaluation. For example,
+``computer.with_atoms_modifier(apply_parameters).minimize()`` first derives
+the initial geometry from the fitting parameters and then relaxes it. The same
+modifier can precede a custom evaluator such as molecular dynamics.
+
+By contrast, ``with_atoms_setup()`` is only for static configuration of the
+cached base structure, such as constraints. ``with_atoms_modifier()``,
+``with_calculator()``, ``with_processor()``, ``with_evaluator()``, and
+``minimize()`` retain an already initialized cache.
 
 Caching and parallel evaluation
 -------------------------------
 
 The base structure is initialized lazily. Initialization is protected by a
 lock so concurrent threads create it only once. Each evaluation then copies the
-cached atoms and creates its own calculator, preventing calculator state from
-leaking between evaluations.
+cached atoms, applies modifiers to that copy, and creates its own calculator,
+preventing geometry and calculator state from leaking between evaluations.
 
 The initialization lock is omitted during pickling and recreated when the
 computer is unpickled. This lets executor and MPI backends initialize geometry

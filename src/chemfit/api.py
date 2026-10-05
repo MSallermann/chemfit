@@ -12,7 +12,15 @@ from typing import Any, Generic, TypeVar, cast, overload
 from ase import Atoms
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.ase_objective_function import ASEComputer, PathAtomsFactory
+from chemfit.ase_objective_function import (
+    ASEComputer,
+    ASEEvaluator,
+    AtomsModifier,
+    AtomsSetup,
+    CalculatorFactory,
+    PathAtomsFactory,
+    QuantityProcessor,
+)
 from chemfit.combined_objective_function import (
     Aggregator,
     ChildContextConfigurator,
@@ -188,7 +196,16 @@ def external_quantity(
 AtomsSource = Atoms | str | Path | Callable[[], Atoms]
 
 
-def ase_quantity(atoms: AtomsSource, *, index: int | None = None) -> ASEComputer:
+def ase_quantity(
+    atoms: AtomsSource,
+    *,
+    index: int | None = None,
+    calculator_factory: CalculatorFactory[Any] | None = None,
+    atoms_setups: Iterable[AtomsSetup] | None = None,
+    atoms_modifiers: Iterable[AtomsModifier[Any]] | None = None,
+    quantity_processors: Iterable[QuantityProcessor[Any]] | None = None,
+    evaluator: ASEEvaluator[Any] | None = None,
+) -> ASEComputer[Any, Any]:
     """
     Create an ASE-backed quantity computer from atoms or an atoms source.
 
@@ -202,6 +219,14 @@ def ase_quantity(atoms: AtomsSource, *, index: int | None = None) -> ASEComputer
             factory.
         index: ASE image index for a path input. It is invalid for an
             ``Atoms`` object or callable source.
+        calculator_factory: Optional callable that creates a fresh calculator
+            for each evaluation.
+        atoms_setups: Optional callbacks applied once to the cached base atoms.
+        atoms_modifiers: Optional parameter-dependent callbacks applied to the
+            per-evaluation atoms copy before calculator construction.
+        quantity_processors: Optional callbacks that extract result quantities.
+        evaluator: Optional evaluation procedure. Defaults to a single-point
+            calculation.
 
     Returns:
         An :class:`ASEComputer` for fluent calculator, evaluator, processor,
@@ -220,6 +245,15 @@ def ase_quantity(atoms: AtomsSource, *, index: int | None = None) -> ASEComputer
                 .with_loss(energy_loss, target=-12.4)
             )
 
+        Constructor-style configuration is equivalent to the fluent form::
+
+            computer = chemfit.ase_quantity(
+                atoms,
+                calculator_factory=make_calculator,
+                atoms_modifiers=[apply_parameters],
+                quantity_processors=[extract_quantities],
+            )
+
         Metadata from the quantity and objective stages shares ``ctx.meta``::
 
             term = (
@@ -231,11 +265,11 @@ def ase_quantity(atoms: AtomsSource, *, index: int | None = None) -> ASEComputer
             )
 
     Notes:
-        During evaluation, the computer copies its cached base atoms, creates
-        a calculator, runs the configured evaluator, and then extracts
-        quantities. Static metadata precedence is existing context metadata,
-        then quantity-computer metadata, then objective metadata; later
-        stages win on key collisions.
+        During evaluation, the computer copies its cached base atoms, applies
+        atoms modifiers, creates a calculator, runs the configured evaluator,
+        and then extracts quantities. Static metadata precedence is existing
+        context metadata, then quantity-computer metadata, then objective
+        metadata; later stages win on key collisions.
 
     """
     if not isinstance(atoms, (Path, str)) and index is not None:
@@ -257,7 +291,14 @@ def ase_quantity(atoms: AtomsSource, *, index: int | None = None) -> ASEComputer
         msg = "`atoms` must be an Atoms object, path, or callable returning Atoms."
         raise TypeError(msg)
 
-    return ASEComputer(atoms_factory=atoms_factory)
+    return ASEComputer(
+        atoms_factory=atoms_factory,
+        calculator_factory=calculator_factory,
+        atoms_setups=atoms_setups,
+        atoms_modifiers=atoms_modifiers,
+        quantity_processors=quantity_processors,
+        evaluator=evaluator,
+    )
 
 
 def evaluate_many(

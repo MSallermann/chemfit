@@ -166,7 +166,8 @@ Here ``with_hook()`` and ``with_cmd()`` append execution steps in call order,
 ``with_parser()`` appends an output parser, and ``wait_for()`` adds a completion
 file. Keyword arguments supplied to ``bind()``, ``with_loss()``,
 ``with_hook()``, ``with_cmd()``, ``with_calculator()``, ``with_evaluator()``,
-and ``with_processor()`` are bound to the corresponding callable.
+``with_atoms_modifier()``, and ``with_processor()`` are bound to the
+corresponding callable.
 
 The main fluent families are:
 
@@ -182,11 +183,12 @@ The main fluent families are:
   aggregator calls replace one another. See :ref:`combined_objective_functions`.
 - :class:`~chemfit.ase_objective_function.ASEComputer` provides
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_setup`,
+  :meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_modifier`,
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_calculator`,
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_evaluator`, and
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_processor`. Setup
-  callbacks and processors append; calculator and evaluator configuration
-  replace the previous value.
+  callbacks, atoms modifiers, and processors append; calculator and evaluator
+  configuration replace the previous value.
   :meth:`~chemfit.ase_objective_function.ASEComputer.minimize` replaces the
   evaluator with the built-in BFGS workflow. See
   :ref:`ase_objective_function_api`.

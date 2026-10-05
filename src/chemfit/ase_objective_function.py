@@ -66,6 +66,21 @@ class AtomsSetup(Protocol):
 
 
 @runtime_checkable
+class AtomsModifier(Protocol[ParametersT_contra]):
+    """Modify the per-evaluation atoms copy using the current parameters."""
+
+    def __call__(
+        self,
+        parameters: ParametersT_contra,
+        atoms: Atoms,
+        ctx: EvaluateContext,
+        /,
+    ) -> None:
+        """Modify ``atoms`` in place for the current evaluation."""
+        ...
+
+
+@runtime_checkable
 class AtomsFactory(Protocol):
     """Create an ASE atoms object."""
 
@@ -180,6 +195,7 @@ class ASEComputer(
         atoms_factory: AtomsFactory,
         calculator_factory: CalculatorFactory[ParametersT_contra] | None = None,
         atoms_setups: Iterable[AtomsSetup] | None = None,
+        atoms_modifiers: Iterable[AtomsModifier[ParametersT_contra]] | None = None,
         quantity_processors: Iterable[QuantityProcessor[QuantitiesT_co]] | None = None,
         evaluator: ASEEvaluator[ParametersT_contra] | None = None,
     ) -> None:
@@ -187,8 +203,9 @@ class ASEComputer(
         Initialize an ASE computer.
 
         The base atoms object is created lazily and cached. Each evaluation
-        receives a copy of that structure, a fresh calculator, and the current
-        evaluation context. The evaluator runs before quantity extraction.
+        receives a copy of that structure, applies its atoms modifiers, and
+        attaches a fresh calculator. The evaluator then runs before quantity
+        extraction.
 
         Args:
             atoms_factory: Callable that creates the base atoms object.
@@ -197,6 +214,8 @@ class ASEComputer(
                 may instead be configured later with :meth:`with_calculator`.
             atoms_setups: Optional callbacks applied once to the base atoms
                 object before it is cached.
+            atoms_modifiers: Optional callbacks applied to the copied atoms
+                for every evaluation, before calculator construction.
             quantity_processors: Optional callbacks that extract quantities
                 after evaluation. If omitted or empty, a default processor
                 returns calculator results and the atom count.
@@ -215,6 +234,10 @@ class ASEComputer(
         self.atoms_setups = tuple(atoms_setups or ())
         for setup in self.atoms_setups:
             check_protocol(setup, AtomsSetup)
+
+        self.atoms_modifiers = tuple(atoms_modifiers or ())
+        for modifier in self.atoms_modifiers:
+            check_protocol(modifier, AtomsModifier)
 
         self.quantity_processors = tuple(quantity_processors or ())
 
@@ -254,6 +277,31 @@ class ASEComputer(
         new.atoms_setups = (*self.atoms_setups, setup)
         new._atoms = None  # noqa: SLF001
         new._atoms_init_lock = threading.Lock()  # noqa: SLF001
+        return new
+
+    def with_atoms_modifier(
+        self,
+        modifier: Callable[
+            Concatenate[ParametersT_contra, Atoms, EvaluateContext, ...], None
+        ],
+        /,
+        **kwargs: Any,
+    ) -> Self:
+        """
+        Return a copy with an additional per-evaluation atoms modifier.
+
+        Additional keyword-only arguments are bound to ``modifier``. Modifiers
+        run in registration order on each evaluation-local atoms copy, before
+        calculator construction. This operation does not invalidate an
+        initialized base-atoms cache.
+        """
+        check_protocol(modifier, AtomsModifier)
+        bound_modifier = cast(
+            "AtomsModifier[ParametersT_contra]",
+            functools.partial(modifier, **kwargs),
+        )
+        new = copy.copy(self)
+        new.atoms_modifiers = (*self.atoms_modifiers, bound_modifier)
         return new
 
     def with_calculator(
@@ -350,11 +398,11 @@ class ASEComputer(
         ctx: EvaluateContext,
     ) -> None:
         """
-        Populate the evaluation context with copied atoms and a calculator.
+        Populate the context with modified copied atoms and a calculator.
 
         The base structure is initialized at most once per process, including
         under concurrent thread evaluation. Each evaluation receives a copy,
-        while calculator construction remains evaluation-local.
+        applies its modifiers to that copy, and constructs its calculator.
         """
         atoms = self._atoms
         if atoms is None:
@@ -367,6 +415,9 @@ class ASEComputer(
                     self._atoms = atoms
 
         ctx.temp.atoms = atoms.copy()
+        for modifier in self.atoms_modifiers:
+            modifier(parameters, ctx.temp.atoms, ctx)
+
         if self.calculator_factory is None:
             msg = (
                 "ASEComputer requires a calculator. Configure one with "

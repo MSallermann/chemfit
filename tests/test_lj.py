@@ -10,6 +10,7 @@ from ase import Atoms
 from ase.calculators.calculator import Calculator
 from conftest import LJAtomsFactory, construct_lj, e_lj
 
+import chemfit
 import chemfit.ase_objective_function as ase_module
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.ase_objective_function import ASEComputer
@@ -136,6 +137,74 @@ def test_custom_evaluator_replaces_single_point_and_shares_context():
         ({"epsilon": 1.0, "sigma": 1.0, "distance": 1.5}, ctx.temp.atoms, ctx)
     ]
     assert custom.evaluator is not base.evaluator
+
+
+def test_atoms_modifiers_lifecycle_and_constructor_configuration():
+    source = Atoms("Ar2", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    events: list[tuple[str, float]] = []
+    received: list[tuple[dict[str, float], Atoms, EvaluateContext]] = []
+
+    def set_distance(
+        parameters: dict[str, float], atoms: Atoms, ctx: EvaluateContext
+    ) -> None:
+        received.append((parameters, atoms, ctx))
+        events.append(("set", atoms.get_distance(0, 1)))
+        atoms.positions[1, 0] = parameters["distance"]
+
+    def shift_distance(
+        _parameters: dict[str, float], atoms: Atoms, _ctx: EvaluateContext
+    ) -> None:
+        events.append(("shift", atoms.get_distance(0, 1)))
+        atoms.positions[1, 0] += 0.25
+
+    def make_calculator(
+        parameters: dict[str, float], atoms: Atoms, ctx: EvaluateContext
+    ) -> Calculator:
+        events.append(("calculator", atoms.get_distance(0, 1)))
+        return construct_lj(parameters, atoms, ctx)
+
+    computer = chemfit.ase_quantity(
+        source,
+        calculator_factory=make_calculator,
+        atoms_setups=[lambda atoms: atoms.set_pbc(False)],
+        atoms_modifiers=[set_distance, shift_distance],
+        quantity_processors=[
+            lambda calc, atoms, _ctx: {
+                "distance": atoms.get_distance(0, 1),
+                "energy": float(calc.results["energy"]),
+            }
+        ],
+    )
+    first_ctx, second_ctx = EvaluateContext(), EvaluateContext()
+    parameters = {"epsilon": 1.0, "sigma": 1.0, "distance": 1.5}
+
+    assert computer(parameters, first_ctx)["distance"] == 1.75
+    assert computer({**parameters, "distance": 2.5}, second_ctx)["distance"] == 2.75
+    assert events == [
+        ("set", 1.0),
+        ("shift", 1.5),
+        ("calculator", 1.75),
+        ("set", 1.0),
+        ("shift", 2.5),
+        ("calculator", 2.75),
+    ]
+    assert received == [
+        (parameters, first_ctx.temp.atoms, first_ctx),
+        ({**parameters, "distance": 2.5}, second_ctx.temp.atoms, second_ctx),
+    ]
+    assert first_ctx.temp.atoms is not second_ctx.temp.atoms
+    assert source.get_distance(0, 1) == 1.0
+    assert computer._atoms is not None  # noqa: SLF001
+    assert computer._atoms.get_distance(0, 1) == 1.0  # noqa: SLF001
+
+    fluent = chemfit.ase_quantity(source).with_calculator(construct_lj)
+    fluent(parameters)  # Initialize its base-atoms cache before copying.
+    modified = fluent.with_atoms_modifier(set_distance).with_atoms_modifier(
+        shift_distance
+    )
+    assert fluent.atoms_modifiers == ()
+    assert modified._atoms is fluent._atoms  # noqa: SLF001
+    assert modified(parameters)["energy"] == computer(parameters)["energy"]
 
 
 def test_fluent_configuration_preserves_or_invalidates_atoms_cache():
