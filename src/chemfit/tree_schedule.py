@@ -633,21 +633,6 @@ class TreeScheduleBase(
         for completion in self.execute_leaf_tasks(tasks):
             yield self.restore_leaf_completion(completion, runs)
 
-    def _close_after_catastrophic_failure(self, exception: BaseException) -> None:
-        """Poison this schedule without replacing the original failure."""
-
-        try:
-            self.close()
-        except BaseException as cleanup_exception:
-            if hasattr(exception, "add_note"):  # add_note was only introduced in 3.11
-                exception.add_note(f"Schedule cleanup failed: {cleanup_exception!r}")
-        finally:
-            # A backend close implementation may itself fail before delegating
-            # to PreparedScheduleBase.close(). Catastrophic failure still makes
-            # this prepared schedule permanently unusable.
-            if not self.closed:
-                super().close()
-
     def evaluate_many(
         self,
         requests: Sequence[EvaluationRequest[ParametersT_contra]],
