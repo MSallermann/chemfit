@@ -263,10 +263,9 @@ def test_hook_failure_stops_execution_pipeline(tmp_path: Path):
     )
     ctx = EvaluateContext()
 
-    with pytest.raises(Exception, match="Exception in `_compute`") as exc_info:
+    with pytest.raises(ValueError, match="Exception in `_compute`"):
         computer({}, ctx)
 
-    assert isinstance(exc_info.value.__cause__, ValueError)
     assert events == ["first hook", "failed hook"]
     assert ctx.temp.commands == []
     dump_files = list(tmp_path.glob("*.dump"))
@@ -331,11 +330,9 @@ def test_output_wait_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     )
     ctx = EvaluateContext()
 
-    with pytest.raises(Exception, match="Exception in `_compute`") as exc_info:
+    with pytest.raises(TimeoutError, match="Exception in `_compute`"):
         computer({}, ctx)
 
-    assert isinstance(exc_info.value.__cause__, TimeoutError)
-    assert "Timed out waiting" in str(exc_info.value.__cause__)
     assert not parser_called
     assert not ctx.temp.workdir.exists()
 
@@ -518,10 +515,9 @@ def test_subprocess_exception_does_not_parse_by_default(
     )
     ctx = EvaluateContext()
 
-    with pytest.raises(Exception, match="Exception in `_compute`") as exc_info:
+    with pytest.raises(subprocess.CalledProcessError, match="Exception in `_compute`"):
         computer({}, ctx)
 
-    assert isinstance(exc_info.value.__cause__, subprocess.CalledProcessError)
     assert not parser_called
     assert not later_step_ran
     assert ctx.temp.commands == [["failing-command"]]
