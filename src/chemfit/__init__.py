@@ -1,6 +1,10 @@
 """ChemFit: composable objective functions and parameter fitting."""
 
-from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ObjectiveFunctor,
+    QuantityComputer,
+)
 from chemfit.api import (
     ase_quantity,
     combine,
@@ -9,6 +13,7 @@ from chemfit.api import (
     fit_nevergrad,
 )
 from chemfit.combined_objective_function import (
+    CombinedObjectiveFunction,
     mean_reducer,
     nan_exception_handler,
     raising_exception_handler,
@@ -23,18 +28,24 @@ from chemfit.fitter_callbacks import (
     SaveMetaData,
     log_progress,
 )
-from chemfit.scheduling import Scheduler
+from chemfit.mpi_scheduler import MPITreeScheduler
+from chemfit.scheduling import Scheduler, SerialScheduler
 from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.wrap_funcs import objective, quantity
 
 __all__ = [
     "CheckpointBestParameters",
+    "CombinedObjectiveFunction",
     "EvaluateContext",
     "ExecutorTreeScheduler",
     "Fitter",
     "FitterEvaluateContext",
+    "MPITreeScheduler",
+    "ObjectiveFunctor",
+    "QuantityComputer",
     "SaveMetaData",
     "Scheduler",
+    "SerialScheduler",
     "SerialTreeScheduler",
     "ase_quantity",
     "combine",

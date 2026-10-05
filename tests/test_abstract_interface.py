@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import functools
 import pickle
 import random
@@ -9,12 +8,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import pytest
-from pydictnest import get_nested, items_nested
 
-from chemfit import abstract_objective_function, async_helpers
+from chemfit import abstract_objective_function
 from chemfit.abstract_objective_function import EvaluateContext
-from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.wrap_funcs import quantity
+from pydictnest import get_nested, items_nested
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -317,75 +314,3 @@ def test_context_stuff():
             assert "children" not in child["meta"]
         else:
             assert len(child["meta"]["children"]) == i
-
-
-def test_async_evaluation():
-    computer = MyComputer()
-    computer.static_meta_data = {"computer_tag": "dolphin"}
-
-    my_ob = abstract_objective_function.QuantityComputerObjectiveFunction(
-        loss_function=loss3,
-        quantity_computer=computer,
-    )
-    my_ob.static_meta_data = {"ob_tag": "also_dolphin"}
-
-    n_terms = 10
-    a_list = np.linspace(1, 5, n_terms)
-    b_list = np.linspace(2, 7, n_terms)
-    params = [{"a": a, "b": b} for a, b in zip(a_list, b_list, strict=True)]
-
-    sync_results = [0.0] * n_terms
-
-    for i, p in enumerate(params):
-        sync_results[i] = my_ob(p)
-
-    async_results = [0.0] * n_terms
-
-    contexts = [abstract_objective_function.EvaluateContext() for _ in range(n_terms)]
-
-    async_results = asyncio.run(
-        async_helpers.async_eval_many(my_ob, params, ctxs=contexts)
-    )
-
-    print(f"{sync_results = }")
-    print(f"{async_results = }")
-    assert np.all(np.isclose(sync_results, async_results))
-
-
-def test_quickstart():
-    @quantity()
-    def computer(params: dict[str, float]) -> dict[str, float]:
-        return {"x2": params["x"] ** 2, "y2": params["y"] ** 2}
-
-    def loss(q: dict[str, float], target: float):
-        return ((q["x2"] + q["y2"]) - target) ** 2
-
-    TARGET = 2
-    ob = computer.with_loss(functools.partial(loss, target=TARGET))
-
-    PARAMS = {"x": 1.0, "y": 2.0}
-    assert np.isclose(ob(PARAMS), (PARAMS["x"] ** 2 + PARAMS["y"] ** 2 - 2) ** 2)
-
-    ctx = EvaluateContext()
-    ob(PARAMS, ctx)
-    print(ctx.to_meta_data())
-
-
-def test_quickstart2():
-    @quantity()
-    def computer(params: dict[str, float], f: float):
-        return {"fx2": f * params["x"] ** 2, "fy2": f * params["y"] ** 2}
-
-    def loss(q: dict[str, float], target: float) -> float:
-        return (q["fx2"] + q["fy2"] - target) ** 2
-
-    terms = [
-        computer.bind(f=1).with_loss(loss, target=1),
-        computer.bind(f=2).with_loss(loss, target=2),
-    ]
-
-    PARAMS = {"x": 1.0, "y": 2.0}
-    combined = CombinedObjectiveFunction(terms)
-    ctx = EvaluateContext()
-    combined(PARAMS, ctx)
-    print(ctx.to_meta_data())

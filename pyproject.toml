@@ -7,8 +7,6 @@ dependencies = [
     "scipy",
     "ase",
     "nevergrad",
-    "pandas",
-    "matplotlib",
     "pydictnest",
     "typing_extensions",
 ]

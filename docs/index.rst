@@ -187,7 +187,6 @@ direct control over threads, processes, or MPI. The :ref:`common_workflows`,
    src/usage/combined_objective_function.rst
    src/usage/fitter.rst
    src/usage/parallel_execution.rst
-   src/usage/example_scme.rst
 
 .. toctree::
    :maxdepth: 2

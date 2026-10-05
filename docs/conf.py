@@ -39,7 +39,7 @@ autodoc_default_options = {
     "member-order": "groupwise",  # or 'alphabetical'
     "separate": True,
 }
-autodoc_mock_imports = ["pyscme", "mpi4py"]
+autodoc_mock_imports = ["mpi4py"]
 
 add_module_names = False
 
