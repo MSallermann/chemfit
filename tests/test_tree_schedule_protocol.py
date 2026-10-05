@@ -7,7 +7,7 @@ import pytest
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
 from chemfit.callgraph import CallTree, CombineNode, cob_to_call_tree
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.scheduling import EvaluationRequest
+from chemfit.scheduling import EvaluationRequest, SerialScheduler
 from chemfit.tree_schedule import (
     BatchState,
     LeafCompletion,
@@ -215,6 +215,19 @@ def test_catastrophic_leaf_failure_closes_schedule_and_prevents_reuse() -> None:
     """An escaping BaseException permanently poisons the schedule."""
 
     schedule = SerialTreeScheduler().prepare(make_objective(catastrophic=True))
+
+    with pytest.raises(KeyboardInterrupt, match="catastrophic leaf failure"):
+        schedule.evaluate({"x": 2.0}, EvaluateContext())
+
+    assert schedule.closed
+    with pytest.raises(RuntimeError, match="Prepared schedule is closed"):
+        schedule.evaluate({"x": 2.0}, EvaluateContext())
+
+
+def test_serial_scheduler_closes_after_catastrophic_failure() -> None:
+    """The simple serial schedule has the same catastrophic semantics."""
+
+    schedule = SerialScheduler().prepare(CatastrophicLeaf())
 
     with pytest.raises(KeyboardInterrupt, match="catastrophic leaf failure"):
         schedule.evaluate({"x": 2.0}, EvaluateContext())

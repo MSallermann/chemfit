@@ -89,6 +89,11 @@ REDUCERS = [
 ]
 
 
+def test_constructor_rejects_empty_objective_list() -> None:
+    with pytest.raises(ValueError, match="zero terms"):
+        combined_objective_function.CombinedObjectiveFunction([])
+
+
 def test_constructor_rejects_invalid_weights():
     funcs = make_funcs(2)
 
