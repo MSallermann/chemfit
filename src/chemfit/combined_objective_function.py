@@ -167,13 +167,17 @@ class CombinedObjectiveFunction(
                 with ``reduction``.
 
         Raises:
-            ValueError: If both ``reduction`` and ``aggregator`` are supplied,
-                the number of weights does not match the number of objective
-                functions, or any weight is negative.
+            ValueError: If no objective functions are supplied, both ``reduction``
+                and ``aggregator`` are supplied, the number of weights does not
+                match the number of objective functions, or any weight is negative.
 
         """
 
         super().__init__()
+
+        if len(objective_functions) == 0:
+            msg = "Cannot construct CombinedObjectiveFunction with zero terms."
+            raise ValueError(msg)
 
         # Convert to list internally for mutability
         self.objective_functions = transform_generic_callables(objective_functions)
