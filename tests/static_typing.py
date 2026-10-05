@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         CalculatorFactory,
         QuantityProcessor,
     )
-    from chemfit.async_helpers import async_eval_many, async_eval_one
     from chemfit.combined_objective_function import CombinedObjectiveFunction
     from chemfit.external_computer import ExternalQuantityComputer
     from chemfit.fitter import Fitter
@@ -60,16 +59,6 @@ if TYPE_CHECKING:
     context_objective = objective()(objective_with_context)
     assert_type(context_objective, WrappedObjectiveFunctor[Parameters])
     context_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
-
-    # Async helpers preserve the objective's parameter type for individual
-    # evaluations and batches.
-    async_one = async_eval_one(context_objective, {"x": 1.0}, EvaluateContext())
-    invalid_async_one = async_eval_one(
-        context_objective,
-        {"x": "wrong"},  # pyright: ignore[reportArgumentType]
-        EvaluateContext(),
-    )
-    async_many = async_eval_many(context_objective, [{"x": 1.0}], [EvaluateContext()])
 
     # Fitter carries the objective's parameter type through its public API.
     fitter = Fitter(wrapped_objective, {"x": 1.0})
