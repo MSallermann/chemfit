@@ -102,9 +102,12 @@ class ExecutorTreeSchedule(
 
     def abort_batch(self, batch_state: BatchState) -> None:
         """Cancel pending futures."""
-        futures = cast("list[Future[LeafCompletion]]", batch_state.futures)
-        for fs in futures:
-            fs.cancel()
+        futures = cast(
+            "Sequence[Future[LeafCompletion]]",
+            getattr(batch_state, "futures", ()),
+        )
+        for future in futures:
+            future.cancel()
 
 
 class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):
