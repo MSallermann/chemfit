@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import tomllib
+from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from dask.distributed import Client
 from loky import ProcessPoolExecutor
 from mpi4py import MPI
@@ -20,7 +21,6 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     QuantityComputerObjectiveFunction,
 )
-from chemfit.async_wrapper_cob import AsyncWrapperCOB
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.mpi_wrapper_cob import MPIWrapperCOB
 from chemfit.wrap_funcs import to_quantity_computer
