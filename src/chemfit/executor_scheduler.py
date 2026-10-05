@@ -10,12 +10,13 @@ Each composite objective retains its own evaluation semantics.
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import Executor, Future, as_completed
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from chemfit.abstract_objective_function import ObjectiveFunctor
 from chemfit.callgraph import CallTree, LeafNode, objective_to_call_tree
 from chemfit.scheduling import Scheduler
 from chemfit.tree_schedule import (
+    BatchState,
     LeafCompletion,
     LeafTask,
     TreeScheduleBase,
@@ -71,8 +72,7 @@ class ExecutorTreeSchedule(
             super().close()
 
     def execute_leaf_tasks(
-        self,
-        tasks: Sequence[LeafTask[ParametersT_contra]],
+        self, tasks: Sequence[LeafTask[ParametersT_contra]], batch_state: BatchState
     ) -> Iterator[LeafCompletion]:
         """
         Submit leaf tasks and yield their completions in completion order.
@@ -84,12 +84,11 @@ class ExecutorTreeSchedule(
             Backend-neutral leaf completions.
 
         """
-
-        futures: list[Future[LeafCompletion]] = []
+        batch_state.futures = []
         for task in tasks:
             node = self.tree.nodes[task.node_id]
             assert isinstance(node, LeafNode)
-            futures.append(
+            batch_state.futures.append(
                 self.executor.submit(
                     evaluate_leaf_task,
                     node.objective,
@@ -98,8 +97,14 @@ class ExecutorTreeSchedule(
                 )
             )
 
-        for future in as_completed(futures):
+        for future in as_completed(batch_state.futures):
             yield future.result()
+
+    def abort_batch(self, batch_state: BatchState) -> None:
+        """Cancel pending futures."""
+        futures = cast("list[Future[LeafCompletion]]", batch_state.futures)
+        for fs in futures:
+            fs.cancel()
 
 
 class ExecutorTreeScheduler(Scheduler[ExecutorTreeSchedule[Any]]):

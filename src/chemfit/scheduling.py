@@ -151,6 +151,7 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
         Args:
             requests: Evaluations to execute. Each request must have its own context
                 when requests can overlap in time.
+            batch_state: Optional backend per-batch scratch space
 
         Yields:
             One result per request. Results may be yielded in completion

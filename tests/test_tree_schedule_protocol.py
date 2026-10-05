@@ -9,6 +9,7 @@ from chemfit.callgraph import CallTree, CombineNode, cob_to_call_tree
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.scheduling import EvaluationRequest
 from chemfit.tree_schedule import (
+    BatchState,
     LeafCompletion,
     LeafTask,
     SerialTreeSchedule,
@@ -31,6 +32,7 @@ class RecordingTaskSchedule(TreeScheduleBase[Parameters]):
     def execute_leaf_tasks(
         self,
         tasks: Sequence[LeafTask[Parameters]],
+        batch_state: BatchState,  # noqa: ARG002
     ) -> Iterator[LeafCompletion]:
         """Return synthetic worker completions for a task batch."""
 

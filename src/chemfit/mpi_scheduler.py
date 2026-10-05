@@ -27,6 +27,7 @@ from chemfit.callgraph import CallTree, LeafNode, objective_to_call_tree
 from chemfit.debug_utils import log_all_methods
 from chemfit.scheduling import Scheduler
 from chemfit.tree_schedule import (
+    BatchState,
     LeafCompletion,
     LeafTask,
     TreeScheduleBase,
@@ -235,6 +236,7 @@ class MPITreeSchedule(TreeScheduleBase[ParametersT], Generic[ParametersT]):
     def execute_leaf_tasks(
         self,
         tasks: Sequence[LeafTask[ParametersT]],
+        batch_state: BatchState,  # noqa: ARG002
     ) -> Iterator[LeafCompletion]:
         """Dispatch leaf tasks from rank 0 and yield remote completions."""
 
