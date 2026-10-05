@@ -650,7 +650,10 @@ class ExternalQuantityComputer(
                     f"\nKeeping temporary workdir '{ctx.temp.workdir}' for inspection"
                 )
 
-            raise Exception(msg) from e
+            if hasattr(e, "add_note"):  # we dont have `add_note` in 3.10
+                e.add_note(msg)
+
+            raise
         else:
             if self.delete_temp_workdirs:
                 shutil.rmtree(ctx.temp.workdir)
