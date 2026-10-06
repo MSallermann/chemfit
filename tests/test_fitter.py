@@ -7,7 +7,6 @@ from typing import Any
 import nevergrad as ng
 import numpy as np
 import pytest
-from pydictnest import get_nested, has_nested, items_nested
 
 from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
@@ -16,6 +15,7 @@ from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
+from pydictnest import get_nested, has_nested, items_nested
 
 NG_SOLVERS = ["NgIohTuned", "Carola3", "CMA"]
 NG_SMOKE_BUDGET = 8
@@ -611,3 +611,18 @@ def test_nevergrad_parametrization_requires_parameter_leaves():
 
     with pytest.raises(TypeError, match="Nevergrad parameters"):
         fitter.fit_nevergrad(budget=1, parametrization={"x": 2.0})
+
+
+def test_unknown_bound_is_rejected():
+    with pytest.raises(ValueError, match="bound"):
+        Fitter(
+            square_x, initial_params={"epsilon": 1.0}, bounds={"elipson": (0.0, 2.0)}
+        )
+
+    # this should work though
+    Fitter(
+        square_x,
+        initial_params={"epsilon": 1.0},
+        bounds={"sigma": (0.0, 2.0)},
+        accept_unknown_bounds=True,
+    )

@@ -19,7 +19,7 @@ from chemfit.scheduling import EvaluationRequest
 from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
-from pydictnest import flatten_dict, unflatten_dict
+from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -158,6 +158,7 @@ class Fitter(Generic[ParametersT]):
         swallow_exceptions: bool = False,
         log_exceptions: bool = True,
         scheduler: Scheduler[Any] | None = None,
+        accept_unknown_bounds: bool = False,
     ) -> None:
         """
         Driver class for parameter optimization.
@@ -192,6 +193,8 @@ class Fitter(Generic[ParametersT]):
                 re-raising or replacing them.
             scheduler: Scheduler used to evaluate the objective. Defaults
                 to ``SerialTreeScheduler``.
+            accept_unknown_bounds: Optionally skip checking the bounds
+                dictionray for unknown keys. Defaults to `False`.
 
         """
 
@@ -202,6 +205,20 @@ class Fitter(Generic[ParametersT]):
         self.initial_parameters = cast(
             "ParametersT", copy.deepcopy(dict(initial_params))
         )
+
+        if bounds is not None:
+            for keys in keys_nested(bounds):
+                if (
+                    not has_nested(self.initial_parameters, keys)
+                    and not accept_unknown_bounds
+                ):
+                    msg = (
+                        f"Key path: {keys} in `bounds` does not point to any parameter in `initial_params`."
+                        "This check is mainly meant to detect typos, you can disable it by setting `accept_unknown_bounds=True`."
+                        "Unknown bounds will simply have no effect then."
+                    )
+                    raise ValueError(msg)
+
         self.bounds: Mapping[str, object] = {} if bounds is None else bounds
 
         # Make sure that we have an ObjectiveFunctor instance
