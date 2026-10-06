@@ -2,10 +2,11 @@
 Public interfaces for preparing and executing objective evaluations.
 
 A Scheduler turns an objective functor into an objective-specific
-PreparedSchedule. Prepared schedules accept batches of EvaluationRequest
-objects and yield EvaluationResult objects as individual evaluations finish.
-Results carry their input index, so a backend may emit them in completion
-order instead of request order.
+PreparedSchedule. Prepared schedules are callable for synchronous singleton
+evaluation. They also accept batches of EvaluationRequest objects through
+``evaluate_many`` and yield EvaluationResult objects as individual evaluations
+finish. Results carry their input index, so a backend may emit them in
+completion order instead of request order.
 
 The interfaces describe capabilities rather than a particular execution
 model. Implementations may run locally, use an executor, or coordinate
@@ -134,7 +135,9 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
     A prepared schedule owns state derived from a particular objective, such
     as a compiled call tree, worker placement, or distributed object
     registrations. It may be reused for multiple evaluations until it is
-    closed or the objective structure changes.
+    closed or the objective structure changes. Call the schedule directly to
+    evaluate one parameter mapping synchronously, or use ``evaluate_many`` for
+    a batch.
 
     Implementations are structural and need not inherit from
     PreparedScheduleBase as long as they provide this interface.
@@ -171,7 +174,11 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
         self, parameters: ParametersT_contra, ctx: EvaluateContext, /
     ) -> float:
         """
-        Evaluate one parameter mapping synchronously.
+        Evaluate one parameter mapping synchronously with an explicit context.
+
+        Calling the prepared schedule is the convenient singleton interface;
+        this method provides the underlying operation when a context is always
+        supplied.
 
         Args:
             parameters: Parameter mapping passed to the prepared objective.
@@ -186,6 +193,26 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
 
         """
 
+        ...
+
+    def __call__(
+        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
+    ) -> float:
+        """
+        Evaluate one parameter mapping synchronously.
+
+        Args:
+            parameters: Parameter mapping passed to the prepared objective.
+            ctx: Optional context updated with this evaluation's state and metadata.
+
+        Returns:
+            Computed objective value.
+
+        Raises:
+            Exception: The exception stored for the individual evaluation if
+                it fails.
+
+        """
         ...
 
     def close(self) -> None:
@@ -222,8 +249,8 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
     The structural :class:`PreparedSchedule` protocol is the public contract.
     Subclassing this class is optional.
 
-    This base class provides singleton evaluation, closed-state tracking,
-    idempotent closing, and context-manager support.
+    This base class provides callable singleton evaluation, closed-state
+    tracking, idempotent closing, and context-manager support.
     """
 
     def __init__(self) -> None:
@@ -253,7 +280,7 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
         ctx: EvaluateContext,
         /,
     ) -> float:
-        """Evaluate one request and raise its stored exception on failure."""
+        """Evaluate one request with an explicit context."""
 
         (result,) = self.evaluate_many(
             (EvaluationRequest(parameters=parameters, ctx=ctx),)
@@ -261,6 +288,30 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
         if isinstance(result.value, Exception):
             raise result.value
         return result.value
+
+    def __call__(
+        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
+    ) -> float:
+        """
+        Evaluate one parameter mapping synchronously.
+
+        Args:
+            parameters: Parameter mapping passed to the prepared objective.
+            ctx: Optional context updated with this evaluation's state and metadata.
+
+        Returns:
+            Computed objective value.
+
+        Raises:
+            Exception: The exception stored for the individual evaluation if
+                it fails.
+
+        """
+
+        if ctx is None:
+            ctx = EvaluateContext()
+
+        return self.evaluate(parameters, ctx)
 
     def close(self) -> None:
         """

@@ -40,7 +40,7 @@ schedule's worker loop:
    with scheduler.prepare(objective) as schedule:
        if schedule.rank == 0:
            ctx = chemfit.EvaluateContext()
-           value = schedule.evaluate({"epsilon": 2.0, "sigma": 1.5}, ctx)
+           value = schedule({"epsilon": 2.0, "sigma": 1.5}, ctx)
            print(value)
            print(ctx.meta["children"])
        else:

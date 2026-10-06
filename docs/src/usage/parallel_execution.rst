@@ -109,9 +109,10 @@ to one objective and returns a prepared schedule.
 ``evaluate_many`` yields
 :class:`~chemfit.scheduling.EvaluationResult` objects in completion order.
 Each result contains its original request index and either a numerical value or
-an ordinary evaluation exception. The convenience method ``schedule.evaluate``
-handles one parameter mapping synchronously and raises its evaluation
-exception directly.
+an ordinary evaluation exception. A prepared schedule is also callable:
+``schedule(parameters, ctx)`` handles one parameter mapping synchronously and
+raises its evaluation exception directly. The context is optional when its
+result state is not needed.
 
 Executor ownership
 ~~~~~~~~~~~~~~~~~~

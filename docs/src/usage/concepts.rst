@@ -87,9 +87,10 @@ rather than being added on top.
 
 Execution backends are selected with a
 :class:`~chemfit.scheduling.Scheduler`. A scheduler prepares an
-objective-specific schedule, which can evaluate one parameter mapping or a
-batch. Serial, executor-backed, and MPI tree schedulers all operate on the same
-objective definition; see :ref:`parallel_execution`.
+objective-specific schedule. The prepared schedule is callable for one
+parameter mapping and provides ``evaluate_many`` for batches. Serial,
+executor-backed, and MPI tree schedulers all operate on the same objective
+definition; see :ref:`parallel_execution`.
 
 -------------------------
 

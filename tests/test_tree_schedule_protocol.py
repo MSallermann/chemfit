@@ -197,6 +197,17 @@ def test_structural_composite_is_scheduled_as_a_combine_node() -> None:
     assert ctx.meta == {"began": True, "finished": True}
 
 
+def test_prepared_schedule_is_callable_with_an_optional_context() -> None:
+    objective = StructuralComposite()
+    ctx = EvaluateContext()
+
+    with SerialTreeScheduler().prepare(objective) as schedule:
+        assert schedule({"x": 2.0, "y": 3.0}) == 5.0
+        assert schedule({"x": 4.0, "y": 1.0}, ctx) == 5.0
+
+    assert ctx.meta == {"began": True, "finished": True}
+
+
 def test_post_hook_loss_changes_propagate_through_tree_schedule() -> None:
     """Propagate final leaf and composite losses after successful post hooks."""
 

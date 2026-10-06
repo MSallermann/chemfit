@@ -502,13 +502,12 @@ the returned schedule:
 
    from concurrent.futures import ThreadPoolExecutor
 
-   from chemfit.abstract_objective_function import EvaluateContext
    from chemfit.executor_scheduler import ExecutorTreeScheduler
 
    with ThreadPoolExecutor(max_workers=4) as executor:
        scheduler = ExecutorTreeScheduler(executor=executor)
        with scheduler.prepare(objective) as schedule:
-           value = schedule.evaluate(parameters, EvaluateContext())
+           value = schedule(parameters)
 
 In practice this means the same combined objective can be used
 
