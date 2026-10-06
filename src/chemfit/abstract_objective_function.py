@@ -362,14 +362,13 @@ ParametersT_contra = TypeVar(
 
 QuantitiesT_co = TypeVar(
     "QuantitiesT_co",
-    bound=Mapping[str, object],
+    bound=dict[str, Any],
     covariant=True,
     default=dict[str, Any],
 )
 
 LossQuantitiesT = TypeVar(
-    "LossQuantitiesT",
-    bound=Mapping[str, object],
+    "LossQuantitiesT", bound=dict[str, Any], default=dict[str, Any]
 )
 
 

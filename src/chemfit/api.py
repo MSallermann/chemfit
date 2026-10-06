@@ -43,7 +43,7 @@ from chemfit.wrap_funcs import WrappedObjectiveFunctor
 ParamsT = TypeVar("ParamsT", bound=Mapping[str, object], default=dict[str, Any])
 QuantityT = TypeVar(
     "QuantityT",
-    bound=Mapping[str, object],
+    bound=dict[str, Any],
     default=dict[str, Any],
 )
 ObjectiveLike = Callable[[ParamsT], float] | ObjectiveFunctor[ParamsT]
