@@ -29,7 +29,6 @@ from chemfit.fitter_callbacks import (
     log_progress,
 )
 from chemfit.scheduling import Scheduler, SerialScheduler
-from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.wrap_funcs import objective, quantity
 
 __all__ = [
@@ -44,7 +43,6 @@ __all__ = [
     "SaveMetaData",
     "Scheduler",
     "SerialScheduler",
-    "SerialTreeScheduler",
     "ase_quantity",
     "combine",
     "evaluate_many",
