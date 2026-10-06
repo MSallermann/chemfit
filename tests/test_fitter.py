@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing as mp
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from typing import Any
@@ -378,7 +379,9 @@ def test_user_supplied_evaluate_step_recommendation_and_partial_batch():
 def test_executor_scheduler_preserves_fitter_context_state():
     objective = WrappedObjectiveFunctor(square_x_with_quantities, pass_ctx=True)
     scheduler = ExecutorTreeScheduler(
-        executor_factory=partial(ProcessPoolExecutor, max_workers=2)
+        executor_factory=partial(
+            ProcessPoolExecutor, max_workers=2, mp_context=mp.get_context("spawn")
+        )
     )
     fitter = Fitter(
         objective,
