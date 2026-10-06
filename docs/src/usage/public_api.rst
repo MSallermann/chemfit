@@ -18,19 +18,28 @@ Compute, attach a loss, combine, fit
    import chemfit
 
    @chemfit.quantity()
-   def simulate(params):
-       return {"density": params["sigma"] ** 2}
+   def simulate(params, *, distance):
+       ratio = params["sigma"] / distance
+       energy = 4.0 * params["epsilon"] * (ratio**12 - ratio**6)
+       return {"energy": energy}
 
-   def density_loss(quantities, *, reference):
-       return (quantities["density"] - reference) ** 2
+   def energy_loss(quantities, *, reference):
+       return (quantities["energy"] - reference) ** 2
 
-   density_term = simulate.with_loss(density_loss, reference=1.4)
-   objective = chemfit.combine(density_term)
+   near_term = simulate.bind(distance=1.1).with_loss(
+       energy_loss,
+       reference=-0.98,
+   )
+   far_term = simulate.bind(distance=1.5).with_loss(
+       energy_loss,
+       reference=-0.32,
+   )
+   objective = chemfit.combine(near_term, far_term)
 
    result = chemfit.fit_nevergrad(
        objective,
-       initial={"sigma": 1.0},
-       bounds={"sigma": (0.1, 3.0)},
+       initial={"epsilon": 0.7, "sigma": 1.0},
+       bounds={"epsilon": (0.1, 2.0), "sigma": (0.5, 2.0)},
        optimizer="NgIohTuned",
        budget=100,
        workers=4,
@@ -38,9 +47,10 @@ Compute, attach a loss, combine, fit
 
 ``chemfit.quantity()`` produces a
 :class:`~chemfit.wrap_funcs.WrappedQuantityComputer`, and ``with_loss()``
-turns it into an
-:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`.
-``chemfit.combine()`` returns a
+turns each configured simulation into an
+:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`. Here the two
+terms compare the same model with reference energies at different distances.
+``chemfit.combine()`` joins them into a
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
 :py:func:`chemfit.api.fit_nevergrad` returns a
@@ -54,7 +64,7 @@ Internally, the helper configures a :class:`~chemfit.fitter.Fitter`; see
 Concurrency in ``fit_nevergrad``
 --------------------------------
 
-The two worker settings have separate meanings:
+:py:func:`chemfit.api.fit_nevergrad` accepts two worker settings with different meanings:
 
 - ``workers`` is the number of candidate slots exposed to Nevergrad and the
   maximum number of candidates in one ask/evaluate/tell batch.
