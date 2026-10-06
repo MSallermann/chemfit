@@ -247,6 +247,24 @@ If ``quantity_processors`` is omitted or empty,
 an evaluation-time fallback. As soon as an explicit processor is registered,
 only the explicitly configured processors run.
 
+The default processor copies every entry from ``calc.results`` and adds
+``"n_atoms"``. Use its ``filter_keys`` option to omit results that should not
+be included, such as large per-atom arrays:
+
+.. code-block:: python
+
+   from chemfit.ase_objective_function import DefaultQuantityProcessor
+
+   computer = computer.with_processor(
+       DefaultQuantityProcessor(filter_keys=["forces"])
+   )
+
+Because the implicit fallback cannot be configured, the filtered processor
+must be registered explicitly as shown above. Filtering happens after
+``"n_atoms"`` is added, so ``filter_keys`` may contain calculator-result keys
+or ``"n_atoms"`` itself. Every requested key must exist in that evaluation's
+combined result; otherwise the processor raises ``KeyError``.
+
 Use :py:meth:`~chemfit.ase_objective_function.ASEComputer.with_processor` to
 append a processor to a configured computer:
 

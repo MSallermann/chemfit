@@ -135,7 +135,7 @@ class PathAtomsFactory(AtomsFactory):
 
 
 class DefaultQuantityProcessor:
-    """Return the calculator results together with the atom count."""
+    """Return calculator results and the atom count, optionally omitting keys."""
 
     def __init__(self, filter_keys: list[str] | None = None) -> None:
         """
@@ -143,6 +143,13 @@ class DefaultQuantityProcessor:
 
         Args:
             filter_keys: Optional keys to omit from the returned quantities.
+                Filtering is applied after ``"n_atoms"`` is added, so that
+                key may also be omitted. Every named key must be present in
+                the combined result.
+
+        Raises:
+            KeyError: If a key requested in ``filter_keys`` is absent when the
+                processor is called.
 
         """
         self.filter_keys = filter_keys
@@ -153,7 +160,7 @@ class DefaultQuantityProcessor:
         atoms: Atoms,
         _ctx: EvaluateContext,
     ) -> dict[str, Any]:
-        """Return the available calculator results and atom count."""
+        """Return calculator results and atom count after filtering."""
         result = {**calc.results, "n_atoms": len(atoms)}
         if self.filter_keys is not None:
             for key in self.filter_keys:
