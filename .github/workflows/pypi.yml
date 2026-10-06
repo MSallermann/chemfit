@@ -62,6 +62,8 @@ jobs:
 
       - name: Setup MPI
         uses: mpi4py/setup-mpi@v1
+        with:
+          mpi: openmpi
 
       - name: Install nox
         uses: wntrblm/nox@2025.11.12
