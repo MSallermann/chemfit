@@ -1,16 +1,20 @@
 import nox
 
-# # full set of tests for all python versions
-# @nox.session(python=["3.10", "3.11", "3.12", "3.13"])
-# def tests_all_versions(session):  # noqa: ANN001
-#     session.install(".[test]")
-#     session.run("pytest", "tests/")
+
+# full set of tests for all python versions
+@nox.session(python=["3.10", "3.11", "3.12", "3.13"])
+def tests_all_versions(session):  # noqa: ANN001
+    session.install(".[test]")
+    session.run("pytest", "tests/")
 
 
 # mpi tests
 @nox.session(python=["3.10"])
 def tests_mpi(session):  # noqa: ANN001
     session.install(".[test,mpi]")
+
+    # Make 100% sure that mpiexec used the correct python interpreter
+    python = str(session.virtualenv.location / "bin" / "python")
 
     # Smoketest for mpi import:
     # -u disables Python output buffering,
@@ -20,7 +24,7 @@ def tests_mpi(session):  # noqa: ANN001
         "mpiexec",
         "-n",
         "4",
-        "python",
+        python,
         "-u",
         "-c",
         "from mpi4py import MPI; print(MPI.COMM_WORLD.rank, flush=True)",
@@ -32,7 +36,7 @@ def tests_mpi(session):  # noqa: ANN001
         "mpiexec",
         "-n",
         "4",
-        "python",
+        python,
         "-u",
         "-m",
         "pytest",
