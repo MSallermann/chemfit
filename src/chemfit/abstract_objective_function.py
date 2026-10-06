@@ -502,10 +502,8 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
 
             Recursive registration uses the same hook instance on every
             objective, so hooks must keep per-evaluation state in ``ctx``.
-            It applies to the current objective structure; terms added later
-            are not automatically registered. Register recursive hooks before
-            submitting work to process executors, and on every MPI rank before
-            entering worker loops.
+            Register recursive hooks before submitting work to process
+            executors, and on every MPI rank before entering worker loops.
 
             Every post-evaluation hook is attempted, even if an earlier hook
             raises an exception. If evaluation succeeds, hook exceptions are

@@ -234,7 +234,7 @@ without context injection.
 The returned
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` also
 supports reducers, aggregators, exception handlers, child-context
-configuration, and mutation. Those semantics live in
+configuration, and fluent reconfiguration. Those semantics live in
 :ref:`combined_objective_functions` rather than being repeated here.
 
 Batch evaluation and term execution

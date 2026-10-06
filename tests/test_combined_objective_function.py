@@ -107,7 +107,7 @@ def test_constructor_rejects_invalid_weights():
         )
 
 
-def test_fluent_weights_copy_mutable_configuration() -> None:
+def test_fluent_weights_copy_configuration() -> None:
     def term_a(_params: dict[str, float]) -> float:
         return 1.0
 
@@ -130,15 +130,11 @@ def test_fluent_weights_copy_mutable_configuration() -> None:
     variant.register_eval_hook(pre=hook_b, post=hook_b)
 
     assert variant is not source
-    assert source.weights == [1.0, 1.0]
-    assert variant.weights == [1.0, 0.2]
-    assert variant.weights is not source.weights
-    assert variant.objective_functions is not source.objective_functions
     assert all(
         variant_term is source_term
         for variant_term, source_term in zip(
-            variant.objective_functions,
-            source.objective_functions,
+            variant.child_objectives(),
+            source.child_objectives(),
             strict=True,
         )
     )
@@ -152,8 +148,7 @@ def test_fluent_weights_copy_mutable_configuration() -> None:
     retagged = variant.with_meta(dataset="variant")
     assert retagged.static_meta_data == {"dataset": "variant"}
     assert variant.static_meta_data == {"dataset": "source"}
-    assert retagged.objective_functions is not variant.objective_functions
-    assert retagged.weights is not variant.weights
+    assert math.isclose(retagged({}, EvaluateContext()), 1.6)
 
 
 @pytest.mark.parametrize("weights", [[1.0], [1.0, -0.2]])
@@ -163,7 +158,10 @@ def test_with_weights_rejects_invalid_values(weights: list[float]) -> None:
     with pytest.raises(ValueError, match="weights"):
         source.with_weights(weights)
 
-    assert source.weights == [1.0, 1.0]
+    assert math.isclose(
+        source(PARAMS, EvaluateContext()),
+        sum(make_expected_child_losses(n_terms=2)),
+    )
 
 
 def test_fluent_reduction_and_aggregator_use_last_configuration() -> None:
@@ -243,17 +241,14 @@ def test_fluent_exception_handler_uses_last_configuration() -> None:
     assert math.isnan(replaced({}, EvaluateContext()))
 
 
-def test_add_rejects_invalid_weights_without_mutating_objective():
+def test_terms_and_weights_are_not_public_attributes() -> None:
     cob = combined_objective_function.CombinedObjectiveFunction(make_funcs(1))
 
-    with pytest.raises(ValueError, match=r"expected 2, got 1"):
-        cob.add(make_funcs(2), weights=[1.0])
-
-    with pytest.raises(ValueError, match="must be non-negative"):
-        cob.add(make_funcs(1), weights=-1.0)
-
+    assert not hasattr(cob, "add")
+    assert not hasattr(cob, "objective_functions")
+    assert not hasattr(cob, "weights")
     assert cob.n_terms() == 1
-    assert len(cob.objective_functions) == 1
+    assert len(cob.child_objectives()) == 1
 
 
 EXECUTORS: list[Executor] = [ThreadPoolExecutor(2)]

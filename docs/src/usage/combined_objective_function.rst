@@ -14,6 +14,17 @@ This is the standard way to combine several fitting contributions into one
 objective. Typical examples are fitting against several datasets, several
 configurations, or several physical properties at once.
 
+.. important::
+
+   A combined objective is immutable after construction. Its objective terms
+   and configuration must not be changed in place.
+
+   To add, remove, replace, or reorder terms, construct a fresh combined
+   objective with :func:`chemfit.combine() <chemfit.api.combine>`. To change
+   supported configuration such as weights, reduction, aggregation, exception
+   handling, or metadata, use the fluent ``with_*`` API. Every fluent method
+   returns a new configured object and leaves the original unchanged.
+
 Basic idea
 ----------
 
@@ -85,11 +96,11 @@ configuration can then be applied as a fluent chain:
    )
 
 Each method returns a configured copy and leaves its source object unchanged.
-Child objective and hook objects remain shared, while mutable configuration
-containers are independent. ``with_reduction()`` and ``with_aggregator()``
-replace one another, so the last call determines the active reduction
-interface. ``with_exception_handler()`` changes how failed terms contribute to
-the final result. The sections below describe those semantics in detail.
+Child objective and hook objects remain shared. ``with_reduction()`` and
+``with_aggregator()`` replace one another, so the last call determines the
+active reduction interface. ``with_exception_handler()`` changes how failed
+terms contribute to the final result. The sections below describe those
+semantics in detail.
 
 What actually happens during evaluation
 ---------------------------------------
@@ -477,29 +488,6 @@ For example, the configurator can assign different metadata, attach child-local
 configuration in ``child_ctx.config``, or prepare term-specific execution state.
 The parent context is also available, so the configurator can derive the
 child-specific setup from information stored at the parent level.
-
-Adding terms after construction
--------------------------------
-
-Combined objectives can be extended in place with
-:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.add`.
-
-.. code-block:: python
-
-   from chemfit.combined_objective_function import CombinedObjectiveFunction
-
-   objective = CombinedObjectiveFunction([term1], weights=[1.0])
-
-   objective.add(term2, weights=0.5)
-   objective.add([term3, term4], weights=[2.0, 3.0])
-
-This mutates the existing combined objective and returns it again.
-
-The same weight rules apply as in the constructor. A single weight is broadcast
-to all added terms, while a sequence of weights must match the number of added
-terms. Add every term before preparing a scheduler: a prepared schedule is
-bound to the objective structure that existed at preparation time.
-
 
 Parallel execution
 ------------------

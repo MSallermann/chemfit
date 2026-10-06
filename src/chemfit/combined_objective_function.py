@@ -18,9 +18,6 @@ from chemfit.scheduling import (
 )
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
-# Deliberately invariant: CombinedObjectiveFunction.add() mutates the stored
-# objective list.  Treating one instance as accepting a wider or narrower
-# parameter type could then allow an incompatible objective to be appended.
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 ObjectiveLike = Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
 
@@ -185,8 +182,9 @@ class CombinedObjectiveFunction(
             msg = "Cannot construct CombinedObjectiveFunction with zero terms."
             raise ValueError(msg)
 
-        # Convert to list internally for mutability
-        self.objective_functions = transform_generic_callables(objective_functions)
+        self._objective_functions = tuple(
+            transform_generic_callables(objective_functions)
+        )
 
         self.child_context_configurator = child_context_configurator
 
@@ -203,19 +201,17 @@ class CombinedObjectiveFunction(
         self.exception_handler = exception_handler
 
         if weights is None:
-            # Default each weight to 1.0
-            self.weights: list[float] = [1.0] * len(self.objective_functions)
+            configured_weights = [1.0] * len(self._objective_functions)
         else:
-            self.weights = list(weights)
+            configured_weights = list(weights)
 
-        _validate_weights(self.weights, len(self.objective_functions))
+        _validate_weights(configured_weights, len(self._objective_functions))
+        self._weights = tuple(configured_weights)
 
     def _copy(self) -> Self:
-        """Return a shallow copy with independent mutable configuration."""
+        """Return a shallow copy with independent mutable base configuration."""
 
         new = copy.copy(self)
-        new.objective_functions = self.objective_functions.copy()
-        new.weights = self.weights.copy()
         new.pre_eval_hooks = self.pre_eval_hooks.copy()
         new.post_eval_hooks = self.post_eval_hooks.copy()
         new.static_meta_data = self.static_meta_data.copy()
@@ -226,9 +222,9 @@ class CombinedObjectiveFunction(
         Return a copy with additional static evaluation metadata.
 
         Existing metadata and combined-objective configuration are preserved.
-        Mutable configuration containers and hook registration lists are
-        independent on the returned objective; child objectives and hook
-        objects themselves remain shared.
+        Static metadata and hook registration lists are independent on the
+        returned objective; child objectives and hook objects themselves remain
+        shared.
         """
 
         new = self._copy()
@@ -260,9 +256,9 @@ class CombinedObjectiveFunction(
         """
 
         new_weights = list(weights)
-        _validate_weights(new_weights, len(self.objective_functions))
+        _validate_weights(new_weights, len(self._objective_functions))
         new = self._copy()
-        new.weights = new_weights
+        new._weights = tuple(new_weights)  # noqa: SLF001
         return new
 
     def with_reduction(self, reduction: Reducer, /) -> Self:
@@ -357,7 +353,7 @@ class CombinedObjectiveFunction(
     def child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return the immediate objective terms in evaluation order."""
 
-        return tuple(self.objective_functions)
+        return self._objective_functions
 
     def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
         """Return child objectives for recursive objective operations."""
@@ -410,7 +406,7 @@ class CombinedObjectiveFunction(
                         term = self.exception_handler(outcome, child_ctx, idx)
                     else:
                         try:
-                            term = outcome * self.weights[idx]
+                            term = outcome * self._weights[idx]
                         except Exception as exception:
                             term = self.exception_handler(exception, child_ctx, idx)
                     terms.append(term)
@@ -429,62 +425,7 @@ class CombinedObjectiveFunction(
 
     def n_terms(self) -> int:
         """Return the number of objective terms."""
-        return len(self.weights)
-
-    def add(
-        self,
-        obj_funcs: Sequence[ObjectiveLike[ParametersT]] | ObjectiveLike[ParametersT],
-        weights: Sequence[float] | float = 1.0,
-    ) -> Self:
-        """
-        Mutate this combined objective by adding one or more terms.
-
-        Each added callable is converted to an ``ObjectiveFunctor`` if
-        needed and appended to the existing term list. The corresponding
-        weights are appended in the same order.
-
-        Args:
-            obj_funcs: A single objective callable or a sequence of objective
-                callables to add.
-            weights: Either a single non-negative weight applied to every
-                added callable, or a sequence of non-negative weights whose
-                length matches the number of added callables.
-
-        Returns:
-            The current instance.
-
-        Raises:
-            ValueError: If a sequence of weights does not match the number of
-                added callables, or if any provided weight is negative.
-
-        """
-
-        # Determine how many new functions are being added
-        if isinstance(obj_funcs, Sequence) and not callable(obj_funcs):
-            funcs_to_add = list(obj_funcs)  # type: ignore[assignment]
-        else:
-            funcs_to_add = [obj_funcs]  # type: ignore[assignment]
-
-        funcs_to_add = transform_generic_callables(funcs_to_add)
-
-        # Handle weights
-        if isinstance(weights, Sequence) and not isinstance(weights, (str, bytes)):
-            weights_to_add = list(weights)  # type: ignore[assignment]
-        else:
-            # Single weight repeated for each new function
-            weights_to_add = [float(weights) for _ in funcs_to_add]
-
-        _validate_weights(weights_to_add, len(funcs_to_add))
-
-        self.objective_functions.extend(funcs_to_add)
-        self.weights.extend(weights_to_add)
-
-        # Final sanity check that lists remain aligned
-        assert len(self.weights) == len(self.objective_functions), (
-            "After adding, weights and objective_functions must remain the same length."
-        )
-
-        return self
+        return len(self._weights)
 
     def filter_terms(
         self, terms: list[float | None], ctx: EvaluateContext
@@ -534,7 +475,7 @@ class CombinedObjectiveFunction(
         self, parameters: ParametersT, idx: int, ctx: EvaluateContext
     ):
         try:
-            return self.objective_functions[idx](parameters, ctx) * self.weights[idx]
+            return self._objective_functions[idx](parameters, ctx) * self._weights[idx]
         except Exception as e:
             return self.exception_handler(e, ctx, idx)
 
@@ -556,14 +497,7 @@ class CombinedObjectiveFunction(
                     idx,
                     child_ctx,
                 )
-                for idx, (objective, weight, child_ctx) in enumerate(
-                    zip(
-                        self.objective_functions,
-                        self.weights,
-                        child_ctxs,
-                        strict=True,
-                    )
-                )
+                for idx, child_ctx in enumerate(child_ctxs)
             ]
 
         return self._reduce_terms(terms, ctx)
