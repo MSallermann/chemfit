@@ -1,11 +1,5 @@
 import nox
-
-
-# full set of tests for all python versions
-@nox.session(python=["3.10", "3.11", "3.12", "3.13"])
-def tests_all_versions(session):  # noqa: ANN001
-    session.install(".[test]")
-    session.run("pytest", "tests/")
+from pathlib import Path
 
 
 # mpi tests
@@ -14,7 +8,7 @@ def tests_mpi(session):  # noqa: ANN001
     session.install(".[test,mpi]")
 
     # Make 100% sure that mpiexec used the correct python interpreter
-    python = str(session.virtualenv.location / "bin" / "python")
+    python = str(Path(session.virtualenv.location).resolve() / "bin" / "python")
 
     # Smoketest for mpi import:
     # -u disables Python output buffering,
@@ -47,6 +41,13 @@ def tests_mpi(session):  # noqa: ANN001
         "mpi",
         external=True,
     )
+
+
+# full set of tests for all python versions
+@nox.session(python=["3.10", "3.11", "3.12", "3.13"])
+def tests_all_versions(session):  # noqa: ANN001
+    session.install(".[test]")
+    session.run("pytest", "tests/")
 
 
 # strict static API checks
