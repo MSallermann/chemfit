@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import math
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Generic, Protocol, TypeVar
+from typing import Any, Generic, Protocol, TypeVar, cast
 
 from typing_extensions import Self
 
@@ -413,15 +413,14 @@ class CombinedObjectiveFunction(
             finally:
                 ctx.collect_child_meta_data(recursive=False)
 
-            value = self._reduce_terms(terms, ctx)
-            ctx.loss = value
+            ctx.loss = self._reduce_terms(terms, ctx)
         except BaseException as exception:
             self._end_evaluation(ctx, exception)
             raise
         else:
             self._end_evaluation(ctx, None)
 
-        return value
+        return cast("float", ctx.loss)
 
     def n_terms(self) -> int:
         """Return the number of objective terms."""

@@ -299,12 +299,9 @@ class Fitter(Generic[ParametersT]):
                 ctx=ctx,
             )
 
-        # Root post-evaluation hooks may intentionally modify ctx.loss. Treat
-        # that context value as authoritative after a successful lifecycle.
-        value: object = ctx.loss if ctx.loss is not None else outcome
         return self._record_loss(
             parameters=parameters,
-            value=value,
+            value=outcome,
             ctx=ctx,
         )
 

@@ -73,6 +73,18 @@ whether evaluation succeeded:
 For a one-sided hook, simply omit the other method. Keep hook instance
 attributes for configuration, not mutable per-evaluation state.
 
+A successful post-hook may also transform the objective result by replacing
+``ctx.loss``. The replacement becomes both the stored context loss and the
+value returned to the caller:
+
+.. code-block:: python
+
+    def clamp_loss(ctx):
+        if ctx.loss is not None:
+            ctx.loss = max(ctx.loss, 0.0)
+
+    objective.register_eval_hook(post=clamp_loss)
+
 Registering functions directly
 ------------------------------
 
@@ -111,6 +123,14 @@ Each objective call follows this order:
 2. Run pre-hooks in registration order.
 3. Run ``_evaluate`` and assign its return value to ``ctx.loss``.
 4. Run post-hooks in registration order, not reverse order.
+5. Return the final value of ``ctx.loss``.
+
+On a successful evaluation, a post-hook may replace ``ctx.loss``. Later
+post-hooks observe the replacement, and the final value is the objective's
+caller-visible result. For a combined objective, each leaf's final value is
+what enters its parent reduction. A post-hook on the root combined objective
+may then replace the reduced loss. These semantics are the same for direct
+calls and prepared schedulers, including tree schedulers.
 
 If ``_evaluate`` raises, post-hooks still run. They see ``ctx.loss is None`` and
 the exception in ``ctx.temp.exception``. On successful evaluation,
@@ -168,11 +188,10 @@ objectives run; they do not introduce another objective or hook scope. Register
 hooks on the combined objective and, for MPI, construct the same hooked
 objective on every rank.
 
-The same hook instance is registered throughout the current tree. Terms added
-later are not automatically instrumented. Use distinct objective instances
-for distinct positions in the tree; recursive registration does not
-deduplicate references or detect cycles. Custom composite objectives can
-expose their child scopes by implementing ``_child_objectives()``.
+The same hook instance is registered throughout the current tree. Use distinct
+objective instances for distinct positions in the tree; recursive registration
+does not deduplicate references or detect cycles. Custom composite objectives
+can expose their child scopes by implementing ``_child_objectives()``.
 
 Parallel execution
 ------------------

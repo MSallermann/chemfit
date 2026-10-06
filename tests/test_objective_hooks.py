@@ -51,6 +51,17 @@ def test_direct_pre_and_post_callbacks_are_registered():
     assert calls == ["pre", "post"]
 
 
+def test_post_callback_can_replace_successful_objective_result() -> None:
+    objective = ConstantObjective()
+    objective.register_eval_hook(post=lambda ctx: setattr(ctx, "loss", 7.0))
+    ctx = EvaluateContext()
+
+    result = objective({"value": 1.0}, ctx)
+
+    assert result == 7.0
+    assert ctx.loss == 7.0
+
+
 def test_uuid_hook_assigns_new_id_when_context_is_reused(
     monkeypatch: pytest.MonkeyPatch,
 ):

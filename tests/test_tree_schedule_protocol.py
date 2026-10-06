@@ -197,6 +197,28 @@ def test_structural_composite_is_scheduled_as_a_combine_node() -> None:
     assert ctx.meta == {"began": True, "finished": True}
 
 
+def test_post_hook_loss_changes_propagate_through_tree_schedule() -> None:
+    """Propagate final leaf and composite losses after successful post hooks."""
+
+    first = ParameterLeaf("x")
+    first.register_eval_hook(post=lambda ctx: setattr(ctx, "loss", 5.0))
+    objective = CombinedObjectiveFunction([first, ParameterLeaf("y")])
+
+    def replace_root_loss(ctx: EvaluateContext) -> None:
+        ctx.meta["loss_before_root_post"] = ctx.loss
+        ctx.loss = 11.0
+
+    objective.register_eval_hook(post=replace_root_loss)
+    ctx = EvaluateContext()
+
+    with SerialTreeScheduler().prepare(objective) as schedule:
+        result = schedule.evaluate({"x": 1.0, "y": 2.0}, ctx)
+
+    assert ctx.meta["loss_before_root_post"] == 7.0
+    assert result == 11.0
+    assert ctx.loss == 11.0
+
+
 @pytest.mark.parametrize("failure_phase", ["begin", "finish"])
 def test_structural_composite_phase_failure_is_an_evaluation_outcome(
     failure_phase: str,

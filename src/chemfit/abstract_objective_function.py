@@ -101,8 +101,10 @@ class EvaluateContext:
                 as None if no quantities are produced.
             parameters (Mapping[str, object] | None): Parameter mapping used
                 for this evaluation.
-            loss (float | None): Final scalar loss value. Set by
-                `ObjectiveFunctor` implementations.
+            loss (float | None): Scalar loss for this evaluation. On success,
+                the raw objective result is stored here before post-evaluation
+                hooks run. A post-hook may replace it; the final value is the
+                authoritative objective result returned to the caller.
             meta (dict[str, Any]): Free-form metadata dictionary.
                 Implementations may add diagnostic or structural
                 information here as needed.
@@ -676,6 +678,11 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             ctx (EvaluateContext | None): Optional evaluation context. If
                 None, a new `EvaluateContext` is created.
 
+        Returns:
+            The final ``ctx.loss`` after successful post-evaluation hooks have
+            run. A post-hook may replace the raw value produced by
+            ``_evaluate()``.
+
         Notes:
             - Derived classes must implement ``_evaluate`` rather than
               overriding ``__call__``.
@@ -694,15 +701,14 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
 
         try:
             self._begin_evaluation(parameters=parameters, ctx=ctx)
-            value = self._evaluate(parameters, ctx)
-            ctx.loss = value
+            ctx.loss = self._evaluate(parameters, ctx)
         except BaseException as e:
             self._end_evaluation(ctx, e)
             raise
         else:
             self._end_evaluation(ctx, None)
 
-        return value
+        return cast("float", ctx.loss)
 
 
 LossFunction = Callable[Concatenate[LossQuantitiesT, ...], float]
