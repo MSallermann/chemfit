@@ -49,6 +49,12 @@ def _validate_weights(weights: Sequence[float], n_objectives: int) -> None:
         msg = "`weights` must be non-negative."
         raise ValueError(msg)
 
+    if any(
+        math.isnan(weight) or weight in {-math.inf, +math.inf} for weight in weights
+    ):
+        msg = "`weights` must not be NaN and finite."
+        raise ValueError(msg)
+
 
 class Reducer(Protocol):
     def __call__(self, terms: list[float], /) -> float: ...

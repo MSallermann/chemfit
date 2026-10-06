@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Generic, cast
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
-from pydictnest import flatten_dict, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
@@ -20,6 +19,7 @@ from chemfit.scheduling import EvaluationRequest
 from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
+from pydictnest import flatten_dict, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -131,14 +131,14 @@ def _sanitize_loss(value: object, value_bad_params: float) -> float:
         logger.debug(
             "Objective function did not return a single float, but returned "
             f"`{value}` with type {type(value)}. "
-            f"Clipping loss to {value_bad_params}"
+            f"Setting loss to {value_bad_params}"
         )
         return float(value_bad_params)
 
     loss = float(value)
-    if math.isnan(loss):
+    if math.isnan(loss) or loss in {math.inf, -math.inf}:
         logger.debug(
-            f"Objective function returned NaN. Clipping loss to {value_bad_params}"
+            f"Objective function returned {loss}. Setting loss to {value_bad_params}."
         )
         return float(value_bad_params)
 

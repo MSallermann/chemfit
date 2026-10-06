@@ -110,6 +110,10 @@ def map_with_context(
 
     """
 
+    # Since we iterate over ctxs twice (for the `map` and for `apply_result_state`)
+    # we dont want to consume it in case it's a generator
+    ctxs = tuple(ctxs)
+
     fn_with_ctx_ret = AttachContextAsReturnValue(func=fn)
 
     return_vals_with_ctx = executor.map(
