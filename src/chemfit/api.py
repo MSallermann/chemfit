@@ -510,7 +510,7 @@ class FitResult(Generic[ParamsT]):
         return loss
 
     @property
-    def best_parameters(self) -> Mapping[str, Any]:
+    def best_parameters(self) -> ParamsT:
         """
         Return the parameters from the best successful evaluation.
 
@@ -526,7 +526,7 @@ class FitResult(Generic[ParamsT]):
         """
         parameters = self.best_context.opt_params
         assert parameters is not None
-        return parameters
+        return cast("ParamsT", parameters)
 
 
 def fit_nevergrad(
