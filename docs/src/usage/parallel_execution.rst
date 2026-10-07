@@ -34,6 +34,18 @@ batch. ``execution_workers`` is the number of threads in the built-in
 executor-backed scheduler; it defaults to ``batch_size``. Those execution slots
 are shared by all leaf terms from all candidates in the batch.
 
+With no custom execution backend, an effective ``execution_workers`` value of
+one uses an internally managed serial schedule. Larger values use an internally
+managed :class:`concurrent.futures.ThreadPoolExecutor`-backed schedule.
+
+For an objective tree with ``L`` recursive leaf nodes, a batch of ``B``
+candidates may expose up to ``B * L`` leaf tasks. Allowing all of those leaves
+to execute concurrently can therefore require
+``execution_workers = batch_size * number_of_leaves``. This is a concurrency
+upper bound: a sensible setting must also account for available hardware and
+the resources consumed by each leaf task. The leaf count includes leaves below
+nested composite objectives, not only the direct children of the root.
+
 To choose a different executor, pass a caller-owned executor and omit
 ``execution_workers``:
 

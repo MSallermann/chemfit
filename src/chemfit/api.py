@@ -601,7 +601,8 @@ def fit_nevergrad(
 
     Args:
         objective: Objective functor, compatible callable, or prepared schedule
-            to minimize.
+            to minimize. A prepared schedule cannot be combined with
+            ``executor``, ``execution_workers``, or ``scheduler``.
         initial: Initial nested parameter mapping. Its structure is preserved
             in evaluations and returned parameter mappings.
         budget: Total number of live objective evaluations.
@@ -609,11 +610,24 @@ def fit_nevergrad(
             optimizer step.
         execution_workers: Maximum number of objective leaf tasks executed
             concurrently by the built-in scheduler. Defaults to ``batch_size``.
+            It cannot be combined with ``executor`` or ``scheduler``. With no
+            custom execution backend, an effective value of one uses an
+            internally managed serial schedule; larger values use an internally
+            managed thread-pool-backed schedule.
+            Values greater than ``batch_size`` may be useful when each candidate
+            exposes multiple objective leaves. For an objective tree with
+            ``number_of_leaves`` recursive leaf nodes, a batch may expose up to
+            ``batch_size * number_of_leaves`` leaf tasks. Allowing all of them to
+            execute concurrently can therefore require that many execution
+            workers, subject to available hardware and the resources consumed by
+            each leaf task.
         bounds: Optional nested mapping from parameter leaves to
             ``(lower, upper)`` pairs.
         optimizer: Name registered in ``nevergrad.optimizers.registry``.
         executor: Caller-owned executor used as the execution backend. It
             replaces the built-in backend and is not shut down by ChemFit.
+            Specify only one of ``executor``, ``scheduler``, or
+            ``execution_workers``.
         scheduler: Scheduler used as the execution backend instead of the
             built-in scheduler.
         callbacks: ``(callback, n_steps)`` pairs. Each callback receives the
