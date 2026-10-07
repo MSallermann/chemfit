@@ -667,7 +667,8 @@ class Fitter(Generic[ParametersT]):
                     for key, (lower, upper) in flat_bounds.items():
                         restart_value = flat_params.get(key)
                         if restart_value is not None and (
-                            restart_value < lower or restart_value > upper
+                            (lower is not None and restart_value < lower)
+                            or (upper is not None and restart_value > upper)
                         ):
                             skip = True
 

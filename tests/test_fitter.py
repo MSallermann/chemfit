@@ -335,6 +335,39 @@ def test_seed_observations():
     assert 0.0 <= opt_params["x"] <= 5.0
 
 
+@pytest.mark.parametrize(
+    ("bounds", "valid_value", "invalid_value"),
+    [
+        ((None, 5.0), 2.0, 10.0),
+        ((0.0, None), 2.0, -1.0),
+    ],
+)
+def test_seed_observations_with_one_sided_bounds(
+    bounds: tuple[float | None, float | None],
+    valid_value: float,
+    invalid_value: float,
+):
+    fitter = Fitter(
+        objective_function=square_x,
+        initial_params={"x": 1.0},
+        bounds={"x": bounds},
+    )
+    context = FitterEvaluateContext()
+
+    fitter.fit_nevergrad(
+        budget=1,
+        optimizer_str="OnePlusOne",
+        contexts=[context],
+        initial_observations=[
+            ({"x": valid_value}, 1.0),
+            ({"x": invalid_value}, 0.0),
+        ],
+    )
+
+    assert context.opt_params is not None
+    assert context.opt_params["x"] != invalid_value
+
+
 def test_nevergrad_evaluates_partial_final_batch():
     n_calls = 0
 
