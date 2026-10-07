@@ -83,6 +83,10 @@ be omitted. ``executor`` and ``scheduler`` are mutually exclusive. Use a
 process executor for CPU-bound Python work that does not release the GIL. See
 :ref:`parallel_execution` for executor ownership, prepared schedules, and MPI.
 
+An already prepared schedule may instead be passed as the first argument to
+``fit_nevergrad``. It remains caller-owned and cannot be combined with
+``executor``, ``scheduler``, or ``execution_workers``.
+
 Direct objectives and contexts
 ------------------------------
 
@@ -318,7 +322,7 @@ The remaining helpers connect these objects to composition and execution:
 - :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` drives a
   :class:`~chemfit.fitter.Fitter`; use that class
   directly for SciPy, callbacks, custom optimizers, supplied contexts, or a
-  custom scheduler.
+  prepared schedule.
 - :func:`chemfit.evaluate_many() <chemfit.api.evaluate_many>` prepares a
   :class:`~chemfit.scheduling.Scheduler`; see :ref:`parallel_execution` for
   the lower-level request/result protocol.

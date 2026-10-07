@@ -15,16 +15,13 @@ from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
 from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.scheduling import EvaluationRequest
-from chemfit.tree_schedule import SerialTreeScheduler
+from chemfit.scheduling import EvaluationRequest, PreparedSchedule, SerialScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
-    from chemfit.scheduling import PreparedSchedule, Scheduler
 
 logger = logging.getLogger(__name__)
 
@@ -94,34 +91,12 @@ class FitterEvaluateContext(EvaluateContext):
 CallbackT = Callable[[int, list[FitterEvaluateContext]], None]
 
 
-class FitterEvaluationHook:
-    """Normalize successful root losses before they leave objective lifecycle."""
+def _validate_batch_size(batch_size: int) -> None:
+    """Reject empty candidate batches."""
 
-    @staticmethod
-    def post_eval(ctx: EvaluateContext) -> None:
-        if not isinstance(ctx, FitterEvaluateContext):
-            return
-
-        value_bad_params = getattr(
-            ctx.config,
-            "_fitter_value_bad_params",
-            None,
-        )
-        if value_bad_params is None:
-            return
-
-        # Failed evaluations are interpreted by Fitter after evaluate_many()
-        # returns the root Exception outcome.
-        if getattr(ctx.temp, "exception", None) is not None:
-            return
-
-        ctx.loss = _sanitize_loss(
-            ctx.loss,
-            value_bad_params=float(value_bad_params),
-        )
-
-
-_FITTER_EVALUATION_HOOK = FitterEvaluationHook()
+    if batch_size < 1:
+        msg = "batch_size must be at least 1"
+        raise ValueError(msg)
 
 
 def _sanitize_loss(value: object, value_bad_params: float) -> float:
@@ -149,7 +124,9 @@ class Fitter(Generic[ParametersT]):
     def __init__(
         self,
         objective_function: (
-            Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
+            Callable[[ParametersT], float]
+            | ObjectiveFunctor[ParametersT]
+            | PreparedSchedule[ParametersT]
         ),
         initial_params: Mapping[str, Any],
         bounds: Mapping[str, object] | None = None,
@@ -157,23 +134,23 @@ class Fitter(Generic[ParametersT]):
         value_bad_params: float = 1e5,
         swallow_exceptions: bool = False,
         log_exceptions: bool = True,
-        scheduler: Scheduler[Any] | None = None,
         accept_unknown_bounds: bool = False,
     ) -> None:
         """
         Driver class for parameter optimization.
 
-        A `Fitter` evaluates an objective (either a plain callable or an
-        `ObjectiveFunctor`) through a prepared scheduler and exposes
-        convenience methods for running optimizations with nevergrad and
-        SciPy. Plain callables receive only the parameter mapping; wrap a
-        context-aware callable as an ``ObjectiveFunctor`` first.
+        A `Fitter` evaluates a plain callable, an ``ObjectiveFunctor``, or an
+        already prepared schedule and exposes convenience methods for running
+        optimizations with Nevergrad and SciPy. Plain callables receive only
+        the parameter mapping; wrap a context-aware callable as an
+        ``ObjectiveFunctor`` first.
 
         Args:
-            objective_function (Callable | ObjectiveFunctor): Objective to
-                be minimized. If a plain callable is provided, it is
-                converted to a ``WrappedObjectiveFunctor`` without context
-                injection.
+            objective_function (Callable | ObjectiveFunctor | PreparedSchedule):
+                Objective or prepared execution plan to minimize. Plain
+                callables are converted to ``WrappedObjectiveFunctor`` objects
+                and evaluated through an internally managed serial schedule.
+                A prepared schedule remains caller-owned.
             initial_params: Nested mapping of concrete initial parameter
                 values passed to the objective.
             bounds (Mapping[str, object] | None, optional): Bounds for each
@@ -191,10 +168,8 @@ class Fitter(Generic[ParametersT]):
                 ``value_bad_params`` instead of re-raising them.
             log_exceptions: Log ordinary objective exceptions before either
                 re-raising or replacing them.
-            scheduler: Scheduler used to evaluate the objective. Defaults
-                to ``SerialTreeScheduler``.
             accept_unknown_bounds: Optionally skip checking the bounds
-                dictionray for unknown keys. Defaults to `False`.
+                dictionary for unknown keys. Defaults to `False`.
 
         """
 
@@ -221,29 +196,22 @@ class Fitter(Generic[ParametersT]):
 
         self.bounds: Mapping[str, object] = {} if bounds is None else bounds
 
-        # Make sure that we have an ObjectiveFunctor instance
-        if not isinstance(objective_function, ObjectiveFunctor):
-            objective_function = WrappedObjectiveFunctor(
-                func=objective_function, pass_ctx=False
-            )
-
-        self.objective_function: ObjectiveFunctor[ParametersT] = objective_function
-
-        # Register one stateless fitter hook on the root objective. Per-fit
-        # configuration lives on FitterEvaluateContext, so sharing an objective
-        # between fitters does not put fitter-specific state on the hook itself.
-        if (
-            _FITTER_EVALUATION_HOOK.post_eval
-            not in self.objective_function.post_eval_hooks
-        ):
-            self.objective_function.register_eval_hook(hook=_FITTER_EVALUATION_HOOK)
+        if isinstance(objective_function, PreparedSchedule):
+            self._objective_function: ObjectiveFunctor[ParametersT] | None = None
+            self._schedule: PreparedSchedule[ParametersT] | None = objective_function
+            self._owns_schedule = False
+        else:
+            if not isinstance(objective_function, ObjectiveFunctor):
+                objective_function = WrappedObjectiveFunctor(
+                    func=objective_function, pass_ctx=False
+                )
+            self._objective_function = objective_function
+            self._schedule = None
+            self._owns_schedule = True
 
         self.value_bad_params: float = value_bad_params
         self.swallow_exceptions = swallow_exceptions
         self.log_exceptions = log_exceptions
-        self._scheduler = SerialTreeScheduler() if scheduler is None else scheduler
-        self._schedule: PreparedSchedule[ParametersT] | None = None
-
         self.near_bound_tol = near_bound_tol
 
         self.contexts: list[FitterEvaluateContext] = []
@@ -251,6 +219,17 @@ class Fitter(Generic[ParametersT]):
         self.callbacks: list[
             tuple[Callable[[int, list[FitterEvaluateContext]], None], int]
         ] = []
+
+    def _close_schedule(self) -> None:
+        """Close and discard an internally created schedule, if any."""
+
+        if not self._owns_schedule:
+            return
+
+        schedule = self._schedule
+        self._schedule = None
+        if schedule is not None:
+            schedule.close()
 
     def _record_loss(
         self,
@@ -304,14 +283,6 @@ class Fitter(Generic[ParametersT]):
             value=outcome,
             ctx=ctx,
         )
-
-    def _close_schedule(self) -> None:
-        """Close the currently prepared schedule, if any."""
-
-        schedule = self._schedule
-        self._schedule = None
-        if schedule is not None:
-            schedule.close()
 
     def register_callback(self, func: CallbackT, n_steps: int) -> None:
         """
@@ -385,7 +356,7 @@ class Fitter(Generic[ParametersT]):
 
     def init(
         self,
-        num_workers: int = 1,
+        batch_size: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
     ) -> None:
         """
@@ -397,39 +368,38 @@ class Fitter(Generic[ParametersT]):
         optimizer step. Call :meth:`finish` with the optimizer's final
         recommendation when the loop is complete.
 
-        ``num_workers`` controls the maximum candidate batch size. Actual
-        execution is delegated entirely to the configured scheduler.
+        ``batch_size`` controls the maximum candidate batch size. Actual
+        execution is delegated entirely to the prepared schedule.
 
         Args:
-            num_workers: Maximum number of candidates accepted by one call to
+            batch_size: Maximum number of candidates accepted by one call to
                 :meth:`evaluate`.
             contexts: Optional contexts for the candidate slots. The sequence
-                length must equal ``num_workers``.
+                length must equal ``batch_size``.
 
         """
 
-        if num_workers < 1:
-            msg = "num_workers must be at least 1"
-            raise ValueError(msg)
-        if contexts is not None and len(contexts) != num_workers:
-            msg = "contexts must contain one context per candidate slot"
+        _validate_batch_size(batch_size)
+        if contexts is not None and len(contexts) != batch_size:
+            msg = "contexts must contain exactly batch_size entries"
             raise ValueError(msg)
 
-        self._close_schedule()
+        if self._owns_schedule:
+            self._close_schedule()
+            assert self._objective_function is not None
+            self._schedule = SerialScheduler().prepare(self._objective_function)
+        elif self._schedule is None or self._schedule.closed:
+            msg = "Prepared schedule is closed."
+            raise RuntimeError(msg)
 
         self._hook_pre_fit()
-        self._session_num_workers = num_workers
+        self._session_batch_size = batch_size
         self._session_step = 0
         self.contexts = (
-            [FitterEvaluateContext() for _ in range(num_workers)]
+            [FitterEvaluateContext() for _ in range(batch_size)]
             if contexts is None
             else contexts
         )
-
-        for ctx in self.contexts:
-            ctx.config._fitter_value_bad_params = self.value_bad_params  # noqa: SLF001
-
-        self._schedule = self._scheduler.prepare(self.objective_function)
 
     def evaluate(
         self,
@@ -440,12 +410,12 @@ class Fitter(Generic[ParametersT]):
         Evaluate one candidate or a candidate batch through the prepared schedule.
 
         A mapping produces one loss. A list produces a list of losses in
-        input order and may contain at most ``num_workers`` candidates.
+        input order and may contain at most ``batch_size`` candidates.
         Scheduler results may complete out of order; ``EvaluationResult.index``
         is used to restore the original request order before returning.
         """
 
-        if not hasattr(self, "_session_num_workers") or self._schedule is None:
+        if not hasattr(self, "_session_batch_size") or self._schedule is None:
             msg = "call fitter.init() before fitter.evaluate()"
             raise RuntimeError(msg)
 
@@ -457,8 +427,11 @@ class Fitter(Generic[ParametersT]):
         else:
             batch = parameters
 
-            if len(batch) > self._session_num_workers:
-                msg = "a batch cannot contain more candidates than candidate slots"
+            if len(batch) > self._session_batch_size:
+                msg = (
+                    "a batch cannot contain more candidates than the configured "
+                    f"batch_size ({self._session_batch_size})"
+                )
                 raise ValueError(msg)
             if len(batch) == 0:
                 return []
@@ -607,7 +580,7 @@ class Fitter(Generic[ParametersT]):
         self,
         budget: int,
         optimizer_str: str = "NgIohTuned",
-        num_workers: int = 1,
+        batch_size: int = 1,
         contexts: list[FitterEvaluateContext] | None = None,
         parametrization: Mapping[str, object] | None = None,
         initial_observations: Iterable[tuple[ParametersT, float | None]] | None = None,
@@ -616,7 +589,7 @@ class Fitter(Generic[ParametersT]):
         Optimize parameters using a nevergrad optimizer.
 
         This method drives nevergrad's ask/tell interface and evaluates each
-        candidate batch through the configured scheduler. One
+        candidate batch through the supplied prepared schedule. One
         ``FitterEvaluateContext`` is used per candidate slot so that
         evaluation-side state can be tracked independently.
 
@@ -624,11 +597,11 @@ class Fitter(Generic[ParametersT]):
             budget: Total number of objective evaluations to allow.
             optimizer_str: Name of the nevergrad optimizer to use. Must be a
                 key in ``ng.optimizers.registry``.
-            num_workers: Maximum number of candidates requested from Nevergrad
-                in one ask/tell step. The configured scheduler determines
-                how those candidates are executed.
+            batch_size: Maximum number of candidates requested from Nevergrad
+                and passed to :meth:`evaluate` in one ask/tell step. The
+                prepared schedule determines how those candidates are executed.
             contexts: Optional list of per-candidate-slot fitter contexts. If
-                provided, its length must equal ``num_workers``.
+                provided, its length must equal ``batch_size``.
             parametrization: Optional nested mapping of Nevergrad parameter
                 leaves. It may override any leaf in ``initial_params``; other
                 real-valued scalar leaves use ``Scalar``. All other leaf types
@@ -652,7 +625,7 @@ class Fitter(Generic[ParametersT]):
             KeyError: If ``optimizer_str`` is not found in the nevergrad
                 optimizer registry.
             ValueError: If ``contexts`` is provided and its length does
-                not equal ``num_workers``.
+                not equal ``batch_size``.
 
         Side Effects:
             - Initializes fitter bookkeeping via ``_hook_pre_fit()``.
@@ -661,6 +634,8 @@ class Fitter(Generic[ParametersT]):
             - Runs post-fit checks via ``_hook_post_fit()``.
 
         """
+
+        _validate_batch_size(batch_size)
 
         flat_initial_params = flatten_dict(self.initial_parameters)
         flat_bounds = flatten_dict(self.bounds)
@@ -676,11 +651,12 @@ class Fitter(Generic[ParametersT]):
             )
             raise KeyError(msg) from exc
 
+        # Nevergrad names its candidate batch-size parameter ``num_workers``.
         optimizer = optimizer_cls(
-            parametrization=instru, budget=budget, num_workers=num_workers
+            parametrization=instru, budget=budget, num_workers=batch_size
         )
 
-        self.init(num_workers=num_workers, contexts=contexts)
+        self.init(batch_size=batch_size, contexts=contexts)
 
         try:
             if initial_observations is not None:
@@ -710,13 +686,13 @@ class Fitter(Generic[ParametersT]):
                     )
                     optimizer.tell(asked_params, post_processed_loss_value)
 
-            for step, batch_start in enumerate(range(0, budget, num_workers)):
-                batch_size = min(num_workers, budget - batch_start)
+            for step, batch_start in enumerate(range(0, budget, batch_size)):
+                current_batch_size = min(batch_size, budget - batch_start)
 
                 if step == 0:
                     optimizer.suggest(flat_initial_params)
 
-                asked_params = [optimizer.ask() for _ in range(batch_size)]
+                asked_params = [optimizer.ask() for _ in range(current_batch_size)]
                 flat_params = [candidate.value[0][0] for candidate in asked_params]
                 nested_params = [
                     cast(

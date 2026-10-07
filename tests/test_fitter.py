@@ -13,6 +13,7 @@ from chemfit.abstract_objective_function import EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_scheduler import ExecutorTreeScheduler
 from chemfit.fitter import Fitter, FitterEvaluateContext
+from chemfit.scheduling import SerialSchedule
 from chemfit.tree_schedule import SerialTreeScheduler
 from chemfit.utils import check_params_near_bounds
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
@@ -78,50 +79,73 @@ def test_scipy_converges_on_combined_objective():
 
 
 @pytest.mark.parametrize("backend", ["nevergrad", "scipy"])
-@pytest.mark.parametrize("cleanup_fails", [False, True])
-def test_fit_closes_prepared_schedule_after_evaluation_failure(
-    backend: str,
-    cleanup_fails: bool,
-):
-    class RecordingScheduler:
-        def __init__(self) -> None:
-            self.schedule = None
-
-        def prepare(self, objective: Any):
-            self.schedule = SerialTreeScheduler().prepare(objective)
-            if cleanup_fails:
-                close = self.schedule.close
-
-                def failing_close() -> None:
-                    close()
-                    msg = "cleanup failed"
-                    raise RuntimeError(msg)
-
-                self.schedule.close = failing_close
-            return self.schedule
-
+def test_fit_does_not_close_borrowed_schedule_after_evaluation_failure(backend: str):
     def failing_objective(_params: dict[str, float]) -> float:
         msg = "evaluation failed"
         raise ValueError(msg)
 
-    scheduler = RecordingScheduler()
+    objective = WrappedObjectiveFunctor(failing_objective)
+    schedule = SerialTreeScheduler().prepare(objective)
     fitter = Fitter(
-        failing_objective,
+        schedule,
         initial_params={"x": 1.0},
-        scheduler=scheduler,
         log_exceptions=False,
     )
 
-    with pytest.raises(ValueError, match="evaluation failed") as exc_info:
+    with pytest.raises(ValueError, match="evaluation failed"):
         if backend == "nevergrad":
             fitter.fit_nevergrad(budget=1, optimizer_str="OnePlusOne")
         else:
             fitter.fit_scipy()
 
-    assert scheduler.schedule is not None
-    assert scheduler.schedule.closed
-    if cleanup_fails and hasattr(exc_info.value, "__notes__"):
-        assert "cleanup failed" in exc_info.value.__notes__[0]
+    assert not schedule.closed
+
+
+def test_finish_does_not_close_borrowed_schedule():
+    objective = WrappedObjectiveFunctor(square_x)
+    schedule = SerialTreeScheduler().prepare(objective)
+    fitter = Fitter(schedule, {"x": 1.0})
+
+    fitter.init()
+    assert fitter.evaluate({"x": 2.0}) == 4.0
+    fitter.finish()
+
+    assert not schedule.closed
+
+    fitter.init()
+    assert fitter.evaluate({"x": 3.0}) == 9.0
+    fitter.finish()
+    assert not schedule.closed
+
+
+def test_fitter_evaluates_with_manually_prepared_serial_tree_schedule():
+    objective = WrappedObjectiveFunctor(square_x)
+    schedule = SerialTreeScheduler().prepare(objective)
+    fitter = Fitter(schedule, {"x": 1.0})
+
+    fitter.init()
+
+    assert fitter.evaluate({"x": 2.0}) == 4.0
+
+
+def test_fitter_closes_and_reprepares_its_internal_serial_schedule():
+    fitter = Fitter(square_x, {"x": 1.0})
+
+    fitter.init()
+    first_schedule = fitter._schedule  # noqa: SLF001
+    fitter.evaluate({"x": 2.0})
+    fitter.finish()
+
+    assert first_schedule is not None
+    assert first_schedule.closed
+
+    fitter.init()
+    second_schedule = fitter._schedule  # noqa: SLF001
+    assert second_schedule is not None
+    assert second_schedule is not first_schedule
+    fitter.evaluate({"x": 3.0})
+    fitter.finish()
+    assert second_schedule.closed
 
 
 @pytest.mark.parametrize("optimizer", NG_SOLVERS)
@@ -289,7 +313,7 @@ def test_seed_observations():
 
     opt_params = fitter.fit_nevergrad(
         budget=2,
-        num_workers=2,
+        batch_size=2,
         contexts=contexts,
         initial_observations=[
             ({"x": 2.0}, 1.0),  # valid
@@ -320,9 +344,41 @@ def test_nevergrad_evaluates_partial_final_batch():
         return params["x"] ** 2
 
     fitter = Fitter(objective, initial_params={"x": 1.0})
-    fitter.fit_nevergrad(budget=3, num_workers=2)
+    fitter.fit_nevergrad(budget=3, batch_size=2)
 
     assert n_calls == 3
+
+
+def test_nevergrad_batch_size_uses_internal_serial_schedule(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    observed_batch_sizes: list[int] = []
+    evaluate_many = SerialSchedule.evaluate_many
+
+    def record_batch(schedule: SerialSchedule[Any], requests: Any):
+        observed_batch_sizes.append(len(requests))
+        yield from evaluate_many(schedule, requests)
+
+    monkeypatch.setattr(SerialSchedule, "evaluate_many", record_batch)
+    contexts = [FitterEvaluateContext() for _ in range(4)]
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+
+    fitter.fit_nevergrad(
+        budget=8,
+        batch_size=4,
+        contexts=contexts,
+        optimizer_str="OnePlusOne",
+    )
+
+    assert observed_batch_sizes == [4, 4]
+    assert [ctx.n_evals for ctx in contexts] == [2, 2, 2, 2]
+
+
+def test_nevergrad_rejects_invalid_batch_size():
+    fitter = Fitter(square_x, initial_params={"x": 1.0})
+
+    with pytest.raises(ValueError, match="batch_size must be at least 1"):
+        fitter.fit_nevergrad(budget=1, batch_size=0)
 
 
 def test_evaluate_requires_initialized_session():
@@ -364,7 +420,7 @@ def test_user_supplied_evaluate_step_interface():
 def test_user_supplied_evaluate_step_recommendation_and_partial_batch():
     fitter = Fitter(lambda params: params["x"] ** 2, {"x": 0.0})
 
-    fitter.init(num_workers=2)
+    fitter.init(batch_size=2)
     losses = fitter.evaluate([{"x": 0.0}, {"x": 1.0}])
     fitter.step()
     final_loss = fitter.evaluate([{"x": 2.0}])
@@ -383,27 +439,33 @@ def test_executor_scheduler_preserves_fitter_context_state():
             ProcessPoolExecutor, max_workers=2, mp_context=mp.get_context("spawn")
         )
     )
-    fitter = Fitter(
-        objective,
-        {"x": 0.0},
-        scheduler=scheduler,
-    )
+    with scheduler.prepare(objective) as schedule:
+        fitter = Fitter(schedule, {"x": 0.0})
 
-    fitter.init(num_workers=2)
-    assert fitter.evaluate([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
-    assert fitter.evaluate([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
-    fitter.finish()
+        fitter.init(batch_size=2)
+        assert fitter.evaluate([{"x": 2.0}, {"x": 3.0}]) == [4.0, 9.0]
+        assert fitter.evaluate([{"x": 1.0}, {"x": 4.0}]) == [1.0, 16.0]
+        fitter.finish()
 
-    first, second = fitter.contexts
-    assert first.n_evals == 2
-    assert first.opt_loss == 1.0
-    assert first.opt_params == {"x": 1.0}
-    assert first.opt_quantities == {"evaluated_x": 1.0}
+        first, second = fitter.contexts
+        assert first.n_evals == 2
+        assert first.opt_loss == 1.0
+        assert first.opt_params == {"x": 1.0}
+        assert first.opt_quantities == {"evaluated_x": 1.0}
 
-    assert second.n_evals == 2
-    assert second.opt_loss == 9.0
-    assert second.opt_params == {"x": 3.0}
-    assert second.opt_quantities == {"evaluated_x": 3.0}
+        assert second.n_evals == 2
+        assert second.opt_loss == 9.0
+        assert second.opt_params == {"x": 3.0}
+        assert second.opt_quantities == {"evaluated_x": 3.0}
+
+        batch_contexts = [FitterEvaluateContext(), FitterEvaluateContext()]
+        fitter.fit_nevergrad(
+            budget=2,
+            batch_size=2,
+            contexts=batch_contexts,
+            optimizer_str="OnePlusOne",
+        )
+        assert [ctx.n_evals for ctx in batch_contexts] == [1, 1]
 
 
 def test_new_best_without_quantities_clears_previous_best_quantities():

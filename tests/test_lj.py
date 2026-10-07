@@ -303,21 +303,25 @@ def test_lj_mpi():
     initial_params = {"epsilon": 2.0, "sigma": 1.5}
     scheduler = mpi_scheduler.MPITreeScheduler()
 
-    if scheduler.comm.Get_rank() == 0:
-        fitter = Fitter(
-            ob,
-            initial_params=initial_params,
-            scheduler=scheduler,
-        )
-        opt_params = fitter.fit_scipy()
-    else:
-        with scheduler.prepare(ob) as schedule:
-            schedule.worker_loop()
-
     with scheduler.prepare(ob) as schedule:
         if schedule.rank == 0:
+            smoke_result = chemfit.fit_nevergrad(
+                schedule,
+                initial=initial_params,
+                budget=1,
+                optimizer="OnePlusOne",
+            )
+            assert smoke_result.contexts[0].n_evals == 1
+            assert not schedule.closed
+
+            fitter = Fitter(
+                schedule,
+                initial_params=initial_params,
+            )
+            opt_params = fitter.fit_scipy()
+
             ctx = EvaluateContext()
-            schedule.evaluate(opt_params, ctx)
+            schedule(opt_params, ctx)
             terms_meta_data = ctx.to_meta_data()["meta"]["children"]
 
             assert ob.n_terms() == len(terms_meta_data)

@@ -147,12 +147,12 @@ parameters, loss, quantities, and metadata. ``ctx.temp`` is scratch state and
 ``ctx.shared`` is not transported back. Store results that must survive worker
 execution in ``ctx.meta`` or in the returned quantities.
 
-Fitter concurrency
-------------------
+Fitter batching and execution
+-----------------------------
 
 At the lower level,
-:meth:`~chemfit.fitter.Fitter.fit_nevergrad` uses ``num_workers`` only as the
-maximum candidate batch size. The scheduler passed to
+:meth:`~chemfit.fitter.Fitter.fit_nevergrad` uses ``batch_size`` only as the
+maximum candidate batch size. The prepared schedule passed to
 :class:`~chemfit.fitter.Fitter` determines whether and how that batch executes
 concurrently:
 
@@ -167,12 +167,13 @@ concurrently:
    scheduler = ExecutorTreeScheduler(
        executor_factory=partial(ThreadPoolExecutor, max_workers=8),
    )
-   fitter = Fitter(objective, initial_params={"x": 1.0}, scheduler=scheduler)
-   optimum = fitter.fit_nevergrad(budget=100, num_workers=4)
+   with scheduler.prepare(objective) as schedule:
+       fitter = Fitter(schedule, initial_params={"x": 1.0})
+       optimum = fitter.fit_nevergrad(budget=100, batch_size=4)
 
-With the default
-:class:`~chemfit.tree_schedule.SerialTreeScheduler`, a Nevergrad batch is
-evaluated serially even when ``num_workers`` is greater than one.
+A schedule prepared by
+:class:`~chemfit.tree_schedule.SerialTreeScheduler` evaluates a Nevergrad
+batch serially even when ``batch_size`` is greater than one.
 
 MPI
 ---

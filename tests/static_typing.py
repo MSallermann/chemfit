@@ -63,7 +63,9 @@ if TYPE_CHECKING:
     # Fitter carries the objective's parameter type through its public API.
     fitter = Fitter(wrapped_objective, {"x": 1.0})
     assert_type(fitter, Fitter[Parameters])
-    fitter.objective_function({"x": "wrong"})  # pyright: ignore[reportArgumentType]
+
+    scheduled_fitter = Fitter(root_leaf_schedule, {"x": 1.0})
+    assert_type(scheduled_fitter, Fitter[Parameters])
 
     fit_result = fit_nevergrad(
         wrapped_objective,

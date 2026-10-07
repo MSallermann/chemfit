@@ -35,8 +35,8 @@ from chemfit.external_computer import ExternalQuantityComputer
 from chemfit.fitter import CallbackT, Fitter, FitterEvaluateContext
 from chemfit.scheduling import (
     EvaluationRequest,
+    PreparedSchedule,
     Scheduler,
-    SerialScheduler,
 )
 from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
@@ -47,6 +47,7 @@ QuantityT = TypeVar(
     default=dict[str, Any],
 )
 ObjectiveLike = Callable[[ParamsT], float] | ObjectiveFunctor[ParamsT]
+FitObjective = ObjectiveLike[ParamsT] | PreparedSchedule[ParamsT]
 
 
 @overload
@@ -529,8 +530,53 @@ class FitResult(Generic[ParamsT]):
         return cast("ParamsT", parameters)
 
 
-def fit_nevergrad(
+def _fit_nevergrad_with_fitter(
+    objective: FitObjective[ParamsT],
+    initial: ParamsT,
+    *,
+    budget: int,
+    workers: int,
+    bounds: Mapping[str, Any] | None,
+    optimizer: str,
+    callbacks: Sequence[tuple[CallbackT, int]] | None,
+    parametrization: Mapping[str, object] | None,
+    initial_observations: Iterable[tuple[ParamsT, float | None]] | None,
+) -> FitResult[ParamsT]:
+    """Run one high-level fit using an objective or prepared schedule."""
+
+    fitter = Fitter[ParamsT](
+        objective_function=objective,
+        initial_params=initial,
+        bounds=bounds,
+    )
+
+    if callbacks is not None:
+        for func, nsteps in callbacks:
+            fitter.register_callback(func, nsteps)
+
+    recommendation = fitter.fit_nevergrad(
+        budget=budget,
+        optimizer_str=optimizer,
+        batch_size=workers,
+        parametrization=parametrization,
+        initial_observations=initial_observations,
+    )
+
+    return FitResult(recommendation=recommendation, contexts=tuple(fitter.contexts))
+
+
+def _as_objective_functor(
     objective: ObjectiveLike[ParamsT],
+) -> ObjectiveFunctor[ParamsT]:
+    """Return one objective-functor instance suitable for preparation."""
+
+    if isinstance(objective, ObjectiveFunctor):
+        return objective
+    return WrappedObjectiveFunctor(objective, pass_ctx=False)
+
+
+def fit_nevergrad(
+    objective: FitObjective[ParamsT],
     initial: ParamsT,
     *,
     budget: int,
@@ -554,7 +600,8 @@ def fit_nevergrad(
     parameters, including choices, arrays, logarithmic scalars, or constants.
 
     Args:
-        objective: Objective functor or compatible callable to minimize.
+        objective: Objective functor, compatible callable, or prepared schedule
+            to minimize.
         initial: Initial nested parameter mapping. Its structure is preserved
             in evaluations and returned parameter mappings.
         budget: Total number of live objective evaluations.
@@ -644,6 +691,10 @@ def fit_nevergrad(
         Initial observations provide an approximate warm start; they do not
         restore Nevergrad's internal optimizer state.
 
+        A prepared schedule supplied as ``objective`` remains caller-owned.
+        Schedules prepared internally from ``scheduler`` or ``executor`` are
+        closed before this function returns.
+
     """
 
     if budget < 1:
@@ -657,6 +708,38 @@ def fit_nevergrad(
     if execution_workers is not None and execution_workers < 1:
         msg = "`execution_workers` must be at least 1."
         raise ValueError(msg)
+
+    if isinstance(objective, PreparedSchedule):
+        if scheduler is not None:
+            msg = (
+                "`scheduler` cannot be supplied when `objective` is already "
+                "a PreparedSchedule."
+            )
+            raise ValueError(msg)
+        if executor is not None:
+            msg = (
+                "`executor` cannot be supplied when `objective` is already "
+                "a PreparedSchedule."
+            )
+            raise ValueError(msg)
+        if execution_workers is not None:
+            msg = (
+                "`execution_workers` cannot be supplied when `objective` is "
+                "already a PreparedSchedule."
+            )
+            raise ValueError(msg)
+
+        return _fit_nevergrad_with_fitter(
+            objective,
+            initial,
+            budget=budget,
+            workers=workers,
+            bounds=bounds,
+            optimizer=optimizer,
+            callbacks=callbacks,
+            parametrization=parametrization,
+            initial_observations=initial_observations,
+        )
 
     if executor is not None and scheduler is not None:
         msg = "Specify only one of `executor` or `scheduler`"
@@ -676,31 +759,34 @@ def fit_nevergrad(
             workers if execution_workers is None else execution_workers
         )
         if effective_execution_workers == 1:
-            scheduler = SerialScheduler()
-        else:
-            scheduler = ExecutorTreeScheduler(
-                executor_factory=lambda: ThreadPoolExecutor(
-                    max_workers=effective_execution_workers
-                )
+            return _fit_nevergrad_with_fitter(
+                objective,
+                initial,
+                budget=budget,
+                workers=workers,
+                bounds=bounds,
+                optimizer=optimizer,
+                callbacks=callbacks,
+                parametrization=parametrization,
+                initial_observations=initial_observations,
             )
+        scheduler = ExecutorTreeScheduler(
+            executor_factory=lambda: ThreadPoolExecutor(
+                max_workers=effective_execution_workers
+            )
+        )
 
-    fitter = Fitter[ParamsT](
-        objective_function=objective,
-        initial_params=initial,
-        bounds=bounds,
-        scheduler=scheduler,
-    )
+    objective_function = _as_objective_functor(objective)
 
-    if callbacks is not None:
-        for func, nsteps in callbacks:
-            fitter.register_callback(func, nsteps)
-
-    recommendation = fitter.fit_nevergrad(
-        budget=budget,
-        optimizer_str=optimizer,
-        num_workers=workers,
-        parametrization=parametrization,
-        initial_observations=initial_observations,
-    )
-
-    return FitResult(recommendation=recommendation, contexts=tuple(fitter.contexts))
+    with scheduler.prepare(objective_function) as schedule:
+        return _fit_nevergrad_with_fitter(
+            schedule,
+            initial,
+            budget=budget,
+            workers=workers,
+            bounds=bounds,
+            optimizer=optimizer,
+            callbacks=callbacks,
+            parametrization=parametrization,
+            initial_observations=initial_observations,
+        )

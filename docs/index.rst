@@ -196,7 +196,6 @@ direct control over threads, processes, or MPI. The :ref:`common_workflows`,
    src/usage/writing_quantity_computers.rst
    src/usage/objective_hooks.rst
    src/usage/mpi.rst
-   src/usage/evaluation_dashboard.rst
    src/development/development.rst
 
 .. toctree::

@@ -36,7 +36,7 @@ Use :class:`~chemfit.fitter.Fitter` directly when you need:
 - custom optimizer loops;
 - callbacks or supplied contexts;
 - manual ``init``/``evaluate``/``step``/``finish`` lifecycle control;
-- a custom :class:`~chemfit.scheduling.Scheduler`.
+- a caller-managed :class:`~chemfit.scheduling.PreparedSchedule`.
 
 The remainder of this page documents that richer interface.
 
@@ -77,7 +77,7 @@ Basic usage
 
 Direct ``Fitter`` setup requires:
 
-1. an objective function
+1. an objective function or prepared schedule
 2. a dictionary of initial parameters
 
 .. code-block:: python
@@ -110,11 +110,14 @@ The fitter accepts either:
 
 - a plain callable ``f(params) -> float``
 - an :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`
+- a caller-owned :py:class:`~chemfit.scheduling.PreparedSchedule`
 
 A plain callable is wrapped in a
 :py:class:`~chemfit.wrap_funcs.WrappedObjectiveFunctor`. Existing
-``ObjectiveFunctor`` instances are used directly. Loss normalization and
-incumbent bookkeeping are applied by the fitter around scheduled evaluations.
+``ObjectiveFunctor`` instances are used directly. Both forms use an internally
+managed serial schedule. A supplied prepared schedule is used directly and is
+never closed or replaced by the fitter. Loss normalization and incumbent
+bookkeeping are applied by the fitter around scheduled evaluations.
 
 To use an evaluation context, supply an ``ObjectiveFunctor``. The
 :py:func:`~chemfit.wrap_funcs.objective` decorator is the shortest route:
@@ -397,9 +400,9 @@ dispatches its callbacks.
     opt_params = fitter.finish(optimizer.recommendation())
 
 ``fitter.evaluate`` also accepts a list of candidates, up to the
-``num_workers`` configured by ``init``. The fitter's scheduler determines how
-that batch executes. If no recommendation is passed to ``finish``, ChemFit
-returns the best parameters it actually evaluated.
+``batch_size`` configured by ``init``. The fitter's prepared schedule
+determines how that batch executes. If no recommendation is passed to
+``finish``, ChemFit returns the best parameters it actually evaluated.
 
 A complete custom-loop example
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -446,7 +449,8 @@ Calling ``fitter.evaluate`` applies the same objective wrapping, invalid-value
 handling and context bookkeeping as the built-in SciPy and Nevergrad fitting
 methods. Calling ``fitter.step`` marks the end of an optimizer step and invokes
 callbacks registered for that step. ``fitter.finish`` runs the usual post-fit
-checks and closes the prepared schedule.
+checks. It closes an internally created serial schedule, but never closes a
+caller-owned prepared schedule.
 
 User-driven parallel batches
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -461,23 +465,23 @@ the optimizer loop:
 
     with ThreadPoolExecutor(4) as executor:
         scheduler = ExecutorTreeScheduler(executor=executor)
-        fitter = Fitter(
-            objective,
-            initial_params={"x": 0.0},
-            scheduler=scheduler,
-        )
-        fitter.init(num_workers=4)
+        with scheduler.prepare(objective) as schedule:
+            fitter = Fitter(
+                schedule,
+                initial_params={"x": 0.0},
+            )
+            fitter.init(batch_size=4)
 
-        for _ in range(25):
-            candidates = [optimizer.ask() for _ in range(4)]
-            losses = fitter.evaluate(candidates)
+            for _ in range(25):
+                candidates = [optimizer.ask() for _ in range(4)]
+                losses = fitter.evaluate(candidates)
 
-            for params, loss in zip(candidates, losses):
-                optimizer.tell(params, loss)
+                for params, loss in zip(candidates, losses):
+                    optimizer.tell(params, loss)
 
-            fitter.step()
+                fitter.step()
 
-        opt_params = fitter.finish(optimizer.recommendation())
+            opt_params = fitter.finish(optimizer.recommendation())
 
 One :class:`~chemfit.fitter.FitterEvaluateContext` is maintained per candidate
 slot. The losses returned by ``fitter.evaluate`` have the same order as the
@@ -488,27 +492,27 @@ prepared schedule does not shut it down.
 Nevergrad batching and execution
 ----------------------------------
 
-``num_workers`` controls the maximum candidate batch size:
+``batch_size`` controls the maximum candidate batch size:
 
 .. code-block:: python
 
     opt_params = fitter.fit_nevergrad(
         budget=100,
-        num_workers=4,
+        batch_size=4,
     )
 
-The evaluation budget is exact. When it is not divisible by ``num_workers``,
+The evaluation budget is exact. When it is not divisible by ``batch_size``,
 the final batch contains only the remaining candidates. For example,
-``budget=10`` with four workers evaluates batches of four, four and two.
+``budget=10`` with ``batch_size=4`` evaluates batches of four, four and two.
 
 Each candidate slot uses its own
 :py:class:`~chemfit.fitter.FitterEvaluateContext`. Actual concurrency is
-determined by the scheduler configured on ``Fitter``. The default
-:class:`~chemfit.tree_schedule.SerialTreeScheduler` evaluates the batch
-serially.
+determined by the prepared schedule. Passing an objective directly creates an
+internally managed :class:`~chemfit.scheduling.SerialSchedule`, which
+evaluates the batch serially.
 
-For concurrent execution, configure an executor-backed scheduler on the
-fitter:
+For concurrent execution, prepare an executor-backed schedule and pass it to
+the fitter:
 
 .. code-block:: python
 
@@ -520,15 +524,15 @@ fitter:
     scheduler = ExecutorTreeScheduler(
         executor_factory=partial(ThreadPoolExecutor, max_workers=4),
     )
-    parallel_fitter = Fitter(
-        objective,
-        initial_params={"x": 0.0},
-        scheduler=scheduler,
-    )
-    opt_params = parallel_fitter.fit_nevergrad(
-        budget=100,
-        num_workers=4,
-    )
+    with scheduler.prepare(objective) as schedule:
+        parallel_fitter = Fitter(
+            schedule,
+            initial_params={"x": 0.0},
+        )
+        opt_params = parallel_fitter.fit_nevergrad(
+            budget=100,
+            batch_size=4,
+        )
 
 When using parallel execution, objective functions must avoid modifying
 shared state outside of the evaluation context.

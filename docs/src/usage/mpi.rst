@@ -55,9 +55,10 @@ part of returned result state.
 Fitting on rank zero
 --------------------
 
-Pass the scheduler to
+Pass the prepared schedule to
 :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` on rank zero.
-Nonzero ranks prepare the same objective and wait in ``worker_loop()``:
+Nonzero ranks use the same prepared-schedule lifecycle and wait in
+``worker_loop()``:
 
 .. code-block:: python
 
@@ -69,17 +70,16 @@ Nonzero ranks prepare the same objective and wait in ``worker_loop()``:
    initial = {"epsilon": 2.0, "sigma": 1.5}
    scheduler = MPITreeScheduler()
 
-   if scheduler.comm.Get_rank() == 0:
-       result = chemfit.fit_nevergrad(
-           objective,
-           initial=initial,
-           budget=100,
-           workers=4,
-           scheduler=scheduler,
-       )
-       print(result.best_parameters)
-   else:
-       with scheduler.prepare(objective) as schedule:
+   with scheduler.prepare(objective) as schedule:
+       if schedule.rank == 0:
+           result = chemfit.fit_nevergrad(
+               schedule,
+               initial=initial,
+               budget=100,
+               workers=4,
+           )
+           print(result.best_parameters)
+       else:
            schedule.worker_loop()
 
 Here ``workers`` controls how many candidates Nevergrad places in a batch;
@@ -91,7 +91,9 @@ Lower-level fitting control
 ---------------------------
 
 Use :class:`~chemfit.fitter.Fitter` directly when you need its manual session
-API or other lower-level controls. The MPI worker lifecycle remains the same:
+API or other lower-level controls. Every rank prepares the objective once;
+rank zero lends that prepared schedule to the fitter while the other ranks
+serve work from the same schedule lifecycle:
 
 .. code-block:: python
 
@@ -100,17 +102,20 @@ API or other lower-level controls. The MPI worker lifecycle remains the same:
 
    scheduler = MPITreeScheduler()
 
-   if scheduler.comm.Get_rank() == 0:
-       fitter = Fitter(
-           objective,
-           initial_params=initial,
-           scheduler=scheduler,
-       )
-       optimum = fitter.fit_nevergrad(budget=100, num_workers=4)
-       print(optimum)
-   else:
-       with scheduler.prepare(objective) as schedule:
+   with scheduler.prepare(objective) as schedule:
+       if schedule.rank == 0:
+           fitter = Fitter(
+               schedule,
+               initial_params=initial,
+           )
+           optimum = fitter.fit_nevergrad(budget=100, batch_size=4)
+           print(optimum)
+       else:
            schedule.worker_loop()
+
+The prepared schedule is caller-owned: ``Fitter.finish()`` and fitting errors
+do not close it. Leaving the outer context closes it, which makes rank zero
+send the worker shutdown requests.
 
 Communicators and debugging
 ---------------------------

@@ -1,11 +1,14 @@
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
+import pytest
 from ase import Atoms
 from ase.calculators.lj import LennardJones
 
 import chemfit
+from chemfit.tree_schedule import SerialTreeScheduler
 
 
 def test_fit_nevergrad_is_the_only_high_level_fit_export():
@@ -32,6 +35,78 @@ def test_fit_nevergrad_accepts_initial_observations():
     assert len(evaluated) == 1
     assert result.best_parameters == {"x": 0.0}
     assert result.best_loss == 0.0
+
+
+def test_fit_nevergrad_closes_its_prepared_schedule():
+    class RecordingScheduler:
+        schedule = None
+
+        def prepare(self, objective: Any):
+            self.schedule = SerialTreeScheduler().prepare(objective)
+            return self.schedule
+
+    scheduler = RecordingScheduler()
+
+    chemfit.fit_nevergrad(
+        lambda parameters: parameters["x"] ** 2,
+        initial={"x": 1.0},
+        budget=1,
+        optimizer="OnePlusOne",
+        scheduler=scheduler,
+    )
+
+    assert scheduler.schedule is not None
+    assert scheduler.schedule.closed
+
+
+def test_fit_nevergrad_borrows_a_supplied_prepared_schedule():
+    @chemfit.objective()
+    def objective(parameters: dict[str, float]) -> float:
+        return parameters["x"] ** 2
+
+    with SerialTreeScheduler().prepare(objective) as schedule:
+        result = chemfit.fit_nevergrad(
+            schedule,
+            initial={"x": 1.0},
+            budget=1,
+            optimizer="OnePlusOne",
+        )
+
+        assert result.best_loss == 1.0
+        assert not schedule.closed
+
+
+@pytest.mark.parametrize("option", ["scheduler", "executor", "execution_workers"])
+def test_fit_nevergrad_rejects_preparation_options_with_prepared_schedule(
+    option: str,
+):
+    @chemfit.objective()
+    def objective(parameters: dict[str, float]) -> float:
+        return parameters["x"] ** 2
+
+    kwargs: dict[str, Any]
+    with SerialTreeScheduler().prepare(objective) as schedule:
+        if option == "scheduler":
+            kwargs = {"scheduler": SerialTreeScheduler()}
+            executor_context = None
+        elif option == "execution_workers":
+            kwargs = {"execution_workers": 2}
+            executor_context = None
+        else:
+            executor_context = ThreadPoolExecutor(max_workers=1)
+            kwargs = {"executor": executor_context}
+
+        try:
+            with pytest.raises(ValueError, match=option):
+                chemfit.fit_nevergrad(
+                    schedule,
+                    initial={"x": 1.0},
+                    budget=1,
+                    **kwargs,
+                )
+        finally:
+            if executor_context is not None:
+                executor_context.shutdown()
 
 
 def test_public_api_workflow(tmp_path: Path):
