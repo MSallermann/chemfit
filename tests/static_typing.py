@@ -71,6 +71,7 @@ if TYPE_CHECKING:
         wrapped_objective,
         {"x": 1.0},
         budget=1,
+        batch_size=1,
         initial_observations=[({"x": 0.0}, 0.0)],
     )
     assert_type(fit_result, FitResult[Parameters])

@@ -42,7 +42,7 @@ Compute, attach a loss, combine, fit
        bounds={"epsilon": (0.1, 2.0), "sigma": (0.5, 2.0)},
        optimizer="NgIohTuned",
        budget=100,
-       workers=4,
+       batch_size=4,
    )
 
 ``chemfit.quantity()`` produces a
@@ -64,16 +64,17 @@ Internally, the helper configures a :class:`~chemfit.fitter.Fitter`; see
 Concurrency in ``fit_nevergrad``
 --------------------------------
 
-:py:func:`chemfit.api.fit_nevergrad` accepts two worker settings with different meanings:
+:py:func:`chemfit.api.fit_nevergrad` separates candidate batching from
+execution concurrency:
 
-- ``workers`` is the number of candidate slots exposed to Nevergrad and the
+- ``batch_size`` is the number of candidate slots exposed to Nevergrad and the
   maximum number of candidates in one ask/evaluate/tell batch.
 - ``execution_workers`` is the maximum number of objective leaf tasks run at
-  once by the built-in thread scheduler. It defaults to ``workers``.
+  once by the built-in thread scheduler. It defaults to ``batch_size``.
 
 Leaf tasks include independent terms within a combined objective, so the
 execution limit applies across both candidates and terms. For example,
-``workers=4, execution_workers=8`` asks Nevergrad for batches of up to four
+``batch_size=4, execution_workers=8`` asks Nevergrad for batches of up to four
 candidates while allowing up to eight leaf tasks from the batch to execute at
 once.
 

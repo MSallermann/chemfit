@@ -20,7 +20,7 @@ For an ordinary Nevergrad optimization, start with
         initial={"x": 0.0, "y": 0.0},
         bounds={"x": (-5.0, 5.0), "y": (-5.0, 5.0)},
         budget=100,
-        workers=4,
+        batch_size=4,
     )
 
     print(result.best_parameters)

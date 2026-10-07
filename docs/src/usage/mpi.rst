@@ -76,13 +76,13 @@ Nonzero ranks use the same prepared-schedule lifecycle and wait in
                schedule,
                initial=initial,
                budget=100,
-               workers=4,
+               batch_size=4,
            )
            print(result.best_parameters)
        else:
            schedule.worker_loop()
 
-Here ``workers`` controls how many candidates Nevergrad places in a batch;
+Here ``batch_size`` controls how many candidates Nevergrad places in a batch;
 it does not set the MPI world size. Start the desired number of ranks with
 ``mpiexec``. The prepared MPI schedule sends all leaf tasks from a candidate
 batch to the available nonzero ranks.

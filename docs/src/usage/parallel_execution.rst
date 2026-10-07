@@ -25,13 +25,13 @@ concurrency from execution concurrency:
        objective,
        initial={"x": 1.0},
        budget=100,
-       workers=4,
+       batch_size=4,
        execution_workers=8,
    )
 
-``workers`` is the maximum number of candidates Nevergrad asks for in one
+``batch_size`` is the maximum number of candidates Nevergrad asks for in one
 batch. ``execution_workers`` is the number of threads in the built-in
-executor-backed scheduler; it defaults to ``workers``. Those execution slots
+executor-backed scheduler; it defaults to ``batch_size``. Those execution slots
 are shared by all leaf terms from all candidates in the batch.
 
 To choose a different executor, pass a caller-owned executor and omit
@@ -46,12 +46,12 @@ To choose a different executor, pass a caller-owned executor and omit
            objective,
            initial={"x": 1.0},
            budget=100,
-           workers=4,
+           batch_size=4,
            executor=executor,
        )
 
-The executor controls leaf-task concurrency; ``workers`` still controls only
-Nevergrad's candidate batch size. Pass ``scheduler=`` instead for complete
+The executor controls leaf-task concurrency; ``batch_size`` still controls
+only Nevergrad's candidate batch size. Pass ``scheduler=`` instead for complete
 backend control. ``executor`` and ``scheduler`` are mutually exclusive.
 
 Evaluating a parameter batch

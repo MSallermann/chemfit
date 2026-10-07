@@ -159,7 +159,7 @@ Optimize the combined objective through the same top-level interface:
         initial={"x": 1.0, "y": 2.0},
         bounds={"x": (-2.0, 2.0), "y": (-2.0, 2.0)},
         budget=100,
-        workers=4,
+        batch_size=4,
     )
 
     print(result.best_parameters)

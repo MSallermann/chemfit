@@ -535,7 +535,7 @@ def _fit_nevergrad_with_fitter(
     initial: ParamsT,
     *,
     budget: int,
-    workers: int,
+    batch_size: int,
     bounds: Mapping[str, Any] | None,
     optimizer: str,
     callbacks: Sequence[tuple[CallbackT, int]] | None,
@@ -557,7 +557,7 @@ def _fit_nevergrad_with_fitter(
     recommendation = fitter.fit_nevergrad(
         budget=budget,
         optimizer_str=optimizer,
-        batch_size=workers,
+        batch_size=batch_size,
         parametrization=parametrization,
         initial_observations=initial_observations,
     )
@@ -580,7 +580,7 @@ def fit_nevergrad(
     initial: ParamsT,
     *,
     budget: int,
-    workers: int = 1,
+    batch_size: int = 1,
     execution_workers: int | None = None,
     bounds: Mapping[str, Any] | None = None,
     optimizer: str = "NgIohTuned",
@@ -605,9 +605,10 @@ def fit_nevergrad(
         initial: Initial nested parameter mapping. Its structure is preserved
             in evaluations and returned parameter mappings.
         budget: Total number of live objective evaluations.
-        workers: Nevergrad candidate batch size and optimizer concurrency.
+        batch_size: Maximum number of candidates Nevergrad requests in one
+            optimizer step.
         execution_workers: Maximum number of objective leaf tasks executed
-            concurrently by the built-in scheduler. Defaults to ``workers``.
+            concurrently by the built-in scheduler. Defaults to ``batch_size``.
         bounds: Optional nested mapping from parameter leaves to
             ``(lower, upper)`` pairs.
         optimizer: Name registered in ``nevergrad.optimizers.registry``.
@@ -630,8 +631,9 @@ def fit_nevergrad(
         evaluation contexts recorded by ChemFit.
 
     Raises:
-        ValueError: If budgets or worker counts are invalid, execution backend
-            options conflict, or bounds or parametrization are incompatible.
+        ValueError: If the budget, batch size, or execution-worker count is
+            invalid, execution backend options conflict, or bounds or
+            parametrization are incompatible.
         KeyError: If ``optimizer`` is not registered with Nevergrad.
         TypeError: If a non-real leaf has no explicit Nevergrad
             parametrization.
@@ -647,7 +649,7 @@ def fit_nevergrad(
                     "sigma": (0.5, 1.5),
                 },
                 budget=200,
-                workers=4,
+                batch_size=4,
             )
 
             print(result.best_parameters)
@@ -660,7 +662,7 @@ def fit_nevergrad(
                 objective,
                 initial=initial,
                 budget=200,
-                workers=4,
+                batch_size=4,
                 execution_workers=8,
             )
 
@@ -677,12 +679,12 @@ def fit_nevergrad(
             )
 
     Notes:
-        ``workers`` controls how many candidates Nevergrad asks for in a batch;
-        it does not impose a leaf-execution limit on a custom backend.
-        ``execution_workers`` defaults to ``workers`` and applies only to the
-        built-in scheduler. Supplying ``executor`` or ``scheduler`` replaces
-        that backend, so ``execution_workers`` cannot be supplied alongside
-        either one.
+        ``batch_size`` controls how many candidates Nevergrad asks for in one
+        optimizer step; it does not impose a leaf-execution limit on a custom
+        backend. ``execution_workers`` defaults to ``batch_size`` and applies
+        only to the built-in scheduler. Supplying ``executor`` or ``scheduler``
+        replaces that backend, so ``execution_workers`` cannot be supplied
+        alongside either one.
 
         The returned ``recommendation`` is Nevergrad's final recommendation.
         ``best_parameters`` and ``best_loss`` instead identify the best
@@ -701,8 +703,8 @@ def fit_nevergrad(
         msg = "`budget` must be at least 1."
         raise ValueError(msg)
 
-    if workers < 1:
-        msg = "`workers` must be at least 1."
+    if batch_size < 1:
+        msg = "`batch_size` must be at least 1."
         raise ValueError(msg)
 
     if execution_workers is not None and execution_workers < 1:
@@ -733,7 +735,7 @@ def fit_nevergrad(
             objective,
             initial,
             budget=budget,
-            workers=workers,
+            batch_size=batch_size,
             bounds=bounds,
             optimizer=optimizer,
             callbacks=callbacks,
@@ -756,14 +758,14 @@ def fit_nevergrad(
 
     if scheduler is None:
         effective_execution_workers = (
-            workers if execution_workers is None else execution_workers
+            batch_size if execution_workers is None else execution_workers
         )
         if effective_execution_workers == 1:
             return _fit_nevergrad_with_fitter(
                 objective,
                 initial,
                 budget=budget,
-                workers=workers,
+                batch_size=batch_size,
                 bounds=bounds,
                 optimizer=optimizer,
                 callbacks=callbacks,
@@ -783,7 +785,7 @@ def fit_nevergrad(
             schedule,
             initial,
             budget=budget,
-            workers=workers,
+            batch_size=batch_size,
             bounds=bounds,
             optimizer=optimizer,
             callbacks=callbacks,

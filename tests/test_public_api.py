@@ -8,6 +8,7 @@ from ase import Atoms
 from ase.calculators.lj import LennardJones
 
 import chemfit
+import chemfit.api as api_module
 from chemfit.tree_schedule import SerialTreeScheduler
 
 
@@ -35,6 +36,48 @@ def test_fit_nevergrad_accepts_initial_observations():
     assert len(evaluated) == 1
     assert result.best_parameters == {"x": 0.0}
     assert result.best_loss == 0.0
+
+
+@pytest.mark.parametrize(
+    ("execution_workers", "expected_workers"),
+    [(None, 4), (8, 8)],
+)
+def test_fit_nevergrad_keeps_batch_and_execution_sizes_independent(
+    monkeypatch: pytest.MonkeyPatch,
+    execution_workers: int | None,
+    expected_workers: int,
+):
+    created_executor_sizes: list[int] = []
+    thread_pool_executor = ThreadPoolExecutor
+
+    def recording_executor(*, max_workers: int) -> ThreadPoolExecutor:
+        created_executor_sizes.append(max_workers)
+        return thread_pool_executor(max_workers=max_workers)
+
+    monkeypatch.setattr(api_module, "ThreadPoolExecutor", recording_executor)
+
+    result = chemfit.fit_nevergrad(
+        lambda parameters: parameters["x"] ** 2,
+        initial={"x": 1.0},
+        budget=4,
+        batch_size=4,
+        execution_workers=execution_workers,
+        optimizer="OnePlusOne",
+    )
+
+    assert created_executor_sizes == [expected_workers]
+    assert len(result.contexts) == 4
+    assert [ctx.n_evals for ctx in result.contexts] == [1, 1, 1, 1]
+
+
+def test_fit_nevergrad_rejects_workers_compatibility_alias():
+    with pytest.raises(TypeError, match="workers"):
+        chemfit.fit_nevergrad(
+            lambda parameters: parameters["x"] ** 2,
+            initial={"x": 1.0},
+            budget=1,
+            workers=1,  # type: ignore[call-arg]
+        )
 
 
 def test_fit_nevergrad_closes_its_prepared_schedule():
@@ -107,6 +150,41 @@ def test_fit_nevergrad_rejects_preparation_options_with_prepared_schedule(
         finally:
             if executor_context is not None:
                 executor_context.shutdown()
+
+
+def test_fit_nevergrad_rejects_execution_backend_conflicts():
+    def objective(parameters: dict[str, float]) -> float:
+        return parameters["x"] ** 2
+
+    scheduler = SerialTreeScheduler()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(ValueError, match="only one"):
+            chemfit.fit_nevergrad(
+                objective,
+                initial={"x": 1.0},
+                budget=1,
+                executor=executor,
+                scheduler=scheduler,
+            )
+
+        with pytest.raises(ValueError, match="execution_workers"):
+            chemfit.fit_nevergrad(
+                objective,
+                initial={"x": 1.0},
+                budget=1,
+                executor=executor,
+                execution_workers=2,
+            )
+
+    with pytest.raises(ValueError, match="execution_workers"):
+        chemfit.fit_nevergrad(
+            objective,
+            initial={"x": 1.0},
+            budget=1,
+            scheduler=scheduler,
+            execution_workers=2,
+        )
 
 
 def test_public_api_workflow(tmp_path: Path):
