@@ -71,9 +71,54 @@ turns its energy into a fitting loss, and `chemfit.combine()` joins the terms.
 with `best_parameters`, `best_loss`, the optimizer recommendation, and the
 evaluation contexts.
 
+## Concurrency
+
 Objective terms can also run across threads, processes, or MPI, and ChemFit
 supports external programs, custom schedulers, SciPy, hooks, and lower-level
 control; see the full documentation below.
+
+For example, we can run the same optimization with four Python threads:
+
+```python
+result = chemfit.fit_nevergrad(
+    objective,
+    initial={"epsilon": 0.7},
+    bounds={"epsilon": (0.1, 2.0)},
+    budget=100,
+    batch_size=2,
+    execution_workers=4
+)
+```
+
+**Explanation**: With `batch_size=2`, we evaluate two parameter trials concurrently and `execution_workers=4` distributes their parallel leaf work (two leaves per trial) across up to four Python threads.
+By passing an explicit `executor` we can use a different `concurrent.futures`-compatible executor, such as `loky.ProcessPoolExecutor`.
+
+With a little more boilerplate, we can run the optimization with MPI instead. Simply make sure `mpi4py` is installed (e.g., with `pip install chemfit[mpi]`) and adjust the script like so:
+
+```python
+from chemfit.mpi_scheduler import MPITreeScheduler
+
+# ...
+
+scheduler = MPITreeScheduler()
+with scheduler.prepare(objective) as schedule:
+    if schedule.rank == 0:
+        result = chemfit.fit_nevergrad(
+            schedule,
+            initial={"epsilon": 0.7},
+            bounds={"epsilon": (0.1, 2.0)},
+            budget=100,
+            batch_size=2
+        )
+    else:
+        schedule.worker_loop()
+```
+
+Then simply start the script with an MPI runner (e.g., `srun`, `mpirun` or `mpiexec` depending on your environment).
+
+```bash
+mpiexec -n 4 python fit.py
+```
 
 # Documentation
 
