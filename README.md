@@ -71,11 +71,9 @@ turns its energy into a fitting loss, and `chemfit.combine()` joins the terms.
 with `best_parameters`, `best_loss`, the optimizer recommendation, and the
 evaluation contexts.
 
-## Concurrency
+Objective terms can also run across threads, processes, or MPI, and ChemFit supports external programs, custom schedulers, SciPy, hooks, and lower-level control; see the full [**documentation**](https://chemfit.readthedocs.io) for details.
 
-Objective terms can also run across threads, processes, or MPI, and ChemFit
-supports external programs, custom schedulers, SciPy, hooks, and lower-level
-control; see the full documentation below.
+## Concurrency
 
 For example, we can run the same optimization with four Python threads:
 
@@ -123,6 +121,7 @@ mpiexec -n 4 python fit.py
 # Documentation
 
 Please check the **documentation** for details [here](https://chemfit.readthedocs.io).
+
 
 # Citation
 
