@@ -203,7 +203,7 @@ ChemFit retains information about individual evaluations through evaluation cont
 
 [Evaluation hooks](https://chemfit.readthedocs.io/en/latest/src/usage/objective_hooks.html) can add instrumentation such as timing, unique evaluation IDs, logging, or application-specific diagnostics without changing the simulation or loss implementation.
 
-## Limitations and alternatives
+# Limitations and alternatives
 
 ChemFit is designed for simulation-based parameter fitting, particularly when an objective combines multiple calculations, observables, or simulation methods. It provides reusable building blocks for quantities, losses, and nested objectives, while keeping their execution and optimization separate. The same fitting problem can run locally or across an HPC cluster without requiring a workflow-management system.
 
