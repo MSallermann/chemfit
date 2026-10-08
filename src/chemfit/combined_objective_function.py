@@ -158,7 +158,9 @@ class CombinedObjectiveFunction(
             weights: Optional non-negative weight for each objective term. If
                 ``None``, all weights default to ``1.0``.
             child_context_configurator: Optional callable used to configure
-                each spawned child context before term evaluation.
+                each spawned child context before term evaluation. It may
+                inspect the parent context but must not mutate it or any
+                sibling context.
             reduction: Callable that reduces the list of weighted term values
                 to a scalar. Defaults to :func:`sum_reducer`. Mutually exclusive
                 with ``aggregator``.
@@ -375,17 +377,7 @@ class CombinedObjectiveFunction(
             )
         except Exception as exception:
             self._end_evaluation(ctx, exception)
-
-            # A nested failed setup is later serialized by its parent. Match
-            # direct serial evaluation by materializing any contexts that the
-            # failed configurator managed to create. Root failures deliberately
-            # leave their partial child batch unmaterialized.
-            if getattr(ctx.temp, "_is_composite_child", False):
-                ctx.collect_child_meta_data(recursive=True)
             raise
-
-        for child_ctx in child_contexts:
-            child_ctx.temp._is_composite_child = True  # noqa: SLF001
 
         return child_contexts
 
@@ -398,20 +390,17 @@ class CombinedObjectiveFunction(
 
         try:
             terms: list[float | None] = []
-            try:
-                for idx, (outcome, child_ctx) in enumerate(
-                    zip(child_outcomes, ctx._children, strict=True)  # noqa: SLF001
-                ):
-                    if isinstance(outcome, Exception):
-                        term = self.exception_handler(outcome, child_ctx, idx)
-                    else:
-                        try:
-                            term = outcome * self._weights[idx]
-                        except Exception as exception:
-                            term = self.exception_handler(exception, child_ctx, idx)
-                    terms.append(term)
-            finally:
-                ctx.collect_child_meta_data(recursive=False)
+            for idx, (outcome, child_ctx) in enumerate(
+                zip(child_outcomes, ctx.children, strict=True)
+            ):
+                if isinstance(outcome, Exception):
+                    term = self.exception_handler(outcome, child_ctx, idx)
+                else:
+                    try:
+                        term = outcome * self._weights[idx]
+                    except Exception as exception:
+                        term = self.exception_handler(exception, child_ctx, idx)
+                terms.append(term)
 
             ctx.loss = self._reduce_terms(terms, ctx)
         except BaseException as exception:
@@ -447,9 +436,9 @@ class CombinedObjectiveFunction(
 
     def apply_reduction(self, terms: Sequence[float], ctx: EvaluateContext) -> float:
         child_quantities: list[dict[str, Any] | None] = []
-        for idx, child in enumerate(ctx.meta["children"]):
+        for idx, child in enumerate(ctx.children):
             if idx not in ctx.meta["skipped_indices"]:
-                child_quantities.append(child["quantities"])
+                child_quantities.append(child.quantities)
         return self.reduction(list(terms), child_quantities, ctx)
 
     def _reduce_terms(
@@ -483,13 +472,10 @@ class CombinedObjectiveFunction(
         parameters: ParametersT,
         ctx: EvaluateContext,
     ) -> float:
-        with (
-            ctx.child_contexts(
-                n_children=self.n_terms(),
-                configurator=self.child_context_configurator,
-                recursive=False,  # <- in general nested COBs should manage child ctx retrieval
-            ) as child_ctxs
-        ):
+        with ctx.child_contexts(
+            n_children=self.n_terms(),
+            configurator=self.child_context_configurator,
+        ) as child_ctxs:
             terms = [
                 self.evaluate_weighted_term(
                     parameters,

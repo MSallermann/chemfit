@@ -265,7 +265,7 @@ def test():
     ctx = EvaluateContext()
     assert np.isclose(my_ob3(params, ctx), excepted_res + params["b"])
 
-    meta_data = ctx.to_meta_data()
+    meta_data = ctx.to_summary()
 
     meta_data_expected = {
         "quantities": {"res": 1.0},
@@ -295,7 +295,6 @@ def test_context_stuff():
 
     # have the children spawn children
     [c.spawn_children(i) for i, c in enumerate(children)]
-    ctx.collect_child_meta_data()
 
     # make sure all the copies of the dict are different entitites
     assert children[0].config.some_dict == children[1].config.some_dict
@@ -306,11 +305,17 @@ def test_context_stuff():
         children[0].config.some_dict != children[1].config.some_dict
     )  # so these must be different now
 
-    meta_data = ctx.to_meta_data()
-    assert len(meta_data["meta"]["children"]) == 3
+    assert ctx.children == tuple(children)
+    assert len(ctx.children) == 3
+    summary = ctx.to_summary(recursive=True)
+    assert len(summary["children"]) == 3
 
-    for i, child in enumerate(meta_data["meta"]["children"]):
+    for i, child in enumerate(ctx.children):
+        assert child.parents == (ctx,)
         if i == 0:  # the first child has no children
-            assert "children" not in child["meta"]
+            assert child.children == ()
+            assert summary["children"][i]["children"] == []
         else:
-            assert len(child["meta"]["children"]) == i
+            assert len(child.children) == i
+            assert len(summary["children"][i]["children"]) == i
+            assert all(grandchild.parents == (child,) for grandchild in child.children)

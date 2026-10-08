@@ -268,16 +268,14 @@ def standard_asserts(
     assert ctx.loss is not None
     assert np.isclose(ctx.loss, res)
 
-    assert "children" in ctx.meta
-    assert len(ctx.meta["children"]) == n_terms
+    assert "children" not in ctx.meta
+    assert len(ctx.children) == n_terms
 
-    child_losses = [child["loss"] for child in ctx.meta["children"]]
+    child_losses = [child.loss for child in ctx.children]
     assert np.allclose(child_losses, make_expected_child_losses(params, n_terms))
     assert np.isclose(res, reduction(make_expected_terms(params, n_terms)))
 
-    configured_numbers = [
-        child["meta"]["configurator_number"] for child in ctx.meta["children"]
-    ]
+    configured_numbers = [child.meta["configurator_number"] for child in ctx.children]
     assert all(
         np.isclose(configured_numbers, make_expected_configurator_numbers(n_terms))
     )
@@ -552,12 +550,12 @@ def test_executor_scheduler_matches_serial_result(executor: Executor):
     assert ctx_serial.loss is not None
     assert np.isclose(ctx_exec.loss, ctx_serial.loss)
 
-    assert "children" in ctx_serial.meta
-    assert "children" in ctx_exec.meta
-    assert len(ctx_serial.meta["children"]) == len(ctx_exec.meta["children"])
+    assert "children" not in ctx_serial.meta
+    assert "children" not in ctx_exec.meta
+    assert len(ctx_serial.children) == len(ctx_exec.children)
 
-    serial_child_losses = [child["loss"] for child in ctx_serial.meta["children"]]
-    exec_child_losses = [child["loss"] for child in ctx_exec.meta["children"]]
+    serial_child_losses = [child.loss for child in ctx_serial.children]
+    exec_child_losses = [child.loss for child in ctx_exec.children]
     assert np.allclose(serial_child_losses, exec_child_losses)
 
 
@@ -594,7 +592,7 @@ def test_executor_scheduler_evaluates_batch(executor: Executor):
     assert results == results_expected
 
     for res, ctx, params in zip(results, ctxs, params_list, strict=False):
-        child_losses = [child["loss"] for child in ctx.meta["children"]]
+        child_losses = [child.loss for child in ctx.children]
         assert np.allclose(child_losses, make_expected_child_losses(params))
 
         assert isinstance(cob.reduction, combined_objective_function.WrappedReducer)

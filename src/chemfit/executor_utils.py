@@ -23,7 +23,7 @@ class AttachContextAsReturnValue(Generic[T_co]):
     mutations to an ``EvaluateContext`` made inside the worker are not
     reflected in the caller's original context object. This wrapper
     makes those side effects explicit by returning the function result
-    together with ``ctx.__getstate__()``.
+    together with ``ctx.to_result_state()``.
 
     The wrapped callable is expected to receive an ``EvaluateContext``
     as its final positional argument.

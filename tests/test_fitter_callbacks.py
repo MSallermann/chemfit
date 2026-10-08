@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 from chemfit.fitter import FitterEvaluateContext
-from chemfit.fitter_callbacks import CheckpointBestParameters
+from chemfit.fitter_callbacks import CheckpointBestParameters, SaveMetaData
 
 
 def make_context(loss: float, x: float) -> FitterEvaluateContext:
@@ -10,6 +10,17 @@ def make_context(loss: float, x: float) -> FitterEvaluateContext:
     ctx.opt_loss = loss
     ctx.opt_params = {"x": x}
     return ctx
+
+
+def test_save_metadata_includes_child_summaries(tmp_path: Path):
+    ctx = FitterEvaluateContext()
+    child = ctx.spawn_children(1)[0]
+    child.meta["marker"] = "child"
+
+    SaveMetaData(tmp_path)(0, [ctx])
+
+    saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
+    assert saved["children"][0]["meta"] == {"marker": "child"}
 
 
 def test_checkpoint_dont_overwrite_uses_next_available_path(tmp_path: Path):

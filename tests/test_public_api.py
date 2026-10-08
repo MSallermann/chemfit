@@ -258,8 +258,9 @@ def test_public_api_workflow(tmp_path: Path):
         )
 
     assert [ctx.loss for ctx in contexts] == [6.0, 0.0]
-    assert contexts[0].meta["children"][1]["quantities"] == {"value": 1.0}
-    assert "energy" in contexts[0].meta["children"][2]["quantities"]
+    assert contexts[0].children[1].quantities == {"value": 1.0}
+    assert contexts[0].children[2].quantities is not None
+    assert "energy" in contexts[0].children[2].quantities
     assert contexts[0].meta["quantity_terms"] == 3
 
     result = chemfit.fit_nevergrad(

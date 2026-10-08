@@ -174,12 +174,12 @@ combined objective and its nested terms, register after building the call tree:
 
     ctx = EvaluateContext()
     combined({"x": 2.0}, ctx)
-    child_timing = ctx.meta["children"][0]["meta"]["timing"]
+    child_timing = ctx.children[0].meta["timing"]
 
-Each term runs with its own child context. Child summaries are collected under
-``ctx.meta["children"]`` and contain ``parameters``, ``quantities``, ``loss``,
-and ``meta``, with further descendants under each child's
-``meta["children"]``.
+Each term runs with its own child context. Child contexts are available through
+``ctx.children`` and expose ``parameters``, ``quantities``, ``loss``, and
+``meta`` directly. Further descendants are available through each child's
+``children`` property.
 Parent timing includes nested work; child timing measures the individual term.
 
 Recursive registration follows distinct child evaluation scopes through

@@ -21,6 +21,12 @@ SchedulerFactory = Callable[[], Scheduler]
 Outcome = float | tuple[str, str]
 
 
+def context_state(ctx: EvaluateContext) -> ContextState:
+    """Snapshot one context and its descendants for backend comparisons."""
+
+    return ctx.to_summary(recursive=True)
+
+
 class RecoverableLeafError(RuntimeError):
     """Failure converted to a replacement term by a parent objective."""
 
@@ -379,7 +385,7 @@ def evaluate_serial_reference() -> tuple[list[Outcome], list[ContextState]]:
         for parameters, ctx in zip(ALL_PARAMETERS, contexts, strict=True):
             outcomes.append(evaluate_one(schedule, parameters, ctx))
 
-    return outcomes, [ctx.to_meta_data() for ctx in contexts]
+    return outcomes, [context_state(ctx) for ctx in contexts]
 
 
 def evaluate_batch(scheduler: Scheduler) -> tuple[list[Outcome], list[ContextState]]:
@@ -407,14 +413,14 @@ def evaluate_batch(scheduler: Scheduler) -> tuple[list[Outcome], list[ContextSta
         else:
             outcomes.append(result.value)
 
-    return outcomes, [ctx.to_meta_data() for ctx in contexts]
+    return outcomes, [context_state(ctx) for ctx in contexts]
 
 
 def child_at(state: ContextState, *path: int) -> ContextState:
     """Return a descendant's serialized context state."""
 
     for child_idx in path:
-        state = state["meta"]["children"][child_idx]
+        state = state["children"][child_idx]
     return state
 
 
@@ -433,7 +439,7 @@ def assert_lifecycle_tree(
         assert state["parameters"] is None
         assert state["loss"] is None
         assert state["quantities"] is None
-        assert "children" not in state["meta"]
+        assert state["children"] == []
         return 1
 
     assert state["parameters"] == parameters
@@ -446,7 +452,7 @@ def assert_lifecycle_tree(
     if depth > 0:
         assert state["meta"]["configured_child"]["depth"] == depth
 
-    children = state["meta"].get("children", [])
+    children = state["children"]
     return 1 + sum(
         assert_lifecycle_tree(child, parameters, depth=depth + 1) for child in children
     )
@@ -554,7 +560,7 @@ def assert_setup_failure_semantics(
     assert failed_level_three["meta"]["lifecycle"]["post_exception"] == (
         "SetupPhaseError"
     )
-    assert "children" not in failed_level_three["meta"]
+    assert failed_level_three["children"] == []
     assert failed_level_three["meta"]["handled_exception"] == {
         "handler": "level_two",
         "action": "omit",
@@ -570,7 +576,7 @@ def assert_setup_failure_semantics(
     assert failed_level_two["meta"]["lifecycle"]["post_exception"] == (
         "ConfigurationSetupError"
     )
-    inactive_children = failed_level_two["meta"]["children"]
+    inactive_children = failed_level_two["children"]
     assert len(inactive_children) == 3
     assert all("lifecycle" not in child["meta"] for child in inactive_children)
     assert failed_level_two["meta"]["handled_exception"]["handler"] == "level_one"
@@ -585,7 +591,7 @@ def assert_setup_failure_semantics(
     assert assert_lifecycle_tree(root_setup, PHASE_FAILURE_BATCH[2]) == 1
     assert root_setup["loss"] is None
     assert root_setup["meta"]["lifecycle"]["post_exception"] == "SetupPhaseError"
-    assert "children" not in root_setup["meta"]
+    assert root_setup["children"] == []
 
 
 def assert_evaluation_failure_semantics(
@@ -713,7 +719,7 @@ def test_mpi_composed_semantics_match_serial_reference() -> None:
                 else:
                     values.append(result.value)
 
-            states = [ctx.to_meta_data() for ctx in contexts]
+            states = [context_state(ctx) for ctx in contexts]
             assert_composed_semantics(values, states)
             assert_phase_failure_semantics(values, states)
             assert values == expected_values
