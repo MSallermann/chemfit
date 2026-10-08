@@ -91,7 +91,11 @@ class SaveMetaData:
                     "w"
                 ) as f:
                     json.dump(
-                        ctx.to_meta_data(), f, indent=4, skipkeys=True, cls=NumpyEncoder
+                        ctx.to_summary(recursive=True),
+                        f,
+                        indent=4,
+                        skipkeys=True,
+                        cls=NumpyEncoder,
                     )
         except Exception:
             logger.exception("Exception when trying to save meta data!")

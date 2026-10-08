@@ -129,8 +129,8 @@ def test_recursive_timing_visits_nested_terms(recursive: bool):
     ctx = EvaluateContext()
     assert objective({"value": 3.0}, ctx) == 9.0
     assert ctx.meta["timing"]["elapsed_seconds"] >= 0
-    children = ctx.meta["children"]
-    for child in [*children, *children[0]["meta"]["children"]]:
-        assert ("timing" in child["meta"]) is recursive
+    children = ctx.children
+    for child in [*children, *children[0].children]:
+        assert ("timing" in child.meta) is recursive
     assert len(leaf.pre_eval_hooks) == int(recursive)
     assert len(leaf.post_eval_hooks) == int(recursive)

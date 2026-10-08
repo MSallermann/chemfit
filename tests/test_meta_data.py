@@ -73,7 +73,7 @@ EXPECTED = [
 def test_gather_meta_data():
     # Evaluate the objective function
     COB(INITIAL_PARAMS, ctx := EvaluateContext())
-    meta_data = ctx.to_meta_data()["meta"]["children"]
+    meta_data = [child.to_summary() for child in ctx.children]
 
     print(f"{meta_data = }")
     print(f"{EXPECTED = }")
@@ -153,7 +153,7 @@ def test_composed_static_metadata_precedence_in_child_context() -> None:
     ctx = EvaluateContext()
     CombinedObjectiveFunction([term])(INITIAL_PARAMS, ctx)
 
-    child_meta = ctx.meta["children"][0]["meta"]
+    child_meta = ctx.children[0].meta
     assert child_meta == {
         "dataset": "liquid",
         "observable": "density",
@@ -170,7 +170,7 @@ def test_gather_meta_data_mpi():
     with scheduler.prepare(COB) as mpi:
         if mpi.rank == 0:
             mpi.evaluate(INITIAL_PARAMS, ctx := EvaluateContext())
-            meta_data = ctx.to_meta_data()["meta"]["children"]
+            meta_data = [child.to_summary() for child in ctx.children]
 
             print(f"{meta_data = }")
             print(f"{EXPECTED = }")

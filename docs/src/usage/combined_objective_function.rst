@@ -117,10 +117,9 @@ preserving the same context and reduction semantics.
 Third, it filters skipped terms and applies the configured reduction. The final
 result is stored in ``ctx.loss``.
 
-If you pass an explicit context, the parent context ends up containing a record
-of the child evaluations in ``ctx.meta["children"]``. That makes combined
-objectives useful not just for optimization but also for inspection and
-debugging.
+If you pass an explicit context, the child evaluations are directly available
+through ``ctx.children``. That makes combined objectives useful not just for
+optimization but also for inspection and debugging.
 
 .. testcode::
 
@@ -142,14 +141,14 @@ debugging.
 
     print(loss) # 1.5
     print(ctx.loss) # 1.5
-    print(ctx.meta["children"]) # child meta data
+    print([child.loss for child in ctx.children]) # child losses
 
 .. testoutput::
     :hide:
 
     1.5
     1.5
-    [{'quantities': None, 'parameters': {'x': 2.0}, 'loss': 1.0, 'meta': {}}, {'quantities': None, 'parameters': {'x': 2.0}, 'loss': 1.0, 'meta': {}}]
+    [1.0, 1.0]
 
 Writing a custom reducer
 ------------------------
@@ -431,7 +430,7 @@ Writing your own exception handler is straightforward:
 
     ctx = chemfit.EvaluateContext()
     print(objective({"x" : 2.0}, ctx))
-    print(ctx.meta["children"][1]["meta"]["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
+    print(ctx.children[1].meta["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
 
 .. testoutput::
     :hide:
@@ -476,7 +475,7 @@ A small example:
     ctx = EvaluateContext()
     objective({"x": 2.0}, ctx)
 
-    print([child["meta"]["configurator_number"] for child in ctx.meta["children"]])
+    print([child.meta["configurator_number"] for child in ctx.children])
 
 .. testoutput::
 
@@ -486,8 +485,11 @@ This is mostly useful when the terms need slightly different evaluation setup.
 
 For example, the configurator can assign different metadata, attach child-local
 configuration in ``child_ctx.config``, or prepare term-specific execution state.
-The parent context is also available, so the configurator can derive the
-child-specific setup from information stored at the parent level.
+Configuration runs before the child's evaluation begins. ``parent_ctx`` is
+available strictly for read-only inspection, so the configurator can derive the
+child-specific setup from information stored at the parent level. It must never
+mutate the parent context (including ``config``, ``meta``, ``temp``, or other
+mutable state) or modify sibling contexts.
 
 Parallel execution
 ------------------

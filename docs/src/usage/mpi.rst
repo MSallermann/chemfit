@@ -41,8 +41,6 @@ schedule's worker loop:
        if schedule.rank == 0:
            ctx = chemfit.EvaluateContext()
            value = schedule({"epsilon": 2.0, "sigma": 1.5}, ctx)
-           print(value)
-           print(ctx.meta["children"])
        else:
            schedule.worker_loop()
 

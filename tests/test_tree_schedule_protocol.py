@@ -178,10 +178,10 @@ def test_base_expands_tasks_and_restores_completion_contexts() -> None:
     assert [task.parameters["x"] for task in tasks] == [2.0, 2.0, 4.0, 4.0]
 
     for ctx, value in zip(contexts, (2.0, 4.0), strict=True):
-        children = ctx.meta["children"]
-        assert [child["loss"] for child in children] == [value, value]
+        children = ctx.children
+        assert [child.loss for child in children] == [value, value]
         assert all(
-            child["meta"]["completed_by"] == "recording-backend" for child in children
+            child.meta["completed_by"] == "recording-backend" for child in children
         )
 
 

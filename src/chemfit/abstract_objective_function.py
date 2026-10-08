@@ -43,9 +43,12 @@ class ChildContextConfigurator(Protocol):
     Protocol for configuring child evaluation contexts.
 
     The configurator is called once for each child context immediately
-    after the parent context has spawned them. It may mutate the child
-    context or the parent context in place to configure child-specific
-    evaluation behavior or metadata.
+    after the parent context has spawned them and before the child's
+    evaluation begins. It may modify the newly created ``child_ctx``.
+
+    ``parent_ctx`` is provided strictly for read-only inspection. A
+    configurator must never mutate it, including its ``config``, ``meta``,
+    ``temp``, or other mutable state, and must not modify sibling contexts.
 
     The ``idx_child_ctx`` argument is the absolute index of the current
     child within the spawned batch.
@@ -106,36 +109,50 @@ class EvaluateContext:
                 hooks run. A post-hook may replace it; the final value is the
                 authoritative objective result returned to the caller.
             meta (dict[str, Any]): Free-form metadata dictionary.
-                Implementations may add diagnostic or structural
-                information here as needed.
-                Meta data from child contexts may be collected into the parent
+                Implementations may add diagnostic information here as needed.
             temp (SimpleNamespace): Scratch space for temporary values
                 during evaluation. Nothing stored here is part of the
-                public API. It is omitted from the `to_meta_data` function.
+                public API. It is omitted from the ``to_summary()`` method.
             config:
                 Child-local evaluation configuration for this context.
             shared:
                 Shared state or resources reused across related contexts.
+            children (tuple[EvaluateContext, ...]): Child contexts in creation
+                order. The tuple cannot be used to modify the topology.
+            parents (tuple[EvaluateContext, ...]): Parent contexts. Current
+                evaluation structures are trees, but this tuple permits future
+                contexts to have multiple parents.
 
         """
 
         self._set_defaults(config, shared)
 
-    def to_meta_data(self) -> dict[str, Any]:
+    def to_summary(self, recursive: bool = False) -> dict[str, Any]:
         """
         Return a dictionary summarizing the evaluation state.
 
+        Args:
+            recursive: If ``True``, include recursive summaries of child
+                contexts in creation order under ``"children"``. If ``False``,
+                summarize only this context.
+
         Returns:
             dict[str, Any]: A dictionary containing the fields
-            `quantities`, `parameters`, `loss`, and `meta`.
+            ``quantities``, ``parameters``, ``loss``, and ``meta``. Recursive
+            summaries additionally contain ``children``.
 
         """
-        return {
+        summary = {
             "quantities": self.quantities,
             "parameters": self.parameters,
             "loss": self.loss,
             "meta": self.meta,
         }
+        if recursive:
+            summary["children"] = [
+                child.to_summary(recursive=True) for child in self._children
+            ]
+        return summary
 
     def _set_defaults(
         self, config: SimpleNamespace | None, shared: SimpleNamespace | None
@@ -148,6 +165,36 @@ class EvaluateContext:
         self.shared = SimpleNamespace() if shared is None else shared
         self.meta: dict[str, Any] = {}
         self._children: list[EvaluateContext] = []
+        self._parents: list[EvaluateContext] = []
+
+    @property
+    def children(self) -> tuple[EvaluateContext, ...]:
+        """Return child contexts in creation order."""
+
+        return tuple(self._children)
+
+    @property
+    def parents(self) -> tuple[EvaluateContext, ...]:
+        """Return the contexts that are parents of this context."""
+
+        return tuple(self._parents)
+
+    def _replace_children(self, children: list[EvaluateContext]) -> None:
+        """Replace the child batch while maintaining reverse relationships."""
+
+        # remove `self` from the parent lists of its current children
+        for child in self._children:
+            child._parents = [  # noqa: SLF001
+                parent
+                for parent in child._parents  # noqa: SLF001
+                if parent is not self
+            ]
+
+        # add `self` to the new children's parents
+        self._children = children
+        for child in children:
+            if self not in child._parents:  # noqa: SLF001
+                child._parents.append(self)  # noqa: SLF001
 
     def spawn_children(
         self, n_children: int, configurator: ChildContextConfigurator | None = None
@@ -162,9 +209,8 @@ class EvaluateContext:
         child contexts per evaluation. Calling ``spawn_children()`` again on
         the same context replaces the previous child batch.
 
-        In many cases, ``child_contexts()`` is the preferred interface, since
-        it automatically collects child metadata when the nested evaluation
-        scope exits.
+        In many cases, ``child_contexts()`` is the preferred interface for a
+        scoped nested evaluation.
 
         Args:
             n_children: Number of child contexts to create.
@@ -177,10 +223,11 @@ class EvaluateContext:
 
         """
 
-        self._children = [
+        children = [
             EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
             for _ in range(n_children)
         ]
+        self._replace_children(children)
 
         if configurator is not None:
             for idx_child, child_ctx in enumerate(self._children):
@@ -193,65 +240,25 @@ class EvaluateContext:
 
         return self._children
 
-    def collect_child_meta_data(self, recursive: bool = True):
-        """
-        Collect metadata from child contexts.
-
-        The collected child metadata is stored in ``self.meta["children"]``.
-
-        Components that spawn child contexts are generally expected to collect
-        their child metadata before returning to their caller. The
-        ``child_contexts()`` context manager provides a convenient scoped way
-        to do this automatically.
-
-        Args:
-            recursive: If ``True``, metadata from all descendants is collected before
-                serializing the immediate children. This produces a fully
-                materialized metadata tree.
-                If ``False``, only the immediate children are serialized. This
-                can be useful when nested components manage their own metadata
-                collection and have already populated their ``meta`` fields.
-
-        Notes:
-            In most cases ``recursive=True`` is the safest choice, since it
-            ensures that nested child contexts are fully represented in the
-            resulting metadata structure.
-
-        """
-
-        if len(self._children) > 0:
-            if recursive:
-                [c.collect_child_meta_data(recursive) for c in self._children]
-            self.meta["children"] = [c.to_meta_data() for c in self._children]
-
     @contextlib.contextmanager
     def child_contexts(
         self,
         n_children: int,
         configurator: ChildContextConfigurator | None = None,
-        recursive: bool = True,
     ):
         """
-        Create a scoped child-context batch and collect its metadata on exit.
+        Create a scoped child-context batch.
 
         This context manager is a convenience wrapper around
-        ``spawn_children()`` and ``collect_child_meta_data()``. It is intended
-        for nested evaluations where the component, that is spawning child contexts,
-        is also responsible for collecting their metadata before returning.
+        ``spawn_children()`` for nested evaluations.
 
         Args:
             n_children: Number of child contexts to create.
             configurator:
                 Optional configurator applied to each spawned child context.
-            recursive:
-                Passed to ``collect_child_meta_data()`` when the scope exits.
 
         Yields:
             The list of spawned child contexts.
-
-        Notes:
-            Child metadata is collected automatically when the context manager
-            exits, even if an exception is raised inside the managed block.
 
         Example:
             .. code-block:: python
@@ -268,11 +275,8 @@ class EvaluateContext:
 
         """
 
-        try:
-            children = self.spawn_children(n_children, configurator=configurator)
-            yield children
-        finally:
-            self.collect_child_meta_data(recursive)
+        children = self.spawn_children(n_children, configurator=configurator)
+        yield children
 
     def __getstate__(self) -> dict[str, Any]:
         """
@@ -310,8 +314,9 @@ class EvaluateContext:
         Returns:
             Dictionary containing the evaluation results recorded in this
             context. This state is intended for child/worker-to-parent
-            synchronization and does not include shared resources or child
-            context objects.
+            synchronization. Descendant result states are represented without
+            serializing context objects or reverse parent references. Shared
+            resources, configuration, and temporary state are omitted.
 
         """
 
@@ -320,6 +325,7 @@ class EvaluateContext:
             "loss": self.loss,
             "quantities": self.quantities,
             "meta": self.meta,
+            "children": [child.to_result_state() for child in self._children],
         }
 
     def apply_result_state(self, state: dict[str, Any]):
@@ -332,7 +338,7 @@ class EvaluateContext:
 
         Side Effects:
             Updates ``parameters``, ``loss``, ``quantities``, and ``meta``
-            on this context.
+            on this context, and restores result state on its descendants.
 
         """
 
@@ -340,6 +346,20 @@ class EvaluateContext:
         self.loss = state["loss"]
         self.quantities = state["quantities"]
         self.meta = state["meta"]
+
+        child_states = state.get("children", [])
+        if len(self._children) != len(child_states):
+            self._replace_children(
+                [
+                    EvaluateContext(
+                        config=copy.deepcopy(self.config),
+                        shared=self.shared,
+                    )
+                    for _ in child_states
+                ]
+            )
+        for child, child_state in zip(self._children, child_states, strict=True):
+            child.apply_result_state(child_state)
 
 
 # Variance here follows the direction in which values cross the public API:

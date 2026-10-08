@@ -399,7 +399,7 @@ Here is a simple demonstration of the idea: We have an outer computer, which acc
 
 The benefit of this approach is two-fold
 
-1. We get full meta-data provenance. All of the child meta data can be found in ``ctx.meta["children"]``.
+1. We get full provenance. Child contexts and their results can be inspected through ``ctx.children``.
 2. Since the inner computers have their own context they can also be evaluated in parallel ... although the example above does not make use of this.
 
 .. note::
@@ -426,18 +426,24 @@ ctx.meta
 Each child context receives its own independent ``meta`` dictionary.
 
 During evaluation, child computers write to their own ``ctx.meta``.
-After the ``child_contexts`` block exits, the parent context collects
-all child meta data under:
+The parent provides direct, read-only navigation to the child contexts in
+creation order:
 
 .. code-block:: python
 
-    ctx.meta["children"]
+    ctx.children
+    ctx.children[0].meta
+    ctx.children[0].quantities
+    ctx.children[0].loss
 
-This is a list containing the meta data of each child evaluation, in
-order.
+Each child exposes its parent through ``child_ctx.parents``. These properties
+return tuples, so topology cannot be changed through the public navigation API.
+Metadata remains local to the context that owns it.
 
-This ensures full provenance: all information produced by child
-computations is preserved and accessible from the parent.
+For a dictionary summary, use ``ctx.to_summary()``. By default it describes
+only that context; ``ctx.to_summary(recursive=True)`` additionally includes a
+``"children"`` list of recursive child summaries. Creating a summary does not
+modify the contexts or store child data in ``ctx.meta``.
 
 --------------------
 ctx.config
@@ -490,8 +496,11 @@ This can be useful when:
 - assigning identifiers or indices to child evaluations
 - modifying configuration for individual children
 
-The configurator is called once per child context and can modify the
-child context before it is used.
+The configurator is called once per child context and can modify the newly
+created child context before its evaluation begins. ``parent_ctx`` is provided
+strictly for read-only inspection: the configurator must never mutate the
+parent context, including its ``config``, ``meta``, ``temp``, or other mutable
+state. It must not modify sibling contexts.
 
 Conceptually, it allows you to control:
 

@@ -92,15 +92,15 @@ def assert_successful_parallel_evaluation(
 
     # These fields were written by hooks around the individual objective terms
     # and had to cross the worker-process boundary in their child contexts.
-    children = ctx.meta["children"]
+    children = ctx.children
     assert len(children) == N_TERMS
     for child, expected_loss in zip(children, expected_losses, strict=True):
-        assert child["parameters"] == PARAMETERS
-        assert child["loss"] == expected_loss
-        assert_hook_metadata(child["meta"], expected_loss)
+        assert child.parameters == PARAMETERS
+        assert child.loss == expected_loss
+        assert_hook_metadata(child.meta, expected_loss)
 
     # Process IDs confirm that the terms were genuinely evaluated by workers.
-    worker_pids = {child["meta"]["evaluation_pid"] for child in children}
+    worker_pids = {child.meta["evaluation_pid"] for child in children}
     if expected_worker_count is not None:
         assert len(worker_pids) == expected_worker_count
 
@@ -123,7 +123,7 @@ def test_objective_hooks_with_loky_process_pool():
         result = schedule.evaluate(PARAMETERS, ctx)
 
     assert_successful_parallel_evaluation(result, ctx, expected_worker_count=None)
-    child_pids = {child["meta"]["evaluation_pid"] for child in ctx.meta["children"]}
+    child_pids = {child.meta["evaluation_pid"] for child in ctx.children}
     assert os.getpid() not in child_pids
 
 
