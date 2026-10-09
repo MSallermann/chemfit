@@ -166,6 +166,7 @@ class EvaluateContext:
         self.meta: dict[str, Any] = {}
         self._children: list[EvaluateContext] = []
         self._parents: list[EvaluateContext] = []
+        self._root = self
 
     @property
     def children(self) -> tuple[EvaluateContext, ...]:
@@ -194,12 +195,27 @@ class EvaluateContext:
         # then clear the list
         self._children.clear()
 
+    def _set_root_recursive(self, root: EvaluateContext) -> None:
+        pending: list[EvaluateContext] = [self]
+        visited: set[int] = set()
+
+        while pending:
+            ctx = pending.pop()
+
+            if id(ctx) in visited:
+                continue
+
+            visited.add(id(ctx))
+            ctx._root = root  # noqa: SLF001
+            pending.extend(ctx._children)  # noqa: SLF001
+
     def _add_dependency(self, child: EvaluateContext) -> None:
         if any(existing is child for existing in self._children):
             return
 
         self._children.append(child)
         child._parents.append(self)
+        child._set_root_recursive(self._root)
 
     def spawn_children(
         self, n_children: int, configurator: ChildContextConfigurator | None = None
