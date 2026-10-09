@@ -8,7 +8,7 @@ from typing import Any, Generic, Protocol, TypeVar, cast
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import (
-    ChildContextConfigurator,
+    NO_OUTPUT,
     EvaluateContext,
     ObjectiveFunctor,
 )
@@ -135,7 +135,6 @@ class CombinedObjectiveFunction(
         self,
         objective_functions: Sequence[ObjectiveLike[ParametersT]],
         weights: Sequence[float] | None = None,
-        child_context_configurator: ChildContextConfigurator | None = None,
         reduction: Reducer | None = None,
         exception_handler: ExceptionHandler = raising_exception_handler,
         aggregator: Aggregator | None = None,
@@ -157,10 +156,6 @@ class CombinedObjectiveFunction(
                 callables.
             weights: Optional non-negative weight for each objective term. If
                 ``None``, all weights default to ``1.0``.
-            child_context_configurator: Optional callable used to configure
-                each spawned child context before term evaluation. It may
-                inspect the parent context but must not mutate it or any
-                sibling context.
             reduction: Callable that reduces the list of weighted term values
                 to a scalar. Defaults to :func:`sum_reducer`. Mutually exclusive
                 with ``aggregator``.
@@ -187,8 +182,6 @@ class CombinedObjectiveFunction(
         self._objective_functions = tuple(
             transform_generic_callables(objective_functions)
         )
-
-        self.child_context_configurator = child_context_configurator
 
         if reduction is not None and aggregator is not None:
             msg = "Specify either `reduction` or `aggregator`, not both."
@@ -373,10 +366,9 @@ class CombinedObjectiveFunction(
             self._begin_evaluation(parameters, ctx)
             child_contexts = ctx.spawn_children(
                 self.n_terms(),
-                self.child_context_configurator,
             )
         except Exception as exception:
-            self._end_evaluation(ctx, exception)
+            self._end_evaluation(NO_OUTPUT, ctx, exception)
             raise
 
         return child_contexts
@@ -404,10 +396,10 @@ class CombinedObjectiveFunction(
 
             ctx.loss = self._reduce_terms(terms, ctx)
         except BaseException as exception:
-            self._end_evaluation(ctx, exception)
+            self._end_evaluation(NO_OUTPUT, ctx, exception)
             raise
         else:
-            self._end_evaluation(ctx, None)
+            self._end_evaluation(ctx.loss, ctx, None)
 
         return cast("float", ctx.loss)
 
@@ -467,22 +459,20 @@ class CombinedObjectiveFunction(
         except Exception as e:
             return self.exception_handler(e, ctx, idx)
 
-    def _evaluate(
+    def _run(
         self,
         parameters: ParametersT,
         ctx: EvaluateContext,
     ) -> float:
-        with ctx.child_contexts(
-            n_children=self.n_terms(),
-            configurator=self.child_context_configurator,
-        ) as child_ctxs:
-            terms = [
-                self.evaluate_weighted_term(
-                    parameters,
-                    idx,
-                    child_ctx,
-                )
-                for idx, child_ctx in enumerate(child_ctxs)
-            ]
+        ctx.spawn_children(self.n_terms())
+
+        terms = [
+            self.evaluate_weighted_term(
+                parameters,
+                idx,
+                child_ctx,
+            )
+            for idx, child_ctx in enumerate(ctx.children)
+        ]
 
         return self._reduce_terms(terms, ctx)

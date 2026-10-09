@@ -24,7 +24,6 @@ from chemfit.ase_objective_function import (
 )
 from chemfit.combined_objective_function import (
     Aggregator,
-    ChildContextConfigurator,
     CombinedObjectiveFunction,
     ExceptionHandler,
     Reducer,
@@ -59,7 +58,6 @@ def combine(
     reduction: Reducer | None = None,
     aggregator: Aggregator | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
-    child_context_configurator: ChildContextConfigurator | None = None,
 ) -> CombinedObjectiveFunction[ParamsT]: ...
 
 
@@ -70,7 +68,6 @@ def combine(
     reduction: Reducer | None = None,
     aggregator: Aggregator | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
-    child_context_configurator: ChildContextConfigurator | None = None,
 ) -> CombinedObjectiveFunction[ParamsT]: ...
 
 
@@ -80,7 +77,6 @@ def combine(
     reduction: Reducer | None = None,
     aggregator: Aggregator | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
-    child_context_configurator: ChildContextConfigurator | None = None,
 ) -> CombinedObjectiveFunction[ParamsT]:
     """
     Combine independent objective terms into one objective function.
@@ -102,9 +98,6 @@ def combine(
             the weighted values, child quantities, and parent context.
         exception_handler: Policy for an exception raised by a term. The
             default re-raises it.
-        child_context_configurator: Optional callback that configures each
-            term's child context before evaluation. It may inspect the parent
-            context but must not mutate it or any sibling context.
 
     Returns:
         A :class:`CombinedObjectiveFunction` containing the supplied terms.

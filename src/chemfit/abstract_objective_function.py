@@ -14,32 +14,6 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
 
-class ChildContextConfigurator(Protocol):
-    """
-    Protocol for configuring child evaluation contexts.
-
-    The configurator is called once for each child context immediately
-    after the parent context has spawned them and before the child's
-    evaluation begins. It may modify the newly created ``child_ctx``.
-
-    ``parent_ctx`` is provided strictly for read-only inspection. A
-    configurator must never mutate it, including its ``config``, ``meta``,
-    ``temp``, or other mutable state, and must not modify sibling contexts.
-
-    The ``idx_child_ctx`` argument is the absolute index of the current
-    child within the spawned batch.
-
-    """
-
-    def __call__(
-        self,
-        idx_child_ctx: int,
-        child_ctx: EvaluateContext,
-        num_children: int,
-        parent_ctx: EvaluateContext,
-    ): ...
-
-
 class EvaluateContext:
     def __init__(
         self,
@@ -221,7 +195,9 @@ class EvaluateContext:
         self._clear_dependencies()
 
         children = [
-            EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
+            EvaluateContext(
+                config=copy.deepcopy(self._root.config), shared=self._root.shared
+            )
             for _ in range(n_children)
         ]
         for child in children:
@@ -381,6 +357,12 @@ InputT_contra = TypeVar("InputT_contra", contravariant=True)
 OutputT_co = TypeVar("OutputT_co", covariant=True)
 
 
+class NoOutput: ...
+
+
+NO_OUTPUT = NoOutput()
+
+
 class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
     def __init__(self) -> None:
         """Initialize a generic objective component."""
@@ -403,6 +385,10 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         )
         new.static_meta_data = self.static_meta_data.copy()
         return new
+
+    def _create_context(self) -> EvaluateContext:
+        """Create the default context used when none is supplied."""
+        return EvaluateContext()
 
     def with_meta(self, /, **meta: Any) -> Self:
         """
@@ -572,6 +558,8 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
     def _end_evaluation(
         self,
+        output: OutputT_co | NoOutput,
+        /,
         ctx: EvaluateContext,
         exception: BaseException | None,
     ) -> None:
@@ -586,267 +574,40 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         self, input_: InputT_contra, /, ctx: EvaluateContext | None = None
     ) -> OutputT_co:
         if ctx is None:
-            ctx = EvaluateContext()
+            ctx = self._create_context()
 
         try:
             self._begin_evaluation(input_, ctx=ctx)
             result = self._run(input_, ctx)
         except BaseException as e:
-            self._end_evaluation(ctx, e)
+            self._end_evaluation(NO_OUTPUT, ctx, e)
             raise
         else:
-            self._end_evaluation(ctx, None)
+            self._end_evaluation(result, ctx, None)
 
         return result
 
 
-class ObjectiveFunctor(Generic[ParametersT_contra]):
-    class PostEvalHookError(RuntimeError):
-        """
-        Report failures raised by one or more post-evaluation hooks.
-
-        Attributes:
-            exceptions: Exceptions raised by the post-evaluation hooks, in
-                hook registration order.
-
-        """
-
-        def __init__(self, exceptions: list[Exception]) -> None:
-            """Initialize."""
-            self.exceptions = tuple(exceptions)
-            msg = f"{len(exceptions)} post-evaluation hook(s) failed:\n"
-            for e in self.exceptions:
-                msg += f"{e}\n"
-
-            super().__init__(msg)
-
-        def __reduce__(self):
-            return type(self), (list(self.exceptions),)
-
-    def __init__(self) -> None:
-        """
-        Initialize objective function.
-
-        Attributes:
-            static_meta_data: Reusable metadata merged into ``ctx.meta`` after
-                objective evaluation and before post-evaluation hooks.
-
-        """
-
-        self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
-        self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
-        self.static_meta_data: dict[str, Any] = {}
-        self.ctx_configurator: (
-            Callable[Concatenate[EvaluateContext, ...], None] | None
-        ) = None
-        self.ctx_configurator_args = ()
-        self.ctx_configurator_kwargs = {}
-
-    def with_meta(self, /, **meta: Any) -> Self:
-        """
-        Return a copy with additional static evaluation metadata.
-
-        Existing metadata is preserved unless a key is supplied again. The
-        source objective is unchanged. Existing hook objects are retained, but
-        the returned objective has independent registration lists, so later
-        hook registration does not affect the source.
-        """
-
-        new = copy.copy(self)
-        new.pre_eval_hooks = self.pre_eval_hooks.copy()
-        new.post_eval_hooks = self.post_eval_hooks.copy()
-        new.static_meta_data = {**self.static_meta_data, **meta}
-        return new
-
-    def with_ctx_configurator(
-        self,
-        /,
-        configurator: Callable[Concatenate[EvaluateContext, ...], None],
-        *args,
-        **kwargs,
-    ) -> Self:
-        new = copy.copy(self)
-        new.ctx_configurator = configurator
-        new.ctx_configurator_args = args
-        new.ctx_configurator_kwargs = kwargs
-        return new
-
-    def _create_context(self) -> EvaluateContext:
-        """Create the default context used when none is supplied."""
-        return EvaluateContext()
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Guard implementations against overriding __call__."""
-
-        allow_custom_call = kwargs.pop("allow_custom_call", False)
-        super().__init_subclass__(**kwargs)
-
-        if not allow_custom_call and cls.__call__ is not ObjectiveFunctor.__call__:
-            msg = (
-                f"{cls.__qualname__} must implement `_evaluate()` "
-                "instead of overriding `__call__()`. "
-                "Very advanced users may override this behavior by setting "
-                "`allow_custom_call=True` in their class definition. "
-            )
-            raise TypeError(msg)
-
-    def _child_objectives(self) -> tuple[ObjectiveFunctor[Any], ...]:
-        """Return objectives evaluated in distinct child contexts."""
-        return ()
-
-    def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
-        """
-        Evaluate the objective function.
-
-        Implementations should compute a scalar loss from the given
-        parameter dictionary. All per-evaluation state must be written
-        into the provided `ctx`.
-
-        Args:
-            parameters: Parameter mapping for the current evaluation.
-            ctx (EvaluateContext): Evaluation context.
-
-        Returns:
-            float: The computed scalar loss.
-
-        Notes:
-            - Implementations should avoid mutating `self` during the
-              call. All per-evaluation information should be placed in
-              `ctx` instead.
-
-        """
-        raise NotImplementedError
-
-    def _invoke_post_eval_hooks(self, ctx: EvaluateContext, evaluation_failed: bool):
-        """Invoke the post evaluation hooks."""
-        post_hook_exceptions = []
-        for cb in self.post_eval_hooks:
-            try:
-                cb(ctx)
-            except Exception as e:  # noqa: PERF203
-                post_hook_exceptions.append(e)
-
-        if not evaluation_failed and post_hook_exceptions:
-            raise self.PostEvalHookError(post_hook_exceptions)
-
-    def _apply_static_meta(self, ctx: EvaluateContext) -> None:
-        """Merge this objective's static metadata into an evaluation context."""
-
-        ctx.meta.update(self.static_meta_data)
-
-    def _begin_evaluation(self, parameters: ParametersT_contra, ctx: EvaluateContext):
-        """
-        Initialize an objective evaluation and invoke pre-evaluation hooks.
-
-        The context is updated with the current parameters and its previous loss
-        is cleared before hooks are invoked.
-
-        This is the first half of the objective evaluation lifecycle. Every
-        successful call should eventually be paired with ``_end_evaluation()``.
-        """
-
+class ObjectiveFunctor(ObjectiveComponent[ParametersT_contra, float]):
+    def _begin_evaluation(
+        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
+    ) -> None:
         ctx.parameters = parameters
         ctx.loss = None
-
-        if self.ctx_configurator is not None:
-            self.ctx_configurator(
-                ctx, *self.ctx_configurator_args, **self.ctx_configurator_kwargs
-            )
-
-        for cb in self.pre_eval_hooks:
-            cb(ctx)
+        super()._begin_evaluation(parameters, ctx)
 
     def _end_evaluation(
         self,
+        output: float | NoOutput,
+        /,
         ctx: EvaluateContext,
         exception: BaseException | None,
-    ):
-        """
-        Finalize an objective evaluation and invoke post-evaluation hooks.
-
-        Args:
-            ctx:
-                Evaluation context associated with the evaluation.
-            exception:
-                Exception raised during evaluation, or ``None`` if evaluation
-                completed successfully.
-
-        Notes:
-            Static objective metadata is merged into ``ctx.meta`` before
-            post-evaluation hooks run. This occurs after ``_evaluate()``, so
-            objective metadata takes precedence over metadata contributed by
-            a wrapped quantity computer.
-
-            When ``exception`` is not ``None``, the context loss is cleared and
-            the exception is stored in ``ctx.temp.exception`` before post-hooks
-            are invoked.
-
-            Post-hook failures are raised as ``PostEvalHookError`` only when the
-            evaluation itself succeeded. If evaluation already failed, post-hook
-            failures do not replace the original exception.
-
-        """
-
-        self._apply_static_meta(ctx)
-
-        if exception is None:
-            ctx.temp.exception = None
-            self._invoke_post_eval_hooks(
-                ctx,
-                evaluation_failed=False,
-            )
-        else:
+    ) -> None:
+        if isinstance(output, NoOutput):
             ctx.loss = None
-            ctx.temp.exception = exception
-            self._invoke_post_eval_hooks(
-                ctx,
-                evaluation_failed=True,
-            )
-
-    def __call__(
-        self,
-        parameters: ParametersT_contra,
-        ctx: EvaluateContext | None = None,
-    ) -> float:
-        """
-        Evaluate the objective function.
-
-        Args:
-            parameters: Parameter mapping for the current evaluation.
-            ctx (EvaluateContext | None): Optional evaluation context. If
-                None, a new `EvaluateContext` is created.
-
-        Returns:
-            The final ``ctx.loss`` after successful post-evaluation hooks have
-            run. A post-hook may replace the raw value produced by
-            ``_evaluate()``.
-
-        Notes:
-            - Derived classes must implement ``_evaluate`` rather than
-              overriding ``__call__``.
-            - This method is synchronous. For batch or concurrent execution,
-              prepare the objective with a scheduler. Distinct overlapping
-              evaluations must use distinct contexts.
-
-        Raises:
-            PostEvalHookError: If evaluation succeeds and one or more
-                post-evaluation hooks raise an exception.
-
-        """
-
-        if ctx is None:
-            ctx = self._create_context()
-
-        try:
-            self._begin_evaluation(parameters=parameters, ctx=ctx)
-            ctx.loss = self._evaluate(parameters, ctx)
-        except BaseException as e:
-            self._end_evaluation(ctx, e)
-            raise
         else:
-            self._end_evaluation(ctx, None)
-
-        return cast("float", ctx.loss)
+            ctx.loss = output
+        super()._end_evaluation(output, ctx, exception)
 
 
 LossFunction = Callable[Concatenate[LossQuantitiesT, ...], float]
@@ -890,88 +651,36 @@ def _loss_function_takes_parameters(
     return True
 
 
-class QuantityComputer(Generic[ParametersT_contra, QuantitiesT_co]):
-    def __init__(self):
-        """
-        Initialize a quantity computer.
-
-        A `QuantityComputer` maps a parameter dictionary to a dictionary
-        of intermediate quantities, typically used by an objective
-        function. Instances may hold static configuration, but
-        should not store per-evaluation state internally.
-
-        Attributes:
-            static_meta_data (dict[str, Any]): Static metadata associated
-                with this quantity computer. This is merged into
-                `ctx.meta` on each call.
-
-        """
-        self.static_meta_data: dict[str, Any] = {}  # For static meta data
-
-    def with_meta(self, /, **meta: Any) -> Self:
-        """
-        Return a copy with additional static evaluation metadata.
-
-        Existing metadata is preserved unless a key is supplied again. The
-        source quantity computer is unchanged.
-        """
-
-        new = copy.copy(self)
-        new.static_meta_data = {**self.static_meta_data, **meta}
-        return new
-
-    def __call__(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
-    ) -> QuantitiesT_co:
-        """
-        Compute quantities for the given parameters.
-
-        Args:
-            parameters: Parameter mapping for the current computation.
-            ctx (EvaluateContext | None): Optional context. If None, a
-                new one is created.
-
-        Returns:
-            dict[str, Any]: The computed quantity dictionary.
-
-        Notes:
-            Implementations of `_compute` must not mutate `self`. All
-            per-evaluation information should be written into `ctx`.
-
-        Side Effects:
-            Stores ``parameters`` in ``ctx.parameters``.
-            Merges ``self.static_meta_data`` into ``ctx.meta``.
-            Stores the computed quantities in ``ctx.quantities``.
-
-        """
-
-        if ctx is None:
-            ctx = EvaluateContext()
-
+class QuantityComputer(ObjectiveComponent[ParametersT_contra, QuantitiesT_co]):
+    def _begin_evaluation(
+        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
+    ) -> None:
         ctx.parameters = parameters
+        ctx.quantities = None
+        super()._begin_evaluation(parameters, ctx)
 
-        ctx.meta.update(self.static_meta_data)
-        ctx.quantities = self._compute(parameters, ctx)
-
-        return ctx.quantities
+    def _end_evaluation(
+        self,
+        output: QuantitiesT_co | NoOutput,
+        /,
+        ctx: EvaluateContext,
+        exception: BaseException | None,
+    ) -> None:
+        if isinstance(output, NoOutput):
+            ctx.quantities = None
+        else:
+            ctx.quantities = output
+        super()._end_evaluation(output, ctx, exception)
 
     def _compute(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext
+        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
     ) -> QuantitiesT_co:
-        """Compute dictionary of quantities for a given set of parameters."""
         raise NotImplementedError
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Guard implementations against overriding __call__."""
-
-        super().__init_subclass__(**kwargs)
-
-        if cls.__call__ is not QuantityComputer.__call__:
-            msg = (
-                f"{cls.__qualname__} must implement _compute() "
-                "instead of overriding __call__()"
-            )
-            raise TypeError(msg)
+    def _run(
+        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
+    ) -> QuantitiesT_co:
+        return self._compute(parameters, ctx)
 
     def with_loss(
         self, loss_function: LossFunction[QuantitiesT_co], /, **kwargs: Any
@@ -1025,7 +734,7 @@ class QuantityComputerObjectiveFunction(
         self.loss_function = loss_function
         self._loss_takes_parameters = _loss_function_takes_parameters(loss_function)
 
-    def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
+    def _run(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
         Compute the objective loss.
 
