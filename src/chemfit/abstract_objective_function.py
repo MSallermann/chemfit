@@ -357,15 +357,7 @@ class EvaluateContext:
 
         child_states = state.get("children", [])
         if len(self._children) != len(child_states):
-            self._replace_children(
-                [
-                    EvaluateContext(
-                        config=copy.deepcopy(self.config),
-                        shared=self.shared,
-                    )
-                    for _ in child_states
-                ]
-            )
+            self.spawn_children(len(child_states))
         for child, child_state in zip(self._children, child_states, strict=True):
             child.apply_result_state(child_state)
 
