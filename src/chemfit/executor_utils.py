@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Generic, ParamSpec, TypeVar
 
-from chemfit.abstract_objective_function import EvaluateContext, ExecutorLike
+from chemfit.abstract_objective_function import EvaluateContext
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
+    from concurrent.futures import Executor
 
 # The wrapped result only flows out of this helper, so a wrapper returning a
 # subtype is safe wherever a wrapper returning a broader type is expected.
@@ -68,7 +69,7 @@ class AttachContextAsReturnValue(Generic[T_co]):
 
 
 def map_with_context(
-    executor: ExecutorLike,
+    executor: Executor,
     fn: Callable[..., T_co],
     *iterables: Iterable[Any],
     ctxs: Iterable[EvaluateContext],
