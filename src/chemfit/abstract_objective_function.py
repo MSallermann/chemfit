@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import contextlib
 import copy
 from collections.abc import Callable, Mapping
-from concurrent.futures import Future
 from functools import partial
 from inspect import signature
 from types import SimpleNamespace
@@ -13,29 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
 from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-T = TypeVar("T", covariant=True)  # noqa: PLC0105
-
-FutureLike = Future
-
-
-class ExecutorLike(Protocol):
-    """
-    Minimal executor protocol used for parallel evaluation.
-
-    This interface is modeled after :class:`concurrent.futures.Executor`.
-    """
-
-    def submit(self, fn: Callable[..., T], /, *args, **kwargs) -> FutureLike[T]: ...
-
-    def map(
-        self,
-        fn: Callable[..., T],
-        *iterables: Iterable[Any],
-        timeout: float | None = None,
-        chunksize: int = 1,
-    ) -> Iterable[T]: ...
+    from collections.abc import Sequence
 
 
 class ChildContextConfigurator(Protocol):
@@ -217,9 +193,7 @@ class EvaluateContext:
         child._parents.append(self)
         child._set_root_recursive(self._root)
 
-    def spawn_children(
-        self, n_children: int, configurator: ChildContextConfigurator | None = None
-    ) -> list[EvaluateContext]:
+    def spawn_children(self, n_children: int) -> list[EvaluateContext]:
         """
         Create child contexts linked to this context.
 
@@ -253,54 +227,7 @@ class EvaluateContext:
         for child in children:
             self._add_dependency(child)
 
-        if configurator is not None:
-            for idx_child, child_ctx in enumerate(self._children):
-                configurator(
-                    idx_child_ctx=idx_child,
-                    child_ctx=child_ctx,
-                    num_children=n_children,
-                    parent_ctx=self,
-                )
-
         return self._children
-
-    @contextlib.contextmanager
-    def child_contexts(
-        self,
-        n_children: int,
-        configurator: ChildContextConfigurator | None = None,
-    ):
-        """
-        Create a scoped child-context batch.
-
-        This context manager is a convenience wrapper around
-        ``spawn_children()`` for nested evaluations.
-
-        Args:
-            n_children: Number of child contexts to create.
-            configurator:
-                Optional configurator applied to each spawned child context.
-
-        Yields:
-            The list of spawned child contexts.
-
-        Example:
-            .. code-block:: python
-
-                with ctx.child_contexts(
-                    n_children=self.n_terms(),
-                    configurator=self.child_context_configurator,
-                ) as child_ctxs:
-                    terms = []
-                    for idx, ctx_term in enumerate(child_ctxs):
-                        terms.append(
-                            self.evaluate_term(parameters, idx, ctx_term)
-                        )
-
-        """
-
-        children = self.spawn_children(n_children, configurator=configurator)
-        yield children
 
     def __getstate__(self) -> dict[str, Any]:
         """
@@ -424,45 +351,58 @@ class PostEvaluationHook(Protocol):
         ...
 
 
+class PostEvalHookError(RuntimeError):
+    """
+    Report failures raised by one or more post-evaluation hooks.
+
+    Attributes:
+        exceptions: Exceptions raised by the post-evaluation hooks, in
+            hook registration order.
+
+    """
+
+    def __init__(self, exceptions: list[Exception]) -> None:
+        """Initialize."""
+        self.exceptions = tuple(exceptions)
+        msg = f"{len(exceptions)} post-evaluation hook(s) failed:\n"
+        for e in self.exceptions:
+            msg += f"{e}\n"
+
+        super().__init__(msg)
+
+    def __reduce__(self):
+        return type(self), (list(self.exceptions),)
+
+
 EvaluationHook = PreEvaluationHook | PostEvaluationHook
 
 
-class ObjectiveFunctor(Generic[ParametersT_contra]):
-    class PostEvalHookError(RuntimeError):
-        """
-        Report failures raised by one or more post-evaluation hooks.
+InputT_contra = TypeVar("InputT_contra", contravariant=True)
+OutputT_co = TypeVar("OutputT_co", covariant=True)
 
-        Attributes:
-            exceptions: Exceptions raised by the post-evaluation hooks, in
-                hook registration order.
 
-        """
-
-        def __init__(self, exceptions: list[Exception]) -> None:
-            """Initialize."""
-            self.exceptions = tuple(exceptions)
-            msg = f"{len(exceptions)} post-evaluation hook(s) failed:\n"
-            for e in self.exceptions:
-                msg += f"{e}\n"
-
-            super().__init__(msg)
-
-        def __reduce__(self):
-            return type(self), (list(self.exceptions),)
-
+class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
     def __init__(self) -> None:
-        """
-        Initialize objective function.
-
-        Attributes:
-            static_meta_data: Reusable metadata merged into ``ctx.meta`` after
-                objective evaluation and before post-evaluation hooks.
-
-        """
+        """Initialize a generic objective component."""
 
         self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+        self._ctx_configurator: (
+            Callable[Concatenate[EvaluateContext, ...], None] | None
+        ) = None
+        self._ctx_configurator_args: tuple[Any, ...] = ()
+        self._ctx_configurator_kwargs: dict[str, Any] = {}
         self.static_meta_data: dict[str, Any] = {}
+
+    def copy(self) -> Self:
+        new = copy.copy(self)
+        new.pre_eval_hooks = self.pre_eval_hooks.copy()
+        new.post_eval_hooks = self.post_eval_hooks.copy()
+        new._ctx_configurator_kwargs = (  # noqa: SLF001
+            self._ctx_configurator_kwargs.copy()
+        )
+        new.static_meta_data = self.static_meta_data.copy()
+        return new
 
     def with_meta(self, /, **meta: Any) -> Self:
         """
@@ -474,33 +414,33 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         hook registration does not affect the source.
         """
 
-        new = copy.copy(self)
-        new.pre_eval_hooks = self.pre_eval_hooks.copy()
-        new.post_eval_hooks = self.post_eval_hooks.copy()
+        new = self.copy()
         new.static_meta_data = {**self.static_meta_data, **meta}
+
         return new
 
-    def _create_context(self) -> EvaluateContext:
-        """Create the default context used when none is supplied."""
-        return EvaluateContext()
+    def with_ctx_configurator(
+        self,
+        configurator: Callable[Concatenate[EvaluateContext, ...], None],
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Self:
+        new = self.copy()
+        new._ctx_configurator = configurator  # noqa: SLF001
+        new._ctx_configurator_args = args  # noqa: SLF001
+        new._ctx_configurator_kwargs = kwargs.copy()  # noqa: SLF001
+        return new
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        """Guard implementations against overriding __call__."""
+    def _apply_ctx_configurator(self, ctx: EvaluateContext) -> None:
+        if self._ctx_configurator is None:
+            return
 
-        allow_custom_call = kwargs.pop("allow_custom_call", False)
-        super().__init_subclass__(**kwargs)
+        self._ctx_configurator(
+            ctx, *self._ctx_configurator_args, **self._ctx_configurator_kwargs
+        )
 
-        if not allow_custom_call and cls.__call__ is not ObjectiveFunctor.__call__:
-            msg = (
-                f"{cls.__qualname__} must implement `_evaluate()` "
-                "instead of overriding `__call__()`. "
-                "Very advanced users may override this behavior by setting "
-                "`allow_custom_call=True` in their class definition. "
-            )
-            raise TypeError(msg)
-
-    def _child_objectives(self) -> tuple[ObjectiveFunctor[Any], ...]:
-        """Return objectives evaluated in distinct child contexts."""
+    def child_components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
         return ()
 
     def register_eval_hook(
@@ -512,7 +452,7 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
         recursive: bool = False,
     ) -> Self:
         """
-        Register evaluation callbacks on this objective.
+        Register evaluation callbacks on this component.
 
         Pass either a hook object implementing ``pre_eval`` and/or
         ``post_eval``, or pass the callbacks directly through ``pre`` and
@@ -523,9 +463,9 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             hook: Optional object implementing at least one of
                 :class:`PreEvaluationHook` or :class:`PostEvaluationHook`.
                 Cannot be combined with ``pre`` or ``post``.
-            pre: Optional callback invoked before objective evaluation.
-            post: Optional callback invoked after objective evaluation.
-            recursive: Also register on descendant objectives in the call tree.
+            pre: Optional callback invoked before component evaluation.
+            post: Optional callback invoked after component evaluation.
+            recursive: Also register on descendant component in the call tree.
                 Defaults to registering only on this objective.
 
         Raises:
@@ -581,21 +521,178 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
             raise TypeError(msg)
 
         # Traverse child evaluation scopes without recursive Python calls.
-        pending: list[ObjectiveFunctor[Any]] = [self]
+        pending: list[ObjectiveComponent[Any, Any]] = [self]
         while pending:
-            objective = pending.pop()
-            if pre_eval is not None:
-                objective.pre_eval_hooks.append(
+            component = pending.pop()
+
+            if pre_eval is not None and pre_eval not in component.pre_eval_hooks:
+                component.pre_eval_hooks.append(
                     cast("Callable[[EvaluateContext], None]", pre_eval)
                 )
-            if post_eval is not None:
-                objective.post_eval_hooks.append(
+            if post_eval is not None and post_eval not in component.post_eval_hooks:
+                component.post_eval_hooks.append(
                     cast("Callable[[EvaluateContext], None]", post_eval)
                 )
             if recursive:
-                pending.extend(reversed(objective._child_objectives()))  # noqa: SLF001
+                pending.extend(reversed(component.child_components()))
 
         return self
+
+    def _invoke_post_eval_hooks(
+        self, ctx: EvaluateContext, evaluation_failed: bool
+    ) -> None:
+        """Invoke the post evaluation hooks."""
+        post_hook_exceptions = []
+        for cb in self.post_eval_hooks:
+            try:
+                cb(ctx)
+            except Exception as e:  # noqa: PERF203
+                post_hook_exceptions.append(e)
+
+        if not evaluation_failed and post_hook_exceptions:
+            raise PostEvalHookError(post_hook_exceptions)
+
+    def _begin_evaluation(
+        self,
+        input_: InputT_contra,
+        /,
+        ctx: EvaluateContext,
+    ) -> None:
+        self._apply_ctx_configurator(ctx)
+        for hook in self.pre_eval_hooks:
+            hook(ctx)
+
+    def _run(
+        self,
+        input_: InputT_contra,
+        /,
+        ctx: EvaluateContext,
+    ) -> OutputT_co:
+        raise NotImplementedError
+
+    def _end_evaluation(
+        self,
+        ctx: EvaluateContext,
+        exception: BaseException | None,
+    ) -> None:
+        ctx.meta.update(self.static_meta_data)
+        ctx.temp.exception = exception
+        self._invoke_post_eval_hooks(
+            ctx,
+            evaluation_failed=exception is not None,
+        )
+
+    def __call__(
+        self, input_: InputT_contra, /, ctx: EvaluateContext | None = None
+    ) -> OutputT_co:
+        if ctx is None:
+            ctx = EvaluateContext()
+
+        try:
+            self._begin_evaluation(input_, ctx=ctx)
+            result = self._run(input_, ctx)
+        except BaseException as e:
+            self._end_evaluation(ctx, e)
+            raise
+        else:
+            self._end_evaluation(ctx, None)
+
+        return result
+
+
+class ObjectiveFunctor(Generic[ParametersT_contra]):
+    class PostEvalHookError(RuntimeError):
+        """
+        Report failures raised by one or more post-evaluation hooks.
+
+        Attributes:
+            exceptions: Exceptions raised by the post-evaluation hooks, in
+                hook registration order.
+
+        """
+
+        def __init__(self, exceptions: list[Exception]) -> None:
+            """Initialize."""
+            self.exceptions = tuple(exceptions)
+            msg = f"{len(exceptions)} post-evaluation hook(s) failed:\n"
+            for e in self.exceptions:
+                msg += f"{e}\n"
+
+            super().__init__(msg)
+
+        def __reduce__(self):
+            return type(self), (list(self.exceptions),)
+
+    def __init__(self) -> None:
+        """
+        Initialize objective function.
+
+        Attributes:
+            static_meta_data: Reusable metadata merged into ``ctx.meta`` after
+                objective evaluation and before post-evaluation hooks.
+
+        """
+
+        self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+        self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+        self.static_meta_data: dict[str, Any] = {}
+        self.ctx_configurator: (
+            Callable[Concatenate[EvaluateContext, ...], None] | None
+        ) = None
+        self.ctx_configurator_args = ()
+        self.ctx_configurator_kwargs = {}
+
+    def with_meta(self, /, **meta: Any) -> Self:
+        """
+        Return a copy with additional static evaluation metadata.
+
+        Existing metadata is preserved unless a key is supplied again. The
+        source objective is unchanged. Existing hook objects are retained, but
+        the returned objective has independent registration lists, so later
+        hook registration does not affect the source.
+        """
+
+        new = copy.copy(self)
+        new.pre_eval_hooks = self.pre_eval_hooks.copy()
+        new.post_eval_hooks = self.post_eval_hooks.copy()
+        new.static_meta_data = {**self.static_meta_data, **meta}
+        return new
+
+    def with_ctx_configurator(
+        self,
+        /,
+        configurator: Callable[Concatenate[EvaluateContext, ...], None],
+        *args,
+        **kwargs,
+    ) -> Self:
+        new = copy.copy(self)
+        new.ctx_configurator = configurator
+        new.ctx_configurator_args = args
+        new.ctx_configurator_kwargs = kwargs
+        return new
+
+    def _create_context(self) -> EvaluateContext:
+        """Create the default context used when none is supplied."""
+        return EvaluateContext()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Guard implementations against overriding __call__."""
+
+        allow_custom_call = kwargs.pop("allow_custom_call", False)
+        super().__init_subclass__(**kwargs)
+
+        if not allow_custom_call and cls.__call__ is not ObjectiveFunctor.__call__:
+            msg = (
+                f"{cls.__qualname__} must implement `_evaluate()` "
+                "instead of overriding `__call__()`. "
+                "Very advanced users may override this behavior by setting "
+                "`allow_custom_call=True` in their class definition. "
+            )
+            raise TypeError(msg)
+
+    def _child_objectives(self) -> tuple[ObjectiveFunctor[Any], ...]:
+        """Return objectives evaluated in distinct child contexts."""
+        return ()
 
     def _evaluate(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
         """
@@ -650,6 +747,12 @@ class ObjectiveFunctor(Generic[ParametersT_contra]):
 
         ctx.parameters = parameters
         ctx.loss = None
+
+        if self.ctx_configurator is not None:
+            self.ctx_configurator(
+                ctx, *self.ctx_configurator_args, **self.ctx_configurator_kwargs
+            )
+
         for cb in self.pre_eval_hooks:
             cb(ctx)
 
