@@ -179,10 +179,11 @@ class EvaluateContext:
 
         return tuple(self._parents)
 
-    def _replace_children(self, children: list[EvaluateContext]) -> None:
-        """Replace the child batch while maintaining reverse relationships."""
-
-        # remove `self` from the parent lists of its current children
+    def _clear_dependencies(self) -> None:
+        # first we remove `self` from the parent list of the
+        # current children
+        # strictly speaking this may be unnecessary, but we do it
+        # for consistency
         for child in self._children:
             child._parents = [  # noqa: SLF001
                 parent
@@ -190,11 +191,15 @@ class EvaluateContext:
                 if parent is not self
             ]
 
-        # add `self` to the new children's parents
-        self._children = children
-        for child in children:
-            if self not in child._parents:  # noqa: SLF001
-                child._parents.append(self)  # noqa: SLF001
+        # then clear the list
+        self._children.clear()
+
+    def _add_dependency(self, child: EvaluateContext) -> None:
+        if any(existing is child for existing in self._children):
+            return
+
+        self._children.append(child)
+        child._parents.append(self)
 
     def spawn_children(
         self, n_children: int, configurator: ChildContextConfigurator | None = None
@@ -223,11 +228,14 @@ class EvaluateContext:
 
         """
 
+        self._clear_dependencies()
+
         children = [
             EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
             for _ in range(n_children)
         ]
-        self._replace_children(children)
+        for child in children:
+            self._add_dependency(child)
 
         if configurator is not None:
             for idx_child, child_ctx in enumerate(self._children):
