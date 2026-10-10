@@ -1,314 +1,16 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Callable, Mapping
-from functools import partial
-from inspect import signature
-from types import SimpleNamespace
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
 from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
 
+from chemfit.evaluate_context import EvaluateContext, NoOutput, NO_OUTPUT
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
-
-
-class EvaluateContext:
-    def __init__(
-        self,
-        config: SimpleNamespace | None = None,
-        shared: SimpleNamespace | None = None,
-    ):
-        """
-        Container for per-evaluation state.
-
-        A new instance of `EvaluateContext` should generally be created for each
-        evaluation of an objective function or quantity computation.
-        Implementations write all per-call information into the context
-        rather than storing it in the objective instance.
-        This makes evaluation easier to reason about and
-        compatible with concurrent execution.
-
-        The context may also own a single batch of child contexts representing
-        nested sub-evaluations. Such child contexts can be created explicitly
-        with ``spawn_children()`` or managed with the ``child_contexts()``
-        context manager.
-
-        Args:
-            config:
-                Optional child-local evaluation configuration. This
-                namespace is copied to spawned child contexts so that
-                children inherit parent defaults but can be configured
-                independently
-            shared:
-                Optional namespace for state shared by related contexts, such
-                as parent/child evaluations. Mutable contents require
-                synchronization when contexts can execute concurrently. A
-                process backend serializes this namespace as worker input;
-                worker mutations are not returned to the caller.
-
-        Attributes:
-            quantities (dict[str, Any] | None): Intermediate quantities
-                computed during evaluation. Implementations may leave this
-                as None if no quantities are produced.
-            parameters (Mapping[str, object] | None): Parameter mapping used
-                for this evaluation.
-            loss (float | None): Scalar loss for this evaluation. On success,
-                the raw objective result is stored here before post-evaluation
-                hooks run. A post-hook may replace it; the final value is the
-                authoritative objective result returned to the caller.
-            meta (dict[str, Any]): Free-form metadata dictionary.
-                Implementations may add diagnostic information here as needed.
-            temp (SimpleNamespace): Scratch space for temporary values
-                during evaluation. Nothing stored here is part of the
-                public API. It is omitted from the ``to_summary()`` method.
-            config:
-                Child-local evaluation configuration for this context.
-            shared:
-                Shared state or resources reused across related contexts.
-            children (tuple[EvaluateContext, ...]): Child contexts in creation
-                order. The tuple cannot be used to modify the topology.
-            parents (tuple[EvaluateContext, ...]): Parent contexts. Current
-                evaluation structures are trees, but this tuple permits future
-                contexts to have multiple parents.
-
-        """
-
-        self._set_defaults(config, shared)
-
-    def to_summary(self, recursive: bool = False) -> dict[str, Any]:
-        """
-        Return a dictionary summarizing the evaluation state.
-
-        Args:
-            recursive: If ``True``, include recursive summaries of child
-                contexts in creation order under ``"children"``. If ``False``,
-                summarize only this context.
-
-        Returns:
-            dict[str, Any]: A dictionary containing the fields
-            ``quantities``, ``parameters``, ``loss``, and ``meta``. Recursive
-            summaries additionally contain ``children``.
-
-        """
-        summary = {
-            "quantities": self.quantities,
-            "parameters": self.parameters,
-            "loss": self.loss,
-            "meta": self.meta,
-        }
-        if recursive:
-            summary["children"] = [
-                child.to_summary(recursive=True) for child in self._children
-            ]
-        return summary
-
-    def _set_defaults(
-        self, config: SimpleNamespace | None, shared: SimpleNamespace | None
-    ):
-        self.quantities: dict[str, Any] | None = None
-        self.parameters: Mapping[str, object] | None = None
-        self.loss: float | None = None
-        self.temp = SimpleNamespace()
-        self.config = SimpleNamespace() if config is None else config
-        self.shared = SimpleNamespace() if shared is None else shared
-        self.meta: dict[str, Any] = {}
-        self._children: list[EvaluateContext] = []
-        self._parents: list[EvaluateContext] = []
-        self._root = self
-
-    @property
-    def children(self) -> tuple[EvaluateContext, ...]:
-        """Return child contexts in creation order."""
-
-        return tuple(self._children)
-
-    @property
-    def parents(self) -> tuple[EvaluateContext, ...]:
-        """Return the contexts that are parents of this context."""
-
-        return tuple(self._parents)
-
-    def _clear_dependencies(self) -> None:
-        # first we remove `self` from the parent list of the
-        # current children
-        # strictly speaking this may be unnecessary, but we do it
-        # for consistency
-        for child in self._children:
-            child._parents = [  # noqa: SLF001
-                parent
-                for parent in child._parents  # noqa: SLF001
-                if parent is not self
-            ]
-
-        # then clear the list
-        self._children.clear()
-
-    def _set_root_recursive(self, root: EvaluateContext) -> None:
-        pending: list[EvaluateContext] = [self]
-        visited: set[int] = set()
-
-        while pending:
-            ctx = pending.pop()
-
-            if id(ctx) in visited:
-                continue
-
-            visited.add(id(ctx))
-            ctx._root = root  # noqa: SLF001
-            pending.extend(ctx._children)  # noqa: SLF001
-
-    def _add_dependency(self, child: EvaluateContext) -> None:
-        if any(existing is child for existing in self._children):
-            return
-
-        self._children.append(child)
-        child._parents.append(self)
-        child._set_root_recursive(self._root)
-
-    def spawn_children(self, n_children: int) -> list[EvaluateContext]:
-        """
-        Create child contexts linked to this context.
-
-        Each child receives a deep copy of ``config``, while sharing the
-        same ``shared`` namespace as the parent.
-
-        An ``EvaluateContext`` is intended to manage at most one batch of
-        child contexts per evaluation. Calling ``spawn_children()`` again on
-        the same context replaces the previous child batch.
-
-        In many cases, ``child_contexts()`` is the preferred interface for a
-        scoped nested evaluation.
-
-        Args:
-            n_children: Number of child contexts to create.
-            configurator:
-                Optional configurator applied once to each spawned child
-                context immediately after creation.
-
-        Returns:
-            The newly created child contexts.
-
-        """
-
-        self._clear_dependencies()
-
-        children = [
-            EvaluateContext(
-                config=copy.deepcopy(self._root.config), shared=self._root.shared
-            )
-            for _ in range(n_children)
-        ]
-        for child in children:
-            self._add_dependency(child)
-
-        return self._children
-
-    def __getstate__(self) -> dict[str, Any]:
-        """
-        Return the worker-input state for this context.
-
-        Returns:
-            Dictionary containing the context state needed to initialize the
-            context in a worker or other execution environment.
-
-        """
-        return {
-            "parameters": self.parameters,
-            "config": self.config,
-            "shared": self.shared,
-            "meta": self.meta,
-        }
-
-    def __setstate__(self, state: dict[str, Any]):
-        """
-        Restore worker-input state into this context.
-
-        Args:
-            state:
-                State previously produced by ``__getstate__()``.
-
-        """
-        self._set_defaults(config=state["config"], shared=state["shared"])
-        self.parameters = state["parameters"]
-        self.meta = state["meta"]
-
-    def to_result_state(self) -> dict[str, Any]:
-        """
-        Return the result-bearing state of this context.
-
-        Returns:
-            Dictionary containing the evaluation results recorded in this
-            context. This state is intended for child/worker-to-parent
-            synchronization. Descendant result states are represented without
-            serializing context objects or reverse parent references. Shared
-            resources, configuration, and temporary state are omitted.
-
-        """
-
-        return {
-            "parameters": self.parameters,
-            "loss": self.loss,
-            "quantities": self.quantities,
-            "meta": self.meta,
-            "children": [child.to_result_state() for child in self._children],
-        }
-
-    def apply_result_state(self, state: dict[str, Any]):
-        """
-        Apply result-bearing state from another context.
-
-        Args:
-            state:
-                State previously produced by ``to_result_state()``.
-
-        Side Effects:
-            Updates ``parameters``, ``loss``, ``quantities``, and ``meta``
-            on this context, and restores result state on its descendants.
-
-        """
-
-        self.parameters = state["parameters"]
-        self.loss = state["loss"]
-        self.quantities = state["quantities"]
-        self.meta = state["meta"]
-
-        child_states = state.get("children", [])
-        if len(self._children) != len(child_states):
-            self.spawn_children(len(child_states))
-        for child, child_state in zip(self._children, child_states, strict=True):
-            child.apply_result_state(child_state)
-
-
-# Variance here follows the direction in which values cross the public API:
-#
-# * Parameters are only consumed by ObjectiveFunctor and QuantityComputer, so
-#   they are contravariant. For example, an objective that accepts a broad
-#   Mapping[str, object] is safe wherever one accepting dict[str, float] is
-#   required. The Mapping bound is only an upper bound; it does not force user
-#   callbacks to spell their parameter annotation as Mapping.
-# * Quantities are produced by QuantityComputer, so they are covariant.  A
-#   computer returning a more specific quantity dictionary can therefore be
-#   used where a less specific result is expected.
-# * A loss function must consume the same quantity type produced by its paired
-#   computer. LossQuantitiesT is consequently kept invariant to tie those two
-#   sides together during inference.
-
-ParametersT_contra = TypeVar(
-    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
-)
-
-QuantitiesT_co = TypeVar(
-    "QuantitiesT_co",
-    bound=dict[str, Any],
-    covariant=True,
-    default=dict[str, Any],
-)
-
-LossQuantitiesT = TypeVar(
-    "LossQuantitiesT", bound=dict[str, Any], default=dict[str, Any]
-)
 
 
 class PreEvaluationHook(Protocol):
@@ -357,12 +59,6 @@ InputT_contra = TypeVar("InputT_contra", contravariant=True)
 OutputT_co = TypeVar("OutputT_co", covariant=True)
 
 
-class NoOutput: ...
-
-
-NO_OUTPUT = NoOutput()
-
-
 class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
     def __init__(self) -> None:
         """Initialize a generic objective component."""
@@ -405,6 +101,17 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
         return new
 
+    def with_loss(
+        self,
+        loss_function: Callable[[OutputT_co], float],
+        /,
+        **kwargs: Any,
+    ) -> OpaqueThen[InputT_contra, OutputT_co, float]:
+        return OpaqueThen(
+            self,
+            WrappedComponent(loss_function).bind(**kwargs),
+        )
+
     def with_ctx_configurator(
         self,
         configurator: Callable[Concatenate[EvaluateContext, ...], None],
@@ -426,9 +133,6 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
             ctx, *self._ctx_configurator_args, **self._ctx_configurator_kwargs
         )
 
-    def child_components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
-        return ()
-
     def register_eval_hook(
         self,
         *,
@@ -437,52 +141,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         post: Callable[[EvaluateContext], None] | None = None,
         recursive: bool = False,
     ) -> Self:
-        """
-        Register evaluation callbacks on this component.
-
-        Pass either a hook object implementing ``pre_eval`` and/or
-        ``post_eval``, or pass the callbacks directly through ``pre`` and
-        ``post``. At least one callback is required. Registered callbacks are
-        invoked in registration order for their respective evaluation phase.
-
-        Args:
-            hook: Optional object implementing at least one of
-                :class:`PreEvaluationHook` or :class:`PostEvaluationHook`.
-                Cannot be combined with ``pre`` or ``post``.
-            pre: Optional callback invoked before component evaluation.
-            post: Optional callback invoked after component evaluation.
-            recursive: Also register on descendant component in the call tree.
-                Defaults to registering only on this objective.
-
-        Raises:
-            TypeError: If a hook object is combined with direct callbacks, no
-                callback is supplied, or a supplied callback is not callable.
-
-        Note:
-            If contexts are reused, pre-evaluation hooks may observe state from
-            the previous evaluation. Before the hooks are invoked, ``ctx.parameters``
-            is updated and ``ctx.loss`` is set to None.
-
-            Recursive registration uses the same hook instance on every
-            objective, so hooks must keep per-evaluation state in ``ctx``.
-            Register recursive hooks before submitting work to process
-            executors, and on every MPI rank before entering worker loops.
-
-            Every post-evaluation hook is attempted, even if an earlier hook
-            raises an exception. If evaluation succeeds, hook exceptions are
-            collected and raised together as ``PostEvalHookError``. If
-            ``_evaluate`` raises, its exception remains primary and is
-            available to post-evaluation hooks as ``ctx.temp.exception``.
-
-            Hooks may run concurrently and, with process-based execution, may
-            run in another process. They should not mutate captured mutable
-            objects, global variables, or other shared state: such mutations
-            can race between threads and are not propagated back from worker
-            processes. Store per-evaluation output on ``ctx`` instead, usually
-            in ``ctx.meta``. Hooks used by a process-based executor must also
-            be serializable.
-
-        """
+        """TODO."""
         if hook is not None and (pre is not None or post is not None):
             msg = "pass either hook or pre/post callbacks, not both"
             raise TypeError(msg)
@@ -519,7 +178,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
                 component.post_eval_hooks.append(
                     cast("Callable[[EvaluateContext], None]", post_eval)
                 )
-            if recursive:
+            if recursive and isinstance(component, StructuralComponent):
                 pending.extend(reversed(component.child_components()))
 
         return self
@@ -545,6 +204,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         ctx: EvaluateContext,
     ) -> None:
         self._apply_ctx_configurator(ctx)
+        ctx.input = input_
         for hook in self.pre_eval_hooks:
             hook(ctx)
 
@@ -558,16 +218,24 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
     def _end_evaluation(
         self,
-        output: OutputT_co | NoOutput,
+        outcome: OutputT_co | NoOutput | BaseException,
         /,
         ctx: EvaluateContext,
-        exception: BaseException | None,
     ) -> None:
         ctx.meta.update(self.static_meta_data)
-        ctx.temp.exception = exception
+
+        if isinstance(outcome, BaseException):
+            ctx.output = NO_OUTPUT
+            ctx.exception = outcome
+            evaluation_failed = True
+        else:
+            ctx.output = outcome
+            ctx.exception = None
+            evaluation_failed = False
+
         self._invoke_post_eval_hooks(
             ctx,
-            evaluation_failed=exception is not None,
+            evaluation_failed=evaluation_failed,
         )
 
     def __call__(
@@ -580,195 +248,418 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
             self._begin_evaluation(input_, ctx=ctx)
             result = self._run(input_, ctx)
         except BaseException as e:
-            self._end_evaluation(NO_OUTPUT, ctx, e)
+            self._end_evaluation(e, ctx)
             raise
         else:
-            self._end_evaluation(result, ctx, None)
+            self._end_evaluation(result, ctx)
 
         return result
 
 
-class ObjectiveFunctor(ObjectiveComponent[ParametersT_contra, float]):
-    def _begin_evaluation(
-        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
-    ) -> None:
-        ctx.parameters = parameters
-        ctx.loss = None
-        super()._begin_evaluation(parameters, ctx)
-
-    def _end_evaluation(
-        self,
-        output: float | NoOutput,
-        /,
-        ctx: EvaluateContext,
-        exception: BaseException | None,
-    ) -> None:
-        if isinstance(output, NoOutput):
-            ctx.loss = None
-        else:
-            ctx.loss = output
-        super()._end_evaluation(output, ctx, exception)
+MiddleT = TypeVar("MiddleT")
 
 
-LossFunction = Callable[Concatenate[LossQuantitiesT, ...], float]
-
-
-def _loss_function_takes_parameters(
-    loss_function: LossFunction[Any],
-) -> bool:
-    """Determine which supported positional signature a loss function uses."""
-
-    try:
-        loss_signature = signature(loss_function)
-    except (TypeError, ValueError) as exception:
-        msg = (
-            "loss_function must have an inspectable signature accepting "
-            "(quantities) or (quantities, parameters)"
-        )
-        raise TypeError(msg) from exception
-
-    quantities = object()
-    parameters = object()
-
-    try:
-        loss_signature.bind(quantities)
-    except TypeError:
-        pass
-    else:
-        # Preserve the historical preference for the one-argument form when
-        # an optional second positional argument or *args allows both forms.
-        return False
-
-    try:
-        loss_signature.bind(quantities, parameters)
-    except TypeError as exception:
-        msg = (
-            "loss_function must accept (quantities) or "
-            f"(quantities, parameters); got signature {loss_signature}"
-        )
-        raise TypeError(msg) from exception
-
-    return True
-
-
-class QuantityComputer(ObjectiveComponent[ParametersT_contra, QuantitiesT_co]):
-    def _begin_evaluation(
-        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
-    ) -> None:
-        ctx.parameters = parameters
-        ctx.quantities = None
-        super()._begin_evaluation(parameters, ctx)
-
-    def _end_evaluation(
-        self,
-        output: QuantitiesT_co | NoOutput,
-        /,
-        ctx: EvaluateContext,
-        exception: BaseException | None,
-    ) -> None:
-        if isinstance(output, NoOutput):
-            ctx.quantities = None
-        else:
-            ctx.quantities = output
-        super()._end_evaluation(output, ctx, exception)
-
-    def _compute(
-        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
-    ) -> QuantitiesT_co:
-        raise NotImplementedError
-
-    def _run(
-        self, parameters: ParametersT_contra, /, ctx: EvaluateContext
-    ) -> QuantitiesT_co:
-        return self._compute(parameters, ctx)
-
-    def with_loss(
-        self, loss_function: LossFunction[QuantitiesT_co], /, **kwargs: Any
-    ) -> QuantityComputerObjectiveFunction[ParametersT_contra, QuantitiesT_co]:
-        """
-        Create a new QuantityComputerObjectiveFunction from this QuantityComputer.
-
-        Args:
-            loss_function (LossFunction): The loss function to use.
-
-        Returns:
-            QuantityComputerObjectiveFunction: A new QuantityComputerObjectiveFunction
-
-        """
-        return QuantityComputerObjectiveFunction(
-            loss_function=partial(loss_function, **kwargs),
-            quantity_computer=self,
-        )
-
-
-class QuantityComputerObjectiveFunction(
-    ObjectiveFunctor[ParametersT_contra],
-    Generic[ParametersT_contra, QuantitiesT_co],
+class OpaqueThen(
+    ObjectiveComponent[InputT_contra, OutputT_co],
+    Generic[InputT_contra, MiddleT, OutputT_co],
 ):
     def __init__(
         self,
-        loss_function: LossFunction[QuantitiesT_co],
-        quantity_computer: QuantityComputer[ParametersT_contra, QuantitiesT_co],
+        first: ObjectiveComponent[InputT_contra, MiddleT],
+        second: ObjectiveComponent[MiddleT, OutputT_co],
     ) -> None:
-        """
-        Objective function composed of a `QuantityComputer` and a loss function.
-
-        This objective first computes intermediate quantities using
-        ``quantity_computer`` and then applies ``loss_function`` to
-        obtain a scalar loss.
-
-        Args:
-            loss_function (Callable): A function with signature:
-
-                `loss_function(quantities) -> float`
-                or
-                `loss_function(quantities, parameters) -> float`
-
-            quantity_computer (QuantityComputer): Object responsible for
-                computing intermediate quantities.
-
-        """
-
+        """Execute two components as one schedulable unit."""
         super().__init__()
-        self.quantity_computer = quantity_computer
-        self.loss_function = loss_function
-        self._loss_takes_parameters = _loss_function_takes_parameters(loss_function)
+        self.first = first
+        self.second = second
 
-    def _run(self, parameters: ParametersT_contra, ctx: EvaluateContext) -> float:
+    def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
+        first_ctx = ctx.spawn_ctx()
+        second_ctx = ctx.spawn_ctx()
+        ctx.pipeline = [first_ctx, second_ctx]
+        intermediate = self.first(input_, first_ctx)
+        return self.second(intermediate, second_ctx)
+
+
+class WrappedComponent(
+    ObjectiveComponent[InputT_contra, OutputT_co], Generic[InputT_contra, OutputT_co]
+):
+    def __init__(
+        self,
+        func: Callable[Concatenate[InputT_contra, ...], OutputT_co],
+        pass_ctx: bool = False,
+        func_args: tuple[Any, ...] | None = None,
+        func_kwargs: dict[str, Any] | None = None,
+    ):
         """
-        Compute the objective loss.
-
-        This method computes intermediate quantities using the quantity
-        computer and applies the loss function. The inherited ``__call__``
-        method stores the returned loss in ``ctx.loss``.
+        Initialize a wrapped component.
 
         Args:
-            parameters: Parameter mapping for the current evaluation.
-            ctx (EvaluateContext): Evaluation context.
+            func: Callable to wrap as an ``ObjectiveComponent``. The callable may
+                either accept only ``input_`` or accept both
+                ``input_`` and ``ctx``.
+            pass_ctx: If ``True``, call ``func(parameters, ctx)``. If
+                ``False``, call ``func(parameters)``.
+
+        """
+        super().__init__()
+        self.func = func
+        self.pass_ctx = pass_ctx
+
+        if func_args is None:
+            self.func_args = ()
+        else:
+            self.func_args = func_args
+
+        if func_kwargs is None:
+            self.func_kwargs = {}
+        else:
+            self.func_kwargs = func_kwargs
+
+    def bind(self, /, *args: Any, **kwargs: Any) -> Self:
+        """
+        Return a new component with extra arguments bound.
+
+        The bound arguments are passed to the wrapped function in addition
+        to the usual ChemFit arguments. Static metadata and registered hook
+        objects are retained, while the returned functor has independent hook
+        registration lists. Repeated calls append positional arguments and
+        merge keyword arguments, with later keyword values taking precedence.
+
+        Args:
+            *args: Positional arguments to bind after ``parameters`` (and
+                after ``ctx`` as well if ``pass_ctx=True``).
+            **kwargs: Keyword arguments to bind.
 
         Returns:
-            float: The computed scalar loss.
+            A new wrapped objective functor with the requested arguments
+            pre-applied.
 
-        Side Effects:
-            Updates ``ctx.meta`` with ``self.static_meta_data`` after the
-            wrapped ``QuantityComputer`` may have already added metadata.
-            Populates ``ctx.quantities`` and ``ctx.parameters`` via the
-            wrapped ``QuantityComputer``.
+        """
+        new = super().copy()
+        new.func_args = (*self.func_args, *args)
+        new.func_kwargs = {**self.func_kwargs, **kwargs}
 
-        Notes:
-            ``loss_function`` may accept either ``(quantities)`` or
-            ``(quantities, parameters)`` as positional arguments. Its
-            signature is inspected when this objective is constructed, so a
-            ``TypeError`` raised inside the loss function is propagated
-            without retrying the call with different arguments.
+        return new
+
+    def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
+        """
+        Evaluate the wrapped callable as an objective component.
+
+        If ``pass_ctx`` is ``True``, the wrapped callable receives both the
+        parameter dictionary and the evaluation context. Otherwise, it
+        receives only the parameter dictionary.
+
+        Args:
+            parameters: Parameter dictionary for the current evaluation.
+            ctx: Evaluation context for the current call.
+
+        Returns:
+            Scalar loss value returned by the wrapped callable.
 
         """
 
-        quantities = self.quantity_computer(parameters, ctx)
-
-        if self._loss_takes_parameters:
-            loss = self.loss_function(quantities, parameters)
+        if self.pass_ctx:
+            loss = self.func(input_, *self.func_args, **self.func_kwargs, ctx=ctx)
         else:
-            loss = self.loss_function(quantities)
+            loss = self.func(input_, *self.func_args, **self.func_kwargs)
 
         return loss
+
+
+def component(
+    *,
+    pass_ctx: bool = False,
+) -> Callable[
+    [Callable[Concatenate[InputT_contra, ...], OutputT_co]],
+    WrappedComponent[InputT_contra, OutputT_co],
+]:
+    """TODO."""
+
+    def wrap(
+        func: Callable[Concatenate[InputT_contra, ...], OutputT_co],
+    ) -> WrappedComponent[InputT_contra, OutputT_co]:
+        return WrappedComponent(
+            func,
+            pass_ctx=pass_ctx,
+        )
+
+    return wrap
+
+
+ComponentExpr = ObjectiveComponent[InputT_contra, OutputT_co]
+
+
+class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
+    def child_components(
+        self,
+    ) -> Sequence[ComponentExpr[Any, Any]]:
+        """
+        Return the immediate child components in topological order.
+
+        Dependencies must always precede their consumers. The returned order
+        also determines the indices used by the other structural methods.
+        """
+        raise NotImplementedError
+
+    def child_dependencies(
+        self,
+    ) -> tuple[tuple[int, ...], ...]:
+        """
+        Return the dependencies of each child component.
+
+        Each entry contains the indices of the children that must complete
+        before the corresponding child can execute. An empty tuple indicates
+        that the child has no dependencies and may execute immediately.
+
+        The scheduler uses this information to determine execution order
+        and which components can run concurrently.
+        """
+        raise NotImplementedError
+
+    def child_input(
+        self,
+        index: int,
+        input_: InputT_contra,
+        outcomes: Sequence[Any],
+    ) -> Any:
+        """
+        Construct the input for a child component.
+
+        Args:
+            index: Index of the child to evaluate.
+            input_: Original input received by this structural component.
+            outcomes: Outcomes of previously completed children, indexed
+                according to child_components().
+
+        Returns:
+            Input to pass to the selected child.
+
+        Raises:
+            Exception: If a dependency failed and the child cannot execute.
+
+        """
+        raise NotImplementedError
+
+    def combine_outcomes(
+        self,
+        outcomes: Sequence[Any],
+        ctx: EvaluateContext,
+    ) -> OutputT_co:
+        """
+        Combine child outcomes into the structural component's result.
+
+        Called after the required child evaluations have completed.
+        Outcomes may contain exceptions, allowing implementations to
+        handle individual child failures.
+
+        Args:
+            outcomes: Child outcomes in the order of child_components().
+            ctx: Evaluation context of this structural component.
+
+        Returns:
+            The combined result.
+
+        Raises:
+            Exception: If the child outcomes cannot produce a valid result.
+
+        """
+        raise NotImplementedError
+
+    def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
+        components = self.child_components()
+
+        child_ctxs = [ctx.spawn_ctx() for _ in components]
+        for child_ctx in child_ctxs:
+            ctx.add_incoming(child_ctx)
+
+        # Children are in topological order, so all dependencies
+        # of a child have completed before it is evaluated.
+        outcomes: list[Any] = [NO_OUTPUT] * len(components)
+
+        for idx, (comp, child_ctx) in enumerate(
+            zip(components, child_ctxs, strict=True)
+        ):
+            # Construct the input using completed dependency outcomes.
+            child_input = self.child_input(idx, input_, outcomes)
+
+            # Store the result or exception at the child's actual index.
+            try:
+                outcomes[idx] = comp(child_input, child_ctx)
+            except Exception as e:
+                outcomes[idx] = e
+
+        return self.combine_outcomes(outcomes, ctx)
+
+
+class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
+    def __init__(self, components: tuple[ObjectiveComponent[InputT_contra, Any], ...]):
+        super().__init__()
+
+        self.components = components
+
+        if not self.components:
+            msg = "Need at least one component to construct a joined Component"
+            raise ValueError(msg)
+
+    def n_components(self):
+        return len(self.components)
+
+    def child_components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+        """Return the independently evaluated components."""
+        return self.components
+
+    def child_dependencies(
+        self,
+    ) -> tuple[tuple[int, ...], ...]:
+        """All components are independent."""
+        return tuple(() for _ in self.components)
+
+    def child_input(
+        self,
+        index: int,
+        input_: InputT_contra,
+        outcomes: Sequence[Any | Exception | NoOutput],
+    ) -> Any:
+        """All components receive the same input."""
+        return input_
+
+    def combine_outcomes(
+        self,
+        outcomes: Sequence[Any | Exception | NoOutput],
+        ctx: EvaluateContext,
+    ) -> OutputT_co:
+        """Simply return the tuple of outcomes."""
+        raise NotImplementedError
+
+
+class TupleJoinedComponent(JoinedComponent[InputT_contra, tuple[Any, ...]]):
+    def combine_outcomes(
+        self,
+        outcomes: Sequence[Any],
+        ctx: EvaluateContext,
+    ) -> tuple[Any, ...]:
+        return tuple(outcomes)
+
+
+class ThenComponent(
+    StructuralComponent[InputT_contra, OutputT_co],
+    Generic[InputT_contra, MiddleT, OutputT_co],
+):
+    def __init__(
+        self,
+        first: ObjectiveComponent[InputT_contra, MiddleT],
+        second: ObjectiveComponent[MiddleT, OutputT_co],
+    ) -> None:
+        super().__init__()
+        self.first = first
+        self.second = second
+
+    def child_components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+        """Return the independently evaluated components."""
+        return (self.first, self.second)
+
+    def child_dependencies(
+        self,
+    ) -> tuple[tuple[int, ...], ...]:
+        """Second depends on first."""
+        return ((), (0,))
+
+    def child_input(
+        self,
+        index: int,
+        input_: InputT_contra,
+        outcomes: Sequence[Any],
+    ) -> Any:
+        """First component receives the original input, second receives firsts output."""
+        if index == 0:
+            return input_
+
+        if isinstance(outcomes[0], Exception):
+            raise outcomes[0]
+
+        return outcomes[0]
+
+    def combine_outcomes(
+        self,
+        outcomes: Sequence[Any],
+        ctx: EvaluateContext,
+    ) -> OutputT_co:
+        """Simply return the outcome of second."""
+        outcome = outcomes[1]
+
+        if isinstance(outcome, Exception):
+            raise outcome
+
+        return cast("OutputT_co", outcome)
+
+
+# Variance here follows the direction in which values cross the public API:
+#
+# * Parameters are only consumed by ObjectiveFunctor and QuantityComputer, so
+#   they are contravariant. For example, an objective that accepts a broad
+#   Mapping[str, object] is safe wherever one accepting dict[str, float] is
+#   required. The Mapping bound is only an upper bound; it does not force user
+#   callbacks to spell their parameter annotation as Mapping.
+# * Quantities are produced by QuantityComputer, so they are covariant.  A
+#   computer returning a more specific quantity dictionary can therefore be
+#   used where a less specific result is expected.
+# * A loss function must consume the same quantity type produced by its paired
+#   computer. LossQuantitiesT is consequently kept invariant to tie those two
+#   sides together during inference.
+
+ParametersT_contra = TypeVar(
+    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
+)
+
+QuantitiesT_co = TypeVar(
+    "QuantitiesT_co",
+    bound=dict[str, Any],
+    covariant=True,
+    default=dict[str, Any],
+)
+
+LossQuantitiesT = TypeVar(
+    "LossQuantitiesT", bound=dict[str, Any], default=dict[str, Any]
+)
+
+QuantityComputer = ObjectiveComponent[ParametersT_contra, QuantitiesT_co]
+
+def quantity(
+    *,
+    pass_ctx: bool = False,
+) -> Callable[
+    [Callable[Concatenate[ParametersT_contra, ...], QuantitiesT_co]],
+    WrappedComponent[ParametersT_contra, QuantitiesT_co],
+]:
+    """TODO."""
+
+    def wrap(
+        func: Callable[Concatenate[ParametersT_contra, ...], QuantitiesT_co],
+    ) -> WrappedComponent[ParametersT_contra, QuantitiesT_co]:
+        return WrappedComponent(
+            func,
+            pass_ctx=pass_ctx,
+        )
+
+    return wrap
+
+
+def objective(
+    *,
+    pass_ctx: bool = False,
+) -> Callable[
+    [Callable[Concatenate[ParametersT_contra, ...], float]],
+    WrappedComponent[ParametersT_contra, float],
+]:
+    """TODO."""
+
+    def wrap(
+        func: Callable[Concatenate[ParametersT_contra, ...], float],
+    ) -> WrappedComponent[ParametersT_contra, float]:
+        return WrappedComponent(
+            func,
+            pass_ctx=pass_ctx,
+        )
+
+    return wrap

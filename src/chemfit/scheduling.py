@@ -31,11 +31,17 @@ from typing import (
 
 from typing_extensions import Self
 
-from chemfit.abstract_objective_function import EvaluateContext
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    OutputT_co,
+    InputT_contra,
+)
 
 if TYPE_CHECKING:
-    from chemfit.abstract_objective_function import ObjectiveFunctor
+    from chemfit.abstract_objective_function import ObjectiveComponent
 
+
+InputT = TypeVar("InputT")
 ParametersT_co = TypeVar("ParametersT_co", bound=Mapping[str, object], covariant=True)
 ParametersT_contra = TypeVar(
     "ParametersT_contra", bound=Mapping[str, object], contravariant=True
@@ -50,7 +56,7 @@ NodeOutcome: TypeAlias = float | Exception
 
 
 @dataclass(frozen=True)
-class EvaluationRequest(Generic[ParametersT_co]):
+class EvaluationRequest(Generic[InputT]):
     """
     Input for one evaluation in a prepared-schedule batch.
 
@@ -62,12 +68,12 @@ class EvaluationRequest(Generic[ParametersT_co]):
 
     """
 
-    parameters: ParametersT_co
+    parameters: InputT
     ctx: EvaluateContext
 
 
 @dataclass(frozen=True)
-class EvaluationResult:
+class EvaluationResult(Generic[OutputT_co]):
     """
     Outcome of one request submitted through a prepared schedule.
 
@@ -82,7 +88,7 @@ class EvaluationResult:
     """
 
     index: int
-    value: float | Exception
+    value: OutputT_co | Exception
 
     @property
     def success(self) -> bool:
@@ -92,43 +98,7 @@ class EvaluationResult:
 
 
 @runtime_checkable
-class SchedulableCompositeObjective(Protocol[ParametersT_contra]):
-    """
-    Structural interface used to compile and evaluate composite objectives.
-
-    Composite objectives own the semantics of their evaluation scopes. Tree
-    schedulers only discover their children, activate those children, and pass
-    the completed raw child outcomes back for interpretation.
-    """
-
-    def child_objectives(
-        self,
-    ) -> Sequence[ObjectiveFunctor[ParametersT_contra]]:
-        """Return the objectives evaluated as immediate children."""
-
-        ...
-
-    def begin_composite_evaluation(
-        self,
-        parameters: ParametersT_contra,
-        ctx: EvaluateContext,
-    ) -> Sequence[EvaluateContext]:
-        """Begin this evaluation scope and return its child contexts."""
-
-        ...
-
-    def finish_composite_evaluation(
-        self,
-        child_outcomes: Sequence[NodeOutcome],
-        ctx: EvaluateContext,
-    ) -> float:
-        """Interpret completed children and finish this evaluation scope."""
-
-        ...
-
-
-@runtime_checkable
-class PreparedSchedule(Protocol[ParametersT_contra]):
+class PreparedSchedule(Protocol[InputT_contra, OutputT_co]):
     """
     Reusable, objective-specific execution plan produced by a scheduler.
 
@@ -145,7 +115,7 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
 
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[ParametersT_contra]],
+        requests: Sequence[EvaluationRequest[InputT_contra]],
         /,
     ) -> Iterator[EvaluationResult]:
         """
@@ -171,8 +141,8 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
         ...
 
     def evaluate(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext, /
-    ) -> float:
+        self, parameters: InputT_contra, ctx: EvaluateContext, /
+    ) -> OutputT_co:
         """
         Evaluate one parameter mapping synchronously with an explicit context.
 
@@ -196,8 +166,8 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
         ...
 
     def __call__(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
-    ) -> float:
+        self, parameters: InputT_contra, ctx: EvaluateContext | None = None
+    ) -> OutputT_co:
         """
         Evaluate one parameter mapping synchronously.
 
@@ -242,7 +212,7 @@ class PreparedSchedule(Protocol[ParametersT_contra]):
         ...
 
 
-class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
+class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
     """
     Convenience base class for prepared schedules.
 
@@ -261,7 +231,7 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
     @abstractmethod
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[ParametersT_contra]],
+        requests: Sequence[EvaluationRequest[InputT]],
         /,
     ) -> Iterator[EvaluationResult]:
         """
@@ -276,22 +246,22 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
 
     def evaluate(
         self,
-        parameters: ParametersT_contra,
+        parameters: InputT,
         ctx: EvaluateContext,
         /,
-    ) -> float:
+    ) -> OutputT_co:
         """Evaluate one request with an explicit context."""
 
         (result,) = self.evaluate_many(
-            (EvaluationRequest(parameters=parameters, ctx=ctx),)
+            (EvaluationRequest[InputT](parameters=parameters, ctx=ctx),)
         )
         if isinstance(result.value, Exception):
             raise result.value
         return result.value
 
     def __call__(
-        self, parameters: ParametersT_contra, ctx: EvaluateContext | None = None
-    ) -> float:
+        self, parameters: InputT, ctx: EvaluateContext | None = None
+    ) -> OutputT_co:
         """
         Evaluate one parameter mapping synchronously.
 
@@ -361,7 +331,7 @@ class PreparedScheduleBase(ABC, Generic[ParametersT_contra]):
 
 PreparedScheduleT_co = TypeVar(
     "PreparedScheduleT_co",
-    bound=PreparedSchedule[Any],
+    bound=PreparedSchedule[Any, Any],
     covariant=True,
 )
 
@@ -382,7 +352,7 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
     def prepare(
         self,
-        objective: ObjectiveFunctor[ParametersT],
+        objective: ObjectiveComponent[Any, Any],
         /,
     ) -> PreparedScheduleT_co:
         """
@@ -415,16 +385,18 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
         ...
 
 
-class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
-    def __init__(self, ob: ObjectiveFunctor[ParametersT]) -> None:
+class SerialSchedule(
+    PreparedScheduleBase[InputT, OutputT_co], Generic[InputT, OutputT_co]
+):
+    def __init__(self, ob: ObjectiveComponent[InputT, OutputT_co]) -> None:
         """Initialize a reference serial schedule."""
         super().__init__()
         self.ob = ob
 
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[ParametersT]],
-    ) -> Iterator[EvaluationResult]:
+        requests: Sequence[EvaluationRequest[InputT]],
+    ) -> Iterator[EvaluationResult[OutputT_co]]:
         if self.closed:
             msg = "Prepared schedule is closed."
             raise RuntimeError(msg)
@@ -434,19 +406,22 @@ class SerialSchedule(PreparedScheduleBase[ParametersT], Generic[ParametersT]):
                 try:
                     value = self.ob(req.parameters, req.ctx)
                 except Exception as e:  # noqa: PERF203
-                    yield EvaluationResult(index=idx, value=e)
+                    yield EvaluationResult[OutputT_co](index=idx, value=e)
                 else:
-                    yield EvaluationResult(index=idx, value=value)
+                    yield EvaluationResult[OutputT_co](index=idx, value=value)
 
         except BaseException as e:
             self._close_after_catastrophic_failure(e)
             raise
 
 
-class SerialScheduler(Scheduler[SerialSchedule[Any]]):
+class SerialScheduler(
+    Scheduler[SerialSchedule[InputT, OutputT_co]],
+    Generic[InputT, OutputT_co],
+):
     def prepare(
         self,
-        objective: ObjectiveFunctor[ParametersT],
+        objective: ObjectiveComponent[InputT, OutputT_co],
         /,
-    ) -> SerialSchedule[ParametersT]:
+    ) -> SerialSchedule[InputT, OutputT_co]:
         return SerialSchedule(objective)
