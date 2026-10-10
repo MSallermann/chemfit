@@ -1,321 +1,141 @@
-from __future__ import annotations
+"""Direct ObjectiveComponent lifecycle tests (no schedulers)."""
 
-import functools
 import pickle
-import random
-import time
-from typing import TYPE_CHECKING
 
-import numpy as np
 import pytest
 
-from chemfit import abstract_objective_function
-from chemfit.abstract_objective_function import EvaluateContext
-from pydictnest import get_nested, items_nested
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-
-class MyFunctor(abstract_objective_function.ObjectiveFunctor):
-    def _evaluate(
-        self,
-        parameters: dict[str, float],
-        ctx: EvaluateContext,  # noqa: ARG002
-    ) -> float:
-        return parameters["a"] ** 2 - parameters["b"]
+from chemfit.abstract_objective_function import (
+    NO_OUTPUT,
+    ObjectiveComponent,
+    PostEvalHookError,
+    component,
+    quantity,
+)
+from chemfit.evaluate_context import EvaluateContext
 
 
-class MyComputer(abstract_objective_function.QuantityComputer):
-    def _compute(
-        self,
-        parameters: dict[str, float],
-        ctx: abstract_objective_function.EvaluateContext,
-    ) -> dict[str, float]:
-        ctx.temp.a2 = parameters["a"] ** 2
-        ctx.meta["meta_b2"] = parameters["b"] ** 2
-
-        # Sleep for a random time to simulate a variable amount of work
-        time.sleep(random.random() * 0.1)  # noqa: S311
-
-        return {"res": ctx.temp.a2 - parameters["b"]}
+class Square(ObjectiveComponent[int, int]):
+    def _run(self, value: int, /, ctx: EvaluateContext) -> int:
+        ctx.meta["ran"] = True
+        return value * value
 
 
-class _PreHook:
-    def __init__(self, callback: Callable[[EvaluateContext], None]) -> None:
-        self.callback = callback
-
-    def pre_eval(self, ctx: EvaluateContext) -> None:
-        self.callback(ctx)
-
-
-class _PostHook:
-    def __init__(self, callback: Callable[[EvaluateContext], None]) -> None:
-        self.callback = callback
-
-    def post_eval(self, ctx: EvaluateContext) -> None:
-        self.callback(ctx)
-
-
-def test_objective_functor_hooks_run_in_registration_order():
-    objective = MyFunctor()
+def test_hooks_run_in_registration_order():
+    obj = Square().with_meta(tag="square")
     ctx = EvaluateContext()
-    parameters = {"a": 2.0, "b": 3.0}
+    events = []
 
-    # Record observations on the per-evaluation context. Capturing and mutating
-    # a shared list from hooks would be unsafe during concurrent evaluation and
-    # would not propagate back when a hook runs in another process.
-    ctx.meta["hook_calls"] = []
+    def pre(label):
+        def hook(c):
+            events.append((label, c.input, c.output is NO_OUTPUT))
 
-    objective.register_eval_hook(
-        hook=_PreHook(
-            lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
-                ("pre-1", hook_ctx.parameters, hook_ctx.loss)
-            )
-        )
-    )
-    objective.register_eval_hook(
-        hook=_PreHook(
-            lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
-                ("pre-2", hook_ctx.parameters, hook_ctx.loss)
-            )
-        )
-    )
-    objective.register_eval_hook(
-        hook=_PostHook(
-            lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
-                ("post-1", hook_ctx.loss, hook_ctx.temp.exception)
-            )
-        )
-    )
-    objective.register_eval_hook(
-        hook=_PostHook(
-            lambda hook_ctx: hook_ctx.meta["hook_calls"].append(
-                ("post-2", hook_ctx.loss, hook_ctx.temp.exception)
-            )
-        )
-    )
+        return hook
 
-    assert objective(parameters, ctx) == 1.0
-    assert ctx.meta["hook_calls"] == [
-        ("pre-1", parameters, None),
-        ("pre-2", parameters, None),
-        ("post-1", 1.0, None),
-        ("post-2", 1.0, None),
+    def post(label):
+        def hook(c):
+            events.append((label, c.output, c.exception))
+
+        return hook
+
+    obj.register_eval_hook(pre=pre("pre-1"))
+    obj.register_eval_hook(pre=pre("pre-2"))
+    obj.register_eval_hook(post=post("post-1"))
+    obj.register_eval_hook(post=post("post-2"))
+
+    assert obj(3, ctx) == 9
+    assert events == [
+        ("pre-1", 3, True),
+        ("pre-2", 3, True),
+        ("post-1", 9, None),
+        ("post-2", 9, None),
     ]
+    assert ctx.meta == {"ran": True, "tag": "square"}
 
 
-def test_objective_functor_collects_all_post_hook_exceptions():
-    objective = MyFunctor()
+def test_post_hook_errors_are_collected_and_pickleable():
+    obj = Square()
+    observed = []
+
+    def fail(message):
+        def hook(_ctx):
+            observed.append(message)
+            raise ValueError(message)
+
+        return hook
+
+    obj.register_eval_hook(post=fail("first"))
+    obj.register_eval_hook(post=lambda _ctx: observed.append("middle"))
+    obj.register_eval_hook(post=fail("last"))
+
     ctx = EvaluateContext()
-    ctx.meta["hook_calls"] = []
+    with pytest.raises(PostEvalHookError) as exc:
+        obj(2, ctx)
 
-    def fail(hook_ctx: EvaluateContext, message: str) -> None:
-        hook_ctx.meta["hook_calls"].append(message)
-        raise ValueError(message)
-
-    objective.register_eval_hook(
-        hook=_PostHook(functools.partial(fail, message="first failure"))
-    )
-    objective.register_eval_hook(
-        hook=_PostHook(
-            lambda hook_ctx: hook_ctx.meta["hook_calls"].append("successful hook")
-        )
-    )
-    objective.register_eval_hook(
-        hook=_PostHook(functools.partial(fail, message="second failure"))
-    )
-
-    with pytest.raises(
-        abstract_objective_function.ObjectiveFunctor.PostEvalHookError
-    ) as exc_info:
-        objective({"a": 2.0, "b": 3.0}, ctx)
-
-    assert ctx.meta["hook_calls"] == [
-        "first failure",
-        "successful hook",
-        "second failure",
-    ]
-    assert ctx.loss == 1.0
-    assert ctx.temp.exception is None
-    assert [str(exc) for exc in exc_info.value.exceptions] == [
-        "first failure",
-        "second failure",
-    ]
-
-    restored = pickle.loads(pickle.dumps(exc_info.value))  # noqa: S301
-    assert isinstance(
-        restored, abstract_objective_function.ObjectiveFunctor.PostEvalHookError
-    )
-    assert [str(exc) for exc in restored.exceptions] == [
-        "first failure",
-        "second failure",
-    ]
+    assert observed == ["first", "middle", "last"]
+    assert ctx.output == 4
+    assert ctx.exception is None
+    assert [str(e) for e in exc.value.exceptions] == ["first", "last"]
+    restored = pickle.loads(pickle.dumps(exc.value))  # noqa: S301
+    assert [str(e) for e in restored.exceptions] == ["first", "last"]
 
 
-def test_evaluation_exception_remains_primary_when_post_hook_fails():
-    evaluation_error = ValueError("evaluation failed")
+def test_evaluation_error_takes_precedence_over_post_hook_errors():
+    error = ValueError("evaluation failed")
+    observed = []
+
+    @component(pass_ctx=True)
+    def failing(_value, *, ctx):
+        ctx.meta["ran"] = True
+        raise error
+
+    def bad_post(ctx):
+        observed.append(("bad", ctx.output is NO_OUTPUT, ctx.exception is error))
+        raise RuntimeError("post failed")
+
+    def good_post(ctx):
+        observed.append(("good", ctx.output is NO_OUTPUT, ctx.exception is error))
+
+    failing.register_eval_hook(post=bad_post)
+    failing.register_eval_hook(post=good_post)
     ctx = EvaluateContext()
-    ctx.meta["hook_calls"] = []
 
-    class FailingFunctor(abstract_objective_function.ObjectiveFunctor):
-        def _evaluate(
-            self,
-            parameters: dict[str, float],  # noqa: ARG002
-            ctx: EvaluateContext,  # noqa: ARG002
-        ) -> float:
-            raise evaluation_error
+    with pytest.raises(ValueError, match="evaluation failed") as exc:
+        failing(3, ctx)
 
-    def failing_hook(hook_ctx: EvaluateContext) -> None:
-        hook_ctx.meta["hook_calls"].append("failing hook")
-        msg = "post hook failed"
-        raise RuntimeError(msg)
-
-    def observing_hook(hook_ctx: EvaluateContext) -> None:
-        hook_ctx.meta["hook_calls"].append("observing hook")
-        assert hook_ctx.loss is None
-        assert hook_ctx.temp.exception is evaluation_error
-
-    objective = FailingFunctor()
-    objective.register_eval_hook(hook=_PostHook(failing_hook))
-    objective.register_eval_hook(hook=_PostHook(observing_hook))
-
-    with pytest.raises(ValueError, match="evaluation failed") as exc_info:
-        objective({"a": 2.0}, ctx)
-
-    assert exc_info.value is evaluation_error
-    assert ctx.meta["hook_calls"] == ["failing hook", "observing hook"]
+    assert exc.value is error
+    assert observed == [("bad", True, True), ("good", True, True)]
+    assert ctx.meta["ran"] is True
 
 
-def loss1(q: dict[str, float]):
-    return q["res"]
+def test_with_loss_preserves_type_errors():
+    @quantity()
+    def compute(value):
+        return {"value": value}
 
+    def invalid_loss(_quantities):
+        raise TypeError("loss calculation failed")
 
-def loss2(q: dict[str, float], something_else: float):
-    return q["res"] + something_else
-
-
-def loss3(q: dict[str, float], p: dict[str, float]):
-    return q["res"] + p["b"]
-
-
-def test_loss_function_type_error_is_not_reinterpreted_as_arity_mismatch():
-    def broken_loss(_quantities: dict[str, float]) -> float:
-        msg = "loss calculation failed"
-        raise TypeError(msg)
-
-    objective = MyComputer().with_loss(broken_loss)
-
+    ctx = EvaluateContext()
     with pytest.raises(TypeError, match="loss calculation failed"):
-        objective({"a": 2.0, "b": 3.0})
+        compute.with_loss(invalid_loss)(3, ctx)
+
+    assert isinstance(ctx.exception, TypeError)
+    assert len(ctx.pipeline) == 2
+    assert ctx.pipeline[0].output == {"value": 3}
+    assert isinstance(ctx.pipeline[1].exception, TypeError)
 
 
-def test_loss_function_signature_is_validated_during_construction():
-    def invalid_loss() -> float:
-        return 0.0
+def test_bound_arguments_and_optional_loss_argument():
+    @quantity()
+    def compute(value, *, factor):
+        return {"value": value * factor}
 
-    with pytest.raises(TypeError, match="must accept \\(quantities\\)"):
-        MyComputer().with_loss(invalid_loss)  # pyright: ignore[reportArgumentType]
+    def loss(quantities, offset=0):
+        return quantities["value"] + offset
 
-
-def test_optional_second_loss_argument_prefers_quantities_only():
-    def optional_parameters_loss(
-        quantities: dict[str, float],
-        parameters: dict[str, float] | None = None,
-    ) -> float:
-        assert parameters is None
-        return quantities["res"]
-
-    objective = MyComputer().with_loss(optional_parameters_loss)
-
-    assert objective({"a": 2.0, "b": 3.0}) == 1.0
-
-
-def test():
-    my_func = MyFunctor()
-
-    params = {"a": 2.0, "b": 3.0}
-    excepted_res = 2**2 - 3.0
-    assert np.isclose(my_func(params), excepted_res)
-
-    computer = MyComputer()
-    computer.static_meta_data = {"computer_tag": "dolphin"}
-    quants = computer(params, ctx=abstract_objective_function.EvaluateContext())
-    assert np.isclose(quants["res"], excepted_res)
-
-    my_ob1 = abstract_objective_function.QuantityComputerObjectiveFunction(
-        loss_function=loss1, quantity_computer=computer
-    )
-
-    assert np.isclose(my_ob1(params), excepted_res)
-
-    my_ob2 = abstract_objective_function.QuantityComputerObjectiveFunction(
-        loss_function=functools.partial(loss2, something_else=2.0),
-        quantity_computer=computer,
-    )
-
-    assert np.isclose(my_ob2(params), excepted_res + 2.0)
-
-    my_ob3 = abstract_objective_function.QuantityComputerObjectiveFunction(
-        loss_function=loss3,
-        quantity_computer=computer,
-    )
-    my_ob3.static_meta_data = {"ob_tag": "also_dolphin"}
-
+    obj = compute.bind(factor=2).with_loss(loss)
     ctx = EvaluateContext()
-    assert np.isclose(my_ob3(params, ctx), excepted_res + params["b"])
 
-    meta_data = ctx.to_summary()
-
-    meta_data_expected = {
-        "quantities": {"res": 1.0},
-        "parameters": {"a": 2.0, "b": 3.0},
-        "loss": 4.0,
-        "meta": {
-            "computer_tag": "dolphin",
-            "ob_tag": "also_dolphin",
-            "meta_b2": params["b"] ** 2,
-        },
-    }
-
-    for k, v in items_nested(meta_data):
-        expected = get_nested(meta_data_expected, k)
-
-        if isinstance(v, float):
-            assert np.isclose(expected, v)
-        else:
-            assert v == expected
-
-
-def test_context_stuff():
-    # spawn children
-    ctx = EvaluateContext()
-    ctx.config.some_dict = {"bla": 3}
-    children = ctx.spawn_children(3)
-
-    # have the children spawn children
-    [c.spawn_children(i) for i, c in enumerate(children)]
-
-    # make sure all the copies of the dict are different entitites
-    assert children[0].config.some_dict == children[1].config.some_dict
-    children[0].config.some_dict["bla"] = (
-        4  # this should only change the value of "bla" in the first child
-    )
-    assert (
-        children[0].config.some_dict != children[1].config.some_dict
-    )  # so these must be different now
-
-    assert ctx.children == tuple(children)
-    assert len(ctx.children) == 3
-    summary = ctx.to_summary(recursive=True)
-    assert len(summary["children"]) == 3
-
-    for i, child in enumerate(ctx.children):
-        assert child.parents == (ctx,)
-        if i == 0:  # the first child has no children
-            assert child.children == ()
-            assert summary["children"][i]["children"] == []
-        else:
-            assert len(child.children) == i
-            assert len(summary["children"][i]["children"]) == i
-            assert all(grandchild.parents == (child,) for grandchild in child.children)
+    assert obj(3, ctx) == 6
+    assert [stage.output for stage in ctx.pipeline] == [{"value": 6}, 6]
+    assert compute.bind(factor=3).with_loss(loss, offset=4)(3) == 13

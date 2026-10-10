@@ -99,7 +99,7 @@ def _relative_paths(output_files: tuple[Path | str, ...]) -> tuple[Path, ...]:
 
 
 class ExternalQuantityComputer(
-    QuantityComputer[ParametersT, QuantitiesT], Generic[ParametersT, QuantitiesT]
+    QuantityComputer[ParametersT, QuantitiesT]
 ):
     def __init__(
         self,
@@ -463,7 +463,7 @@ class ExternalQuantityComputer(
         )
         return new
 
-    def _compute(
+    def _run(
         self,
         parameters: ParametersT,
         ctx: EvaluateContext,

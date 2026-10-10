@@ -1,36 +1,38 @@
 from __future__ import annotations
 
-import copy
+import inspect
 import math
+import numbers
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import Protocol, TypeVar, cast
 
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import (
     NO_OUTPUT,
     EvaluateContext,
-    ObjectiveFunctor,
+    JoinedComponent,
+    NoOutput,
+    ObjectiveComponent,
+    WrappedComponent,
 )
-from chemfit.scheduling import (
-    NodeOutcome,
-    SchedulableCompositeObjective,
-)
-from chemfit.wrap_funcs import WrappedObjectiveFunctor
+from chemfit.scheduling import NodeOutcome
 
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
-ObjectiveLike = Callable[[ParametersT], float] | ObjectiveFunctor[ParametersT]
+QuantitiesT_co = TypeVar("QuantitiesT_co", bound=Mapping[str, object])
+ObjectiveLike = Callable[[ParametersT], float] | ObjectiveComponent[ParametersT, float]
 
 
 def transform_generic_callables(
     list_of_callables: Sequence[ObjectiveLike[ParametersT]],
-) -> list[ObjectiveFunctor[ParametersT]]:
-    res: list[ObjectiveFunctor[ParametersT]] = []
+) -> list[ObjectiveComponent[ParametersT, float]]:
+    res: list[ObjectiveComponent[ParametersT, float]] = []
+
     for func in list_of_callables:
-        if isinstance(func, ObjectiveFunctor):
+        if isinstance(func, ObjectiveComponent):
             res.append(func)
         else:
-            res.append(WrappedObjectiveFunctor(func))
+            res.append(WrappedComponent(func))
     return res
 
 
@@ -54,17 +56,11 @@ def _validate_weights(weights: Sequence[float], n_objectives: int) -> None:
 
 
 class Reducer(Protocol):
-    def __call__(self, terms: list[float], /) -> float: ...
+    def __call__(self, terms: list[float], *, ctx: EvaluateContext) -> float: ...
 
 
-class Aggregator(Protocol):
-    def __call__(
-        self,
-        terms: list[float],
-        quantities: list[dict[str, Any] | None],
-        ctx: EvaluateContext,
-        /,
-    ) -> float: ...
+class SimpleReducer(Protocol):
+    def __call__(self, terms: list[float]) -> float: ...
 
 
 def sum_reducer(terms: list[float]) -> float:
@@ -77,6 +73,37 @@ def mean_reducer(terms: list[float]) -> float:
 
 def root_mean_reducer(terms: list[float]) -> float:
     return math.sqrt(mean_reducer(terms))
+
+
+def accepts_ctx(reducer: Callable) -> bool:
+    sig = inspect.signature(reducer)
+
+    param = sig.parameters.get("ctx")
+    if param is not None:
+        return param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        )
+
+    return any(
+        param.kind == inspect.Parameter.VAR_KEYWORD for param in sig.parameters.values()
+    )
+
+
+class WrappedReducer:
+
+    def __init__(self, reducer: SimpleReducer | Reducer):
+        self.reducer: SimpleReducer | Reducer = reducer
+        self.pass_ctx: bool = accepts_ctx(reducer)
+
+    def __call__(self, terms: list[float], *, ctx: EvaluateContext) -> float:
+        if self.pass_ctx:
+            return self.reducer(terms, ctx=ctx)  # type: ignore[call-arg]
+        return self.reducer(terms)  # type: ignore[call-arg]
+
+
+def wrap_reducer(reducer: SimpleReducer | Reducer) -> Reducer:
+    return WrappedReducer(reducer)
 
 
 class ExceptionHandler(Protocol):
@@ -109,35 +136,13 @@ def skip_exception_handler(
     return None
 
 
-class WrappedReducer(Aggregator):
-    def __init__(self, reducer: Reducer) -> None:
-        """A reducer that is wrapped in order to be used like an Aggregator."""
-        self.reducer = reducer
-
-    def __call__(
-        self,
-        terms: Sequence[float],
-        quantities: Sequence[dict[str, Any] | None],  # noqa: ARG002
-        ctx: EvaluateContext,  # noqa: ARG002
-    ) -> float:
-        return self.reducer(list(terms))
-
-    def to_reducer(self) -> Reducer:
-        return self.reducer
-
-
-class CombinedObjectiveFunction(
-    ObjectiveFunctor[ParametersT],
-    SchedulableCompositeObjective[ParametersT],
-    Generic[ParametersT],
-):
+class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
     def __init__(
         self,
         objective_functions: Sequence[ObjectiveLike[ParametersT]],
         weights: Sequence[float] | None = None,
-        reduction: Reducer | None = None,
+        reduction: Reducer | SimpleReducer | None = None,
         exception_handler: ExceptionHandler = raising_exception_handler,
-        aggregator: Aggregator | None = None,
     ) -> None:
         """
         Initialize a combined objective from multiple weighted terms.
@@ -162,9 +167,6 @@ class CombinedObjectiveFunction(
             exception_handler: Callable used to handle exceptions raised
                 during term evaluation. It may return a replacement value or
                 ``None`` to skip the term entirely.
-            aggregator: Context-aware callable that reduces weighted term values
-                using child quantities and the parent context. Mutually exclusive
-                with ``reduction``.
 
         Raises:
             ValueError: If no objective functions are supplied, both ``reduction``
@@ -173,58 +175,22 @@ class CombinedObjectiveFunction(
 
         """
 
-        super().__init__()
-
-        if len(objective_functions) == 0:
-            msg = "Cannot construct CombinedObjectiveFunction with zero terms."
-            raise ValueError(msg)
-
-        self._objective_functions = tuple(
-            transform_generic_callables(objective_functions)
+        super().__init__(
+            components=tuple(transform_generic_callables(objective_functions))
         )
 
-        if reduction is not None and aggregator is not None:
-            msg = "Specify either `reduction` or `aggregator`, not both."
-            raise ValueError(msg)
-
-        if aggregator is None:
-            reducer = sum_reducer if reduction is None else reduction
-            self.reduction: Aggregator = WrappedReducer(reducer)
-        else:
-            self.reduction = aggregator
+        self.reduction: Reducer = wrap_reducer(
+            sum_reducer if reduction is None else reduction
+        )
 
         self.exception_handler = exception_handler
-
         if weights is None:
-            configured_weights = [1.0] * len(self._objective_functions)
+            configured_weights = [1.0] * self.n_components()
         else:
             configured_weights = list(weights)
 
-        _validate_weights(configured_weights, len(self._objective_functions))
+        _validate_weights(configured_weights, self.n_components())
         self._weights = tuple(configured_weights)
-
-    def _copy(self) -> Self:
-        """Return a shallow copy with independent mutable base configuration."""
-
-        new = copy.copy(self)
-        new.pre_eval_hooks = self.pre_eval_hooks.copy()
-        new.post_eval_hooks = self.post_eval_hooks.copy()
-        new.static_meta_data = self.static_meta_data.copy()
-        return new
-
-    def with_meta(self, /, **meta: Any) -> Self:
-        """
-        Return a copy with additional static evaluation metadata.
-
-        Existing metadata and combined-objective configuration are preserved.
-        Static metadata and hook registration lists are independent on the
-        returned objective; child objectives and hook objects themselves remain
-        shared.
-        """
-
-        new = self._copy()
-        new.static_meta_data.update(meta)
-        return new
 
     def with_weights(self, weights: Sequence[float], /) -> Self:
         """
@@ -251,12 +217,15 @@ class CombinedObjectiveFunction(
         """
 
         new_weights = list(weights)
-        _validate_weights(new_weights, len(self._objective_functions))
-        new = self._copy()
+        _validate_weights(new_weights, self.n_components())
+        new = self.copy()
         new._weights = tuple(new_weights)  # noqa: SLF001
         return new
 
-    def with_reduction(self, reduction: Reducer, /) -> Self:
+    def with_reduction(
+        self,
+        reduction: SimpleReducer | Reducer,
+    ) -> Self:
         """
         Return a copy using a simple reducer for weighted term values.
 
@@ -280,35 +249,8 @@ class CombinedObjectiveFunction(
 
         """
 
-        new = self._copy()
-        new.reduction = WrappedReducer(reduction)
-        return new
-
-    def with_aggregator(self, aggregator: Aggregator, /) -> Self:
-        """
-        Return a copy using a context-aware term aggregator.
-
-        Args:
-            aggregator: Callable receiving weighted values, child quantities,
-                and the parent evaluation context.
-
-        Returns:
-            A configured copy; the source objective is unchanged.
-
-        Notes:
-            This replaces any reducer or aggregator configured earlier in the
-            fluent chain. A later :meth:`with_reduction` call replaces it in
-            turn.
-
-        Examples:
-            Configure a context-aware aggregation::
-
-                objective = chemfit.combine(terms).with_aggregator(my_aggregator)
-
-        """
-
-        new = self._copy()
-        new.reduction = aggregator
+        new = self.copy()
+        new.reduction = wrap_reducer(reduction)
         return new
 
     def with_exception_handler(
@@ -341,138 +283,43 @@ class CombinedObjectiveFunction(
 
         """
 
-        new = self._copy()
+        new = self.copy()
         new.exception_handler = exception_handler
         return new
 
-    def child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
-        """Return the immediate objective terms in evaluation order."""
-
-        return self._objective_functions
-
-    def _child_objectives(self) -> tuple[ObjectiveFunctor[ParametersT], ...]:
-        """Return child objectives for recursive objective operations."""
-
-        return self.child_objectives()
-
-    def begin_composite_evaluation(
-        self,
-        parameters: ParametersT,
-        ctx: EvaluateContext,
-    ) -> Sequence[EvaluateContext]:
-        """Begin the lifecycle and create configured child contexts."""
-
-        try:
-            self._begin_evaluation(parameters, ctx)
-            child_contexts = ctx.spawn_children(
-                self.n_terms(),
-            )
-        except Exception as exception:
-            self._end_evaluation(NO_OUTPUT, ctx, exception)
-            raise
-
-        return child_contexts
-
-    def finish_composite_evaluation(
-        self,
-        child_outcomes: Sequence[NodeOutcome],
-        ctx: EvaluateContext,
+    def combine_outcomes(
+        self, outcomes: Sequence[float | Exception | NoOutput], ctx: EvaluateContext
     ) -> float:
-        """Interpret child outcomes, reduce them, and end the lifecycle."""
-
-        try:
-            terms: list[float | None] = []
-            for idx, (outcome, child_ctx) in enumerate(
-                zip(child_outcomes, ctx.children, strict=True)
-            ):
-                if isinstance(outcome, Exception):
-                    term = self.exception_handler(outcome, child_ctx, idx)
-                else:
-                    try:
-                        term = outcome * self._weights[idx]
-                    except Exception as exception:
-                        term = self.exception_handler(exception, child_ctx, idx)
-                terms.append(term)
-
-            ctx.loss = self._reduce_terms(terms, ctx)
-        except BaseException as exception:
-            self._end_evaluation(NO_OUTPUT, ctx, exception)
-            raise
-        else:
-            self._end_evaluation(ctx.loss, ctx, None)
-
-        return cast("float", ctx.loss)
-
-    def n_terms(self) -> int:
-        """Return the number of objective terms."""
-        return len(self._weights)
-
-    def filter_terms(
-        self, terms: list[float | None], ctx: EvaluateContext
-    ) -> list[float]:
         """
-        Filter out terms that are 'None', while recording the skipped terms in ctx.meta['skipped_indices'].
+        Combine outcomes.
+
+        Applies exception handler and filters out terms that are 'None'
+        while recording the skipped terms in ctx.meta['skipped_indices'].
 
         Side effects:
             - Writes to ctx.meta['skipped_indices']
+
         """
+
+        outcomes_filtered: list[float | None | Exception | NoOutput] = list(outcomes)
+
+        # apply exception handlers to outcomes
+        for i in range(self.n_components()):
+            t = outcomes[i]
+            if isinstance(t, Exception):
+                outcomes_filtered[i] = self.exception_handler(t, ctx.incoming[i], i)
+
         skipped_indices = []
         filtered_terms = []
-        for i, t in enumerate(terms):
+        for i, (t, w) in enumerate(zip(outcomes_filtered, self._weights, strict=True)):
             if t is None:
                 skipped_indices.append(i)
+            elif isinstance(t, numbers.Real):
+                filtered_terms.append(t * w)
             else:
-                filtered_terms.append(t)
+                msg = f"Invalid term encountered: index {i}, term {t}"
+                raise ValueError(msg)
+
         ctx.meta["skipped_indices"] = skipped_indices
-        return filtered_terms
 
-    def apply_reduction(self, terms: Sequence[float], ctx: EvaluateContext) -> float:
-        child_quantities: list[dict[str, Any] | None] = []
-        for idx, child in enumerate(ctx.children):
-            if idx not in ctx.meta["skipped_indices"]:
-                child_quantities.append(child.quantities)
-        return self.reduction(list(terms), child_quantities, ctx)
-
-    def _reduce_terms(
-        self,
-        terms: Sequence[float | None],
-        ctx: EvaluateContext,
-    ) -> float:
-        """Compute this COB's result from precomputed immediate term results."""
-
-        if len(terms) != self.n_terms():
-            msg = f"Expected {self.n_terms()} terms, got {len(terms)}."
-            raise ValueError(msg)
-
-        ctx.meta["n_terms"] = self.n_terms()
-
-        return self.apply_reduction(
-            self.filter_terms(list(terms), ctx),
-            ctx,
-        )
-
-    def evaluate_weighted_term(
-        self, parameters: ParametersT, idx: int, ctx: EvaluateContext
-    ):
-        try:
-            return self._objective_functions[idx](parameters, ctx) * self._weights[idx]
-        except Exception as e:
-            return self.exception_handler(e, ctx, idx)
-
-    def _run(
-        self,
-        parameters: ParametersT,
-        ctx: EvaluateContext,
-    ) -> float:
-        ctx.spawn_children(self.n_terms())
-
-        terms = [
-            self.evaluate_weighted_term(
-                parameters,
-                idx,
-                child_ctx,
-            )
-            for idx, child_ctx in enumerate(ctx.children)
-        ]
-
-        return self._reduce_terms(terms, ctx)
+        return self.reduction(list(filtered_terms), ctx=ctx)
