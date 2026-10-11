@@ -1,161 +1,217 @@
-from dataclasses import dataclass
-from typing import Any, TypeAlias
+from dataclasses import dataclass, replace
+from pathlib import Path
+from typing import Any, Literal, TypeAlias
 
-from chemfit.abstract_objective_function import ObjectiveFunctor
-from chemfit.scheduling import SchedulableCompositeObjective
+from chemfit.abstract_objective_function import (
+    PARENT_INPUT,
+    ObjectiveComponent,
+    ParentInput_,
+    StructuralComponent,
+)
 
-NodeId: TypeAlias = int
+
+class Root_: ...  # noqa: N801
+
+
+ROOT = Root_()
+
+
+@dataclass
+class GraphNode:
+    id: int
+    objective: ObjectiveComponent[Any, Any]
+    outgoing: tuple[int, ...] = ()
+    incoming: tuple[int, ...] = ()
+
+    # Input source, ROOT for the root parameters of
+    # of the evaluation
+    # or a node id for the output of a component
+    # if the tuple contains more than one element
+    # a tuple of inputs is passed
+    # If it contains exactly one element that element
+    # is passed without the surrounding tuple
+    inputs: tuple[int | Root_, ...] = ()
+
+
+class StartNode(GraphNode):
+    pass
+
+
+class FinishNode(GraphNode):
+    pass
+
+
+class AtomicNode(GraphNode):
+    pass
 
 
 @dataclass(frozen=True)
-class LeafNode:
-    id: NodeId
-    parent_id: NodeId | None
-    child_idx: int | None
-    objective: ObjectiveFunctor[Any]
+class CallGraph:
+    nodes: tuple[GraphNode, ...]
 
 
-@dataclass(frozen=True)
-class CombineNode:
-    id: NodeId
-    parent_id: NodeId | None
-    child_idx: int | None
-    objective: SchedulableCompositeObjective[Any]
-    children: tuple[NodeId, ...]
+def objective_to_call_graph(
+    objective: ObjectiveComponent[Any, Any],
+) -> CallGraph:
 
+    nodes: list[GraphNode] = []
 
-CallNode: TypeAlias = LeafNode | CombineNode
+    def connect(source: int, target: int) -> None:
+        """``source`` must exectute before ``target."""
 
+        a, b = nodes[source], nodes[target]
+        nodes[source].outgoing = (*a.outgoing, target)
+        nodes[target].incoming = (*b.incoming, source)
 
-@dataclass(frozen=True)
-class CallTree:
-    root: NodeId
-    nodes: tuple[CallNode, ...]
+    def add_input(source: int | Root_, target: int) -> None:
+        """
+        ``source``'s output is an input to ``target.
 
+        Only call this after calling ``connect(source,target)``
+        """
 
-def build_nodes_from_objective(
-    objective: ObjectiveFunctor[Any],
-    nodes: list[CallNode] | None = None,
-) -> list[CallNode]:
-    """Build call-tree nodes for an ordinary or composite objective."""
+        tgt_node = nodes[target]
 
-    if nodes is None:
-        nodes = []
+        if not isinstance(source, Root_):
+            src_node = nodes[source]
+            assert target in src_node.outgoing
+            assert source in tgt_node.incoming
 
-    def add_objective(
-        objective: ObjectiveFunctor[Any],
-        parent_id: NodeId | None,
-        child_idx: NodeId | None,
-    ) -> NodeId:
-        # the id of the current node is simply its position in the node list
-        node_id = len(nodes)
+        nodes[target].inputs = (*tgt_node.inputs, source)
 
-        # if the current node is a leaf, we simply append it to the node list and return
-        if not isinstance(objective, SchedulableCompositeObjective):
+    def add(
+        component: ObjectiveComponent[Any, Any],
+    ) -> tuple[int, int]:
+
+        if not isinstance(component, StructuralComponent):
+            # non-structural components get a simple atomic node
+            node_id = len(nodes)
             nodes.append(
-                LeafNode(
-                    node_id,
-                    parent_id,
-                    child_idx,
-                    objective,
+                AtomicNode(
+                    id=node_id,
+                    objective=component,
+                    incoming=(),
+                    outgoing=(),
                 )
             )
-            return node_id
-
-        # Reserve a composite node's position before recursively adding its
-        # children so that every node ID remains equal to its list index.
-        nodes.append(
-            CombineNode(
-                node_id,
-                parent_id,
-                child_idx,
-                objective,
-                children=(),
-            )
-        )
-
-        # Then we figure out its children by recursion
-        children = tuple(
-            add_objective(term, parent_id=node_id, child_idx=child_idx)
-            for child_idx, term in enumerate(objective.child_objectives())
-        )
-
-        # Finally, we can replace the temporary node with a fresh one, now that child IDs are known.
-        # (We cannot just overwrite .children since CombineNode is a frozen dataclass)
-        nodes[node_id] = CombineNode(
-            node_id,
-            parent_id,
-            child_idx=child_idx,
-            objective=objective,
-            children=children,
-        )
-
-        return node_id
-
-    # On the first invocation we add the root node, so parent_id is None
-    add_objective(objective, parent_id=None, child_idx=None)
-    return nodes
-
-
-def build_nodes_from_cob(
-    cob: ObjectiveFunctor[Any],
-    nodes: list[CallNode] | None = None,
-) -> list[CallNode]:
-    """Build nodes through the legacy generalized-builder entry point."""
-
-    return build_nodes_from_objective(cob, nodes)
-
-
-def print_call_tree(tree: CallTree) -> None:
-    """Print a CallTree as a tree drawing."""
-
-    def label(node_id: NodeId) -> str:
-        node = tree.nodes[node_id]
-        obj = node.objective
-
-        name = getattr(obj, "__name__", obj.__class__.__name__)
-        return (
-            f"[{node_id}] {name} (parent={node.parent_id}, child_idx={node.child_idx})"
-        )
-
-    def visit(
-        node_id: NodeId,
-        prefix: str = "",
-        is_last: bool = True,
-        is_root: bool = False,
-    ) -> None:
-        node = tree.nodes[node_id]
-
-        if is_root:
-            print(label(node_id))
+            return node_id, node_id
         else:
-            branch = "└── " if is_last else "├── "
-            print(prefix + branch + label(node_id))
+            # add the start node of the structural component
+            start_id = len(nodes)
+            nodes.append(StartNode(start_id, component))
 
-        if not isinstance(node, CombineNode):
-            return
+            #######################################
+            # Add contained components and finish node
+            #######################################
 
-        child_prefix = prefix
-        if not is_root:
-            child_prefix += "    " if is_last else "│   "
+            contained_components = component.components()
+            component_start_ids = []
+            component_end_ids = []
+            # we dont know the node_ids of later stages yet
+            # so it's not possible to populate outgoing/incoming
+            # Therefore, we first collect all the component start and end ids
+            # and add them to the nodes list
+            for comp in contained_components:
+                cur_start_id, cur_end_id = add(comp)
+                component_start_ids.append(cur_start_id)
+                component_end_ids.append(cur_end_id)
 
-        for i, child_id in enumerate(node.children):
-            visit(
-                child_id,
-                prefix=child_prefix,
-                is_last=i == len(node.children) - 1,
+            # we can already append the finish node
+            # it depends on all contained components finishing (duh)
+            end_id = len(nodes)
+            nodes.append(FinishNode(end_id, component))
+
+            ####################################
+            # Hook up the dependencies
+            ####################################
+
+            # 1. The contained components depend on the start node
+            for comp_start_id in component_start_ids:
+                connect(start_id, comp_start_id)
+
+            # 2. the end node depends on the contained components
+            for comp_end_id in component_end_ids:
+                connect(comp_end_id, end_id)
+
+            # 3. hook up incoming/outgoing for the contained components
+            # ... query component dependencies from the containing structural component
+            component_dependencies = component.component_dependencies()
+            # ... query component inputs from the containing structural component
+            component_inputs = component.component_inputs()
+
+            for idx, comp_start_id in enumerate(component_start_ids):
+                # Each component start depends on the end of its dependencies
+                for d in component_dependencies[idx]:
+                    connect(component_end_ids[d], comp_start_id)
+
+                for i in component_inputs[idx]:
+                    source: int = (
+                        start_id
+                        if isinstance(i, ParentInput_)
+                        else component_end_ids[i]
+                    )
+                    add_input(source, comp_start_id)
+
+            # return the start and end id of the structural component
+            return start_id, end_id
+
+    start_id, end_id = add(objective)
+    add_input(ROOT, start_id)
+
+    return CallGraph(nodes=tuple(nodes))
+
+
+def call_graph_to_dot(
+    graph: CallGraph,
+    dot_output_path: Path | None = None,
+    svg_output_path: Path | None = None,
+) -> str:
+    import subprocess
+
+    """Generate a Graphviz DOT representation of a CallGraph."""
+
+    lines = [
+        "digraph CallGraph {",
+        "    rankdir=LR;",
+        '    node [shape=box, style=rounded, fontname="Helvetica"];',
+        '    edge [fontname="Helvetica"];',
+        '    ROOT [shape=ellipse, label="ROOT"];',
+    ]
+
+    for node in graph.nodes:
+        kind = type(node).__name__.removesuffix("Node")
+        component = type(node.objective).__name__
+
+        lines.append(f'    n{node.id} [label="{node.id}: {kind}\\n{component}"];')
+
+    # Execution dependencies
+    for node in graph.nodes:
+        for target in node.outgoing:
+            lines.append(f"    n{node.id} -> n{target};")  # noqa: PERF401
+
+    # Dataflow
+    for node in graph.nodes:
+        for index, source in enumerate(node.inputs):
+            source_id = "ROOT" if isinstance(source, Root_) else f"n{source}"
+            lines.append(
+                f"    {source_id} -> n{node.id} "
+                f'[style=dashed, color=blue, label="{index}"];'
             )
 
-    visit(tree.root, is_root=True)
+    lines.append("}")
+    res = "\n".join(lines)
 
+    if dot_output_path is not None:
+        with dot_output_path.open("w") as f:
+            f.write(res)
 
-def objective_to_call_tree(objective: ObjectiveFunctor[Any]) -> CallTree:
-    """Compile an ordinary or composite objective into a call tree."""
+    if svg_output_path is not None:
+        if dot_output_path is None:
+            msg = "Have to set `dot_output_path` if `svg_output_path` is set."
+            raise ValueError(msg)
 
-    return CallTree(0, tuple(build_nodes_from_objective(objective)))
+        subprocess.run(
+            ["dot", "-Tsvg", f"{dot_output_path}", "-o", f"{svg_output_path}"]
+        )
 
-
-def cob_to_call_tree(cob: ObjectiveFunctor[Any]) -> CallTree:
-    """Compile an objective while preserving the legacy entry point."""
-
-    return objective_to_call_tree(cob)
+    return res

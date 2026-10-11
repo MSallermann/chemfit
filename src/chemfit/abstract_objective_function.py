@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, overload
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
-from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
+from typing_extensions import Concatenate, Self, TypeVar, Literal  # noqa: UP035
 
 from chemfit.evaluate_context import EvaluateContext, NoOutput, NO_OUTPUT
 
@@ -179,7 +179,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
                     cast("Callable[[EvaluateContext], None]", post_eval)
                 )
             if recursive and isinstance(component, StructuralComponent):
-                pending.extend(reversed(component.child_components()))
+                pending.extend(reversed(component.components()))
 
         return self
 
@@ -257,6 +257,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
 
 MiddleT = TypeVar("MiddleT")
+NextT = TypeVar("NextT")
 
 
 class OpaqueThen(
@@ -390,8 +391,16 @@ def component(
 ComponentExpr = ObjectiveComponent[InputT_contra, OutputT_co]
 
 
+class ParentInput_: ...  # noqa: N801
+
+
+PARENT_INPUT = ParentInput_()
+
+type InputSource = int | ParentInput_
+
+
 class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
-    def child_components(
+    def components(
         self,
     ) -> Sequence[ComponentExpr[Any, Any]]:
         """
@@ -402,7 +411,7 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         """
         raise NotImplementedError
 
-    def child_dependencies(
+    def component_dependencies(
         self,
     ) -> tuple[tuple[int, ...], ...]:
         """
@@ -417,27 +426,14 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         """
         raise NotImplementedError
 
-    def child_input(
-        self,
-        index: int,
-        input_: InputT_contra,
-        outcomes: Sequence[Any],
-    ) -> Any:
+    def component_inputs(self) -> tuple[tuple[InputSource, ...], ...]:
         """
-        Construct the input for a child component.
+        Declare the input sources for each component.
 
-        Args:
-            index: Index of the child to evaluate.
-            input_: Original input received by this structural component.
-            outcomes: Outcomes of previously completed children, indexed
-                according to child_components().
+        Each outer tuple entry corresponds to a component in components().
 
-        Returns:
-            Input to pass to the selected child.
-
-        Raises:
-            Exception: If a dependency failed and the child cannot execute.
-
+        PARENT_INPUT means the input received by this structural component.
+        An integer refers to the
         """
         raise NotImplementedError
 
@@ -467,7 +463,8 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         raise NotImplementedError
 
     def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
-        components = self.child_components()
+        components = self.components()
+        input_specs = self.component_inputs()
 
         child_ctxs = [ctx.spawn_ctx() for _ in components]
         for child_ctx in child_ctxs:
@@ -477,16 +474,22 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         # of a child have completed before it is evaluated.
         outcomes: list[Any] = [NO_OUTPUT] * len(components)
 
-        for idx, (comp, child_ctx) in enumerate(
-            zip(components, child_ctxs, strict=True)
+        for idx, (comp, child_ctx, sources) in enumerate(
+            zip(components, child_ctxs, input_specs, strict=True)
         ):
-            # Construct the input using completed dependency outcomes.
-            child_input = self.child_input(idx, input_, outcomes)
-
-            # Store the result or exception at the child's actual index.
             try:
+                # Construct the input using completed dependency outcomes.
+                inputs = [
+                    input_ if source is PARENT_INPUT else outcomes[cast("int", source)]
+                    for source in sources
+                ]
+                for value in inputs:
+                    if isinstance(value, Exception):
+                        raise value
+                child_input = inputs[0] if len(inputs) == 1 else tuple(inputs)
                 outcomes[idx] = comp(child_input, child_ctx)
-            except Exception as e:
+
+            except Exception as e:  # noqa: PERF203
                 outcomes[idx] = e
 
         return self.combine_outcomes(outcomes, ctx)
@@ -496,33 +499,28 @@ class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
     def __init__(self, components: tuple[ObjectiveComponent[InputT_contra, Any], ...]):
         super().__init__()
 
-        self.components = components
+        self._components = components
 
-        if not self.components:
+        if not self._components:
             msg = "Need at least one component to construct a joined Component"
             raise ValueError(msg)
 
     def n_components(self):
-        return len(self.components)
+        return len(self._components)
 
-    def child_components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+    def components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
         """Return the independently evaluated components."""
-        return self.components
+        return self._components
 
-    def child_dependencies(
-        self,
-    ) -> tuple[tuple[int, ...], ...]:
+    def component_dependencies(self) -> tuple[tuple[int, ...], ...]:
         """All components are independent."""
-        return tuple(() for _ in self.components)
+        return tuple(() for _ in self._components)
 
-    def child_input(
+    def component_inputs(
         self,
-        index: int,
-        input_: InputT_contra,
-        outcomes: Sequence[Any | Exception | NoOutput],
     ) -> Any:
-        """All components receive the same input."""
-        return input_
+        """All components receive the parent input."""
+        return tuple((PARENT_INPUT,) for _ in self.components())
 
     def combine_outcomes(
         self,
@@ -542,55 +540,43 @@ class TupleJoinedComponent(JoinedComponent[InputT_contra, tuple[Any, ...]]):
         return tuple(outcomes)
 
 
-class ThenComponent(
-    StructuralComponent[InputT_contra, OutputT_co],
-    Generic[InputT_contra, MiddleT, OutputT_co],
-):
+class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
+
     def __init__(
         self,
         first: ObjectiveComponent[InputT_contra, MiddleT],
         second: ObjectiveComponent[MiddleT, OutputT_co],
     ) -> None:
+        """bla."""
         super().__init__()
-        self.first = first
-        self.second = second
+        self._components: list[ObjectiveComponent[Any, Any]] = [first, second]
 
-    def child_components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
-        """Return the independently evaluated components."""
-        return (self.first, self.second)
-
-    def child_dependencies(
+    def then(
         self,
-    ) -> tuple[tuple[int, ...], ...]:
-        """Second depends on first."""
-        return ((), (0,))
+        next_component: ObjectiveComponent[OutputT_co, NextT],
+    ) -> PipelineComponent[InputT_contra, NextT]:
+        new = self.copy()
+        new._components = [*self._components, next_component]  # noqa: SLF001
+        return cast("PipelineComponent[InputT_contra,NextT]", new)
 
-    def child_input(
-        self,
-        index: int,
-        input_: InputT_contra,
-        outcomes: Sequence[Any],
-    ) -> Any:
-        """First component receives the original input, second receives firsts output."""
-        if index == 0:
-            return input_
+    def components(self):
+        return self._components
 
-        if isinstance(outcomes[0], Exception):
-            raise outcomes[0]
+    def component_dependencies(self):
+        return tuple((i - 1,) if i else () for i in range(len(self._components)))
 
-        return outcomes[0]
+    def component_inputs(self):
+        return (
+            (PARENT_INPUT,),
+            *((i - 1,) for i in range(1, len(self._components))),
+        )
 
     def combine_outcomes(
-        self,
-        outcomes: Sequence[Any],
-        ctx: EvaluateContext,
-    ) -> OutputT_co:
-        """Simply return the outcome of second."""
-        outcome = outcomes[1]
-
+        self, outcomes: Sequence[Any | Exception | NoOutput], ctx: EvaluateContext
+    ):
+        outcome = outcomes[-1]
         if isinstance(outcome, Exception):
             raise outcome
-
         return cast("OutputT_co", outcome)
 
 
@@ -624,6 +610,7 @@ LossQuantitiesT = TypeVar(
 )
 
 QuantityComputer = ObjectiveComponent[ParametersT_contra, QuantitiesT_co]
+
 
 def quantity(
     *,
