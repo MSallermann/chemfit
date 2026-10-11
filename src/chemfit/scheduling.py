@@ -17,14 +17,13 @@ protocol.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
     Generic,
     Protocol,
-    TypeAlias,
     TypeVar,
     runtime_checkable,
 )
@@ -33,30 +32,16 @@ from typing_extensions import Self
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
-    OutputT_co,
     InputT_contra,
+    OutputT_co,
 )
 
 if TYPE_CHECKING:
     from chemfit.abstract_objective_function import ObjectiveComponent
 
 
-InputT = TypeVar("InputT")
-ParametersT_co = TypeVar("ParametersT_co", bound=Mapping[str, object], covariant=True)
-ParametersT_contra = TypeVar(
-    "ParametersT_contra", bound=Mapping[str, object], contravariant=True
-)
-ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
-ResultT_co = TypeVar("ResultT_co", covariant=True)
-
-# A scheduled objective-tree node produces either a numerical value or an
-# ordinary evaluation exception. Catastrophic BaseException subclasses escape
-# the scheduling protocol.
-NodeOutcome: TypeAlias = float | Exception
-
-
 @dataclass(frozen=True)
-class EvaluationRequest(Generic[InputT]):
+class EvaluationRequest(Generic[InputT_contra]):
     """
     Input for one evaluation in a prepared-schedule batch.
 
@@ -68,7 +53,7 @@ class EvaluationRequest(Generic[InputT]):
 
     """
 
-    parameters: InputT
+    parameters: InputT_contra
     ctx: EvaluateContext
 
 
@@ -212,7 +197,7 @@ class PreparedSchedule(Protocol[InputT_contra, OutputT_co]):
         ...
 
 
-class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
+class PreparedScheduleBase(ABC, Generic[InputT_contra, OutputT_co]):
     """
     Convenience base class for prepared schedules.
 
@@ -231,7 +216,7 @@ class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
     @abstractmethod
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[InputT]],
+        requests: Sequence[EvaluationRequest[InputT_contra]],
         /,
     ) -> Iterator[EvaluationResult]:
         """
@@ -246,21 +231,21 @@ class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
 
     def evaluate(
         self,
-        parameters: InputT,
+        parameters: InputT_contra,
         ctx: EvaluateContext,
         /,
     ) -> OutputT_co:
         """Evaluate one request with an explicit context."""
 
         (result,) = self.evaluate_many(
-            (EvaluationRequest[InputT](parameters=parameters, ctx=ctx),)
+            (EvaluationRequest[InputT_contra](parameters=parameters, ctx=ctx),)
         )
         if isinstance(result.value, Exception):
             raise result.value
         return result.value
 
     def __call__(
-        self, parameters: InputT, ctx: EvaluateContext | None = None
+        self, parameters: InputT_contra, ctx: EvaluateContext | None = None
     ) -> OutputT_co:
         """
         Evaluate one parameter mapping synchronously.
@@ -386,16 +371,16 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
 
 class SerialSchedule(
-    PreparedScheduleBase[InputT, OutputT_co], Generic[InputT, OutputT_co]
+    PreparedScheduleBase[InputT_contra, OutputT_co], Generic[InputT_contra, OutputT_co]
 ):
-    def __init__(self, ob: ObjectiveComponent[InputT, OutputT_co]) -> None:
+    def __init__(self, ob: ObjectiveComponent[InputT_contra, OutputT_co]) -> None:
         """Initialize a reference serial schedule."""
         super().__init__()
         self.ob = ob
 
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[InputT]],
+        requests: Sequence[EvaluationRequest[InputT_contra]],
     ) -> Iterator[EvaluationResult[OutputT_co]]:
         if self.closed:
             msg = "Prepared schedule is closed."
@@ -416,12 +401,12 @@ class SerialSchedule(
 
 
 class SerialScheduler(
-    Scheduler[SerialSchedule[InputT, OutputT_co]],
-    Generic[InputT, OutputT_co],
+    Scheduler[SerialSchedule[InputT_contra, OutputT_co]],
+    Generic[InputT_contra, OutputT_co],
 ):
     def prepare(
         self,
-        objective: ObjectiveComponent[InputT, OutputT_co],
+        objective: ObjectiveComponent[InputT_contra, OutputT_co],
         /,
-    ) -> SerialSchedule[InputT, OutputT_co]:
+    ) -> SerialSchedule[InputT_contra, OutputT_co]:
         return SerialSchedule(objective)
