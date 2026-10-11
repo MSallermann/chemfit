@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
-from typing_extensions import Concatenate, Self, TypeVar, Literal  # noqa: UP035
+from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
 
-from chemfit.evaluate_context import EvaluateContext, NoOutput, NO_OUTPUT
+from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext, NoOutput
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -448,9 +448,16 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         """
         raise NotImplementedError
 
+    def combine_inputs(self) -> tuple[InputSource, ...]:
+        """
+        Input sources passed to combine_outcomes().
+        Default simply passes all of them.
+        """
+        return tuple(range(len(self.components())))
+
     def combine_outcomes(
         self,
-        outcomes: Sequence[Any],
+        outcomes: tuple[Any, ...],
         ctx: EvaluateContext,
     ) -> OutputT_co:
         """
@@ -503,7 +510,12 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
             except Exception as e:  # noqa: PERF203
                 outcomes[idx] = e
 
-        return self.combine_outcomes(outcomes, ctx)
+        combine_sources = self.combine_inputs()
+        combine_inputs = tuple(
+            input_ if source is PARENT_INPUT else outcomes[cast("int", source)]
+            for source in combine_sources
+        )
+        return self.combine_outcomes(combine_inputs, ctx)
 
 
 class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
@@ -552,13 +564,12 @@ class TupleJoinedComponent(JoinedComponent[InputT_contra, tuple[Any, ...]]):
 
 
 class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
-
     def __init__(
         self,
         first: ObjectiveComponent[InputT_contra, MiddleT],
         second: ObjectiveComponent[MiddleT, OutputT_co],
     ) -> None:
-        """bla."""
+        """Bla."""
         super().__init__()
         self._components: list[ObjectiveComponent[Any, Any]] = [first, second]
 
@@ -582,8 +593,11 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
             *((i - 1,) for i in range(1, len(self._components))),
         )
 
+    def combine_inputs(self) -> tuple[InputSource, ...]:
+        return (len(self._components) - 1,)
+
     def combine_outcomes(
-        self, outcomes: Sequence[Any | Exception | NoOutput], ctx: EvaluateContext
+        self, outcomes: tuple[Any | Exception | NoOutput, ...], ctx: EvaluateContext
     ):
         outcome = outcomes[-1]
         if isinstance(outcome, Exception):

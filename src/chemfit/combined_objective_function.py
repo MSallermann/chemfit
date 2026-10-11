@@ -4,19 +4,17 @@ import inspect
 import math
 import numbers
 from collections.abc import Callable, Mapping, Sequence
-from typing import Protocol, TypeVar, cast
+from typing import Protocol, TypeVar
 
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import (
-    NO_OUTPUT,
     EvaluateContext,
     JoinedComponent,
     NoOutput,
     ObjectiveComponent,
     WrappedComponent,
 )
-from chemfit.scheduling import NodeOutcome
 
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
 QuantitiesT_co = TypeVar("QuantitiesT_co", bound=Mapping[str, object])
@@ -91,7 +89,6 @@ def accepts_ctx(reducer: Callable) -> bool:
 
 
 class WrappedReducer:
-
     def __init__(self, reducer: SimpleReducer | Reducer):
         self.reducer: SimpleReducer | Reducer = reducer
         self.pass_ctx: bool = accepts_ctx(reducer)

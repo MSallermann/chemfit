@@ -1,9 +1,8 @@
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import Any
 
 from chemfit.abstract_objective_function import (
-    PARENT_INPUT,
     ObjectiveComponent,
     ParentInput_,
     StructuralComponent,
@@ -53,7 +52,6 @@ class CallGraph:
 def objective_to_call_graph(
     objective: ObjectiveComponent[Any, Any],
 ) -> CallGraph:
-
     nodes: list[GraphNode] = []
 
     def connect(source: int, target: int) -> None:
@@ -82,7 +80,6 @@ def objective_to_call_graph(
     def add(
         component: ObjectiveComponent[Any, Any],
     ) -> tuple[int, int]:
-
         if not isinstance(component, StructuralComponent):
             # non-structural components get a simple atomic node
             node_id = len(nodes)
@@ -95,65 +92,69 @@ def objective_to_call_graph(
                 )
             )
             return node_id, node_id
-        else:
-            # add the start node of the structural component
-            start_id = len(nodes)
-            nodes.append(StartNode(start_id, component))
 
-            #######################################
-            # Add contained components and finish node
-            #######################################
+        # add the start node of the structural component
+        start_id = len(nodes)
+        nodes.append(StartNode(start_id, component))
 
-            contained_components = component.components()
-            component_start_ids = []
-            component_end_ids = []
-            # we dont know the node_ids of later stages yet
-            # so it's not possible to populate outgoing/incoming
-            # Therefore, we first collect all the component start and end ids
-            # and add them to the nodes list
-            for comp in contained_components:
-                cur_start_id, cur_end_id = add(comp)
-                component_start_ids.append(cur_start_id)
-                component_end_ids.append(cur_end_id)
+        #######################################
+        # Add contained components and finish node
+        #######################################
 
-            # we can already append the finish node
-            # it depends on all contained components finishing (duh)
-            end_id = len(nodes)
-            nodes.append(FinishNode(end_id, component))
+        contained_components = component.components()
+        component_start_ids = []
+        component_end_ids = []
+        # we dont know the node_ids of later stages yet
+        # so it's not possible to populate outgoing/incoming
+        # Therefore, we first collect all the component start and end ids
+        # and add them to the nodes list
+        for comp in contained_components:
+            cur_start_id, cur_end_id = add(comp)
+            component_start_ids.append(cur_start_id)
+            component_end_ids.append(cur_end_id)
 
-            ####################################
-            # Hook up the dependencies
-            ####################################
+        # we can already append the finish node
+        # it depends on all contained components finishing (duh)
+        end_id = len(nodes)
+        nodes.append(FinishNode(end_id, component))
 
-            # 1. The contained components depend on the start node
-            for comp_start_id in component_start_ids:
-                connect(start_id, comp_start_id)
+        ####################################
+        # Hook up the dependencies
+        ####################################
 
-            # 2. the end node depends on the contained components
-            for comp_end_id in component_end_ids:
-                connect(comp_end_id, end_id)
+        # 1. The contained components depend on the start node
+        for comp_start_id in component_start_ids:
+            connect(start_id, comp_start_id)
 
-            # 3. hook up incoming/outgoing for the contained components
-            # ... query component dependencies from the containing structural component
-            component_dependencies = component.component_dependencies()
-            # ... query component inputs from the containing structural component
-            component_inputs = component.component_inputs()
+        # 2. the end node depends on the contained components
+        # and receives their input
+        combine_inputs = component.combine_inputs()
+        for i in combine_inputs:
+            source: int = (
+                start_id if isinstance(i, ParentInput_) else component_end_ids[i]
+            )
+            connect(source, end_id)
+            add_input(source, end_id)
 
-            for idx, comp_start_id in enumerate(component_start_ids):
-                # Each component start depends on the end of its dependencies
-                for d in component_dependencies[idx]:
-                    connect(component_end_ids[d], comp_start_id)
+        # 3. hook up incoming/outgoing for the contained components
+        # ... query component dependencies from the containing structural component
+        component_dependencies = component.component_dependencies()
+        # ... query component inputs from the containing structural component
+        component_inputs = component.component_inputs()
 
-                for i in component_inputs[idx]:
-                    source: int = (
-                        start_id
-                        if isinstance(i, ParentInput_)
-                        else component_end_ids[i]
-                    )
-                    add_input(source, comp_start_id)
+        for idx, comp_start_id in enumerate(component_start_ids):
+            # Each component start depends on the end of its dependencies
+            for d in component_dependencies[idx]:
+                connect(component_end_ids[d], comp_start_id)
 
-            # return the start and end id of the structural component
-            return start_id, end_id
+            for i in component_inputs[idx]:
+                source: int = (
+                    start_id if isinstance(i, ParentInput_) else component_end_ids[i]
+                )
+                add_input(source, comp_start_id)
+
+        # return the start and end id of the structural component
+        return start_id, end_id
 
     start_id, end_id = add(objective)
     add_input(ROOT, start_id)
@@ -211,7 +212,8 @@ def call_graph_to_dot(
             raise ValueError(msg)
 
         subprocess.run(
-            ["dot", "-Tsvg", f"{dot_output_path}", "-o", f"{svg_output_path}"]
+            ["dot", "-Tsvg", f"{dot_output_path}", "-o", f"{svg_output_path}"],
+            check=False,
         )
 
     return res
