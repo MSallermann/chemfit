@@ -106,10 +106,10 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         loss_function: Callable[[OutputT_co], float],
         /,
         **kwargs: Any,
-    ) -> OpaqueThen[InputT_contra, OutputT_co, float]:
-        return OpaqueThen(
-            self,
-            WrappedComponent(loss_function).bind(**kwargs),
+    ) -> OpaquePipeline[InputT_contra, float]:
+        return OpaquePipeline(
+            first=self,
+            second=WrappedComponent(loss_function).bind(**kwargs),
         )
 
     def with_ctx_configurator(
@@ -260,26 +260,37 @@ MiddleT = TypeVar("MiddleT")
 NextT = TypeVar("NextT")
 
 
-class OpaqueThen(
-    ObjectiveComponent[InputT_contra, OutputT_co],
-    Generic[InputT_contra, MiddleT, OutputT_co],
-):
+class OpaquePipeline(ObjectiveComponent[InputT_contra, OutputT_co]):
     def __init__(
         self,
         first: ObjectiveComponent[InputT_contra, MiddleT],
         second: ObjectiveComponent[MiddleT, OutputT_co],
     ) -> None:
-        """Execute two components as one schedulable unit."""
+        """Execute a sequence of components as one schedulable unit."""
         super().__init__()
-        self.first = first
-        self.second = second
+        self._components: tuple[ObjectiveComponent[Any, Any], ...] = (
+            first,
+            second,
+        )
+
+    def then(
+        self,
+        next_component: ObjectiveComponent[OutputT_co, NextT],
+    ) -> OpaquePipeline[InputT_contra, NextT]:
+        new = self.copy()
+        new._components = (*self._components, next_component)
+        return cast("OpaquePipeline[InputT_contra, NextT]", new)
 
     def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
-        first_ctx = ctx.spawn_ctx()
-        second_ctx = ctx.spawn_ctx()
-        ctx.pipeline = [first_ctx, second_ctx]
-        intermediate = self.first(input_, first_ctx)
-        return self.second(intermediate, second_ctx)
+        ctx.pipeline = []
+        result: Any = input_
+
+        for component in self._components:
+            stage_ctx = ctx.spawn_ctx()
+            ctx.pipeline.append(stage_ctx)
+            result = component(result, stage_ctx)
+
+        return cast("OutputT_co", result)
 
 
 class WrappedComponent(
