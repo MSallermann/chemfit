@@ -192,30 +192,38 @@ class EvaluationState:
         """Complete a node without executing its lifecycle."""
         self.complete(node_id, exception)
 
-    def abort_scope(self, node_id: int, exception: Exception):
-        self.complete(node_id, exception)
+    def skip_subtree(self, node_id: int, exception: Exception) -> None:
+        """Skip a component and all its descendants without running any lifecycle methods."""
+        node = self.graph.nodes[node_id]
 
+        self.skip(node_id, exception)
+
+        if isinstance(node, StartNode):
+            for child_id in node.contained_component_start_ids:
+                self.skip_subtree(child_id, exception)
+
+            self.skip(node.paired_end_node_id, exception)
+
+    def abort_scope(self, node_id: int, exception: Exception) -> None:
+        """Abort a structural component whose begin lifecycle failed."""
         node = self.graph.nodes[node_id]
         assert isinstance(node, StartNode)
 
-        def skip_children_recursively(component_id: int, exception: Exception):
-            component_node = self.graph.nodes[component_id]
-            assert isinstance(component_node, StartNode)
-            for child_id in component_node.contained_component_start_ids:
-                child_node = self.graph.nodes[child_id]
-                self.skip(child_id, exception)
-                if isinstance(child_node, StartNode):
-                    self.skip(child_node.paired_end_node_id, exception)
-                    skip_children_recursively(child_id, exception)
+        self.complete(node_id, exception)
 
-        skip_children_recursively(node_id, exception)
+        for child_id in node.contained_component_start_ids:
+            self.skip_subtree(child_id, exception)
 
         ctx = self.contexts[node_id]
         assert ctx is not None
-        node.objective._end_evaluation(exception, ctx)  # noqa: SLF001
 
-        end_node = node.paired_end_node_id
-        self.complete(end_node, exception)
+        try:
+            node.objective._end_evaluation(exception, ctx)  # noqa: SLF001
+        except Exception:
+            # Preserve the original initialization failure.
+            pass
+
+        self.complete(node.paired_end_node_id, exception)
 
     def outcome(self, node_id: int) -> NodeOutcome:
         """
@@ -369,6 +377,22 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
         node = cast("StartNode", self.graph.nodes[node_id])
         component = node.objective
         assert isinstance(component, StructuralComponent)
+
+        # Check if we skip this node
+        exception: Exception | None = None
+        for source in node.inputs:
+            if source is ROOT:
+                continue
+
+            outcome = run.state.outcome(cast("int", source))
+            if isinstance(outcome, Exception):
+                exception = outcome
+                break
+
+        if exception is not None:
+            run.state.skip_subtree(node_id, exception)
+            return
+
         component_input = run.state.assemble_node_input(node_id)
         component_ctx = run.state.contexts[node_id]
 
@@ -380,14 +404,15 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
         try:
             # start lifecycle
             component._begin_evaluation(component_input, component_ctx)  # noqa: SLF001
-
-            # create component contexts
-            for child_node_id in node.contained_component_start_ids:
-                child_ctx = component_ctx.spawn_ctx()
-                component_ctx.add_incoming(child_ctx)
-                run.state.contexts[child_node_id] = child_ctx
         except Exception as e:
             run.state.abort_scope(node_id, e)
+            return
+
+        # create component contexts
+        for child_node_id in node.contained_component_start_ids:
+            child_ctx = component_ctx.spawn_ctx()
+            component_ctx.add_incoming(child_ctx)
+            run.state.contexts[child_node_id] = child_ctx
 
         run.state.complete(node_id, component_input)
 
@@ -404,7 +429,11 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
         except Exception as e:
             outcome = e
 
-        component._end_evaluation(outcome, component_ctx)  # noqa: SLF001
+        try:
+            component._end_evaluation(outcome, component_ctx)  # noqa: SLF001
+        except Exception as e:
+            outcome = e
+
         run.state.complete(node_id, outcome)
 
     def advance_host_nodes(self, run: EvaluationRun) -> None:
@@ -424,6 +453,9 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
                 break
 
             for node_id in ready:
+                if not run.state.is_pending(node_id):
+                    continue
+
                 node = self.graph.nodes[node_id]
 
                 if isinstance(node, StartNode):
@@ -459,7 +491,6 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
 
                     if exception is not None:
                         run.state.skip(node_id, exception)
-                        self.advance_host_nodes(run)
                         continue
 
                     task_input = run.state.assemble_node_input(node_id)
@@ -524,7 +555,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
                 EvaluationRun(index=idx, root_input=req.parameters, state=eval_state)
             )
 
-        # 2. Initialize structural components.
+        # 2. Initialize structural components
         for run in runs:
             self.advance_host_nodes(run)
 
@@ -533,6 +564,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
                 yield result
 
         # 3. Process worker completions
+        tasks_in_flight = 0
         while not all(run.yielded for run in runs):
 
             # Submit newly available work
@@ -540,31 +572,41 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
 
             if tasks:
                 self.submit_tasks(tasks, batch_state)
+                tasks_in_flight += len(tasks)
 
             # Wait for exactly one completion.
-            completion = self.next_completion(batch_state)
+            if tasks_in_flight:
+                completion = self.next_completion(batch_state)
+                tasks_in_flight -= 1
 
-            run_id = completion.run_id
-            run = runs[run_id]
-            node_id = completion.node_id
+                run_id = completion.run_id
+                run = runs[run_id]
+                node_id = completion.node_id
 
-            ctx = runs[run_id].state.contexts[node_id]
-            assert ctx is not None
+                ctx = runs[run_id].state.contexts[node_id]
+                assert ctx is not None
 
-            if completion.ctx_result_state is not None:
-                ctx_result_state = completion.ctx_result_state
-                ctx.apply_result_state(ctx_result_state)
+                if completion.ctx_result_state is not None:
+                    ctx_result_state = completion.ctx_result_state
+                    ctx.apply_result_state(ctx_result_state)
 
-            # Record atomic completion and unlock downstream nodes
-            run.state.complete(completion.node_id, completion.outcome)
+                # Record atomic completion and unlock downstream nodes
+                run.state.complete(completion.node_id, completion.outcome)
 
-            # Propagate through structural nodes immediately.
-            self.advance_host_nodes(run)
+                # Propagate through structural nodes immediately.
+                self.advance_host_nodes(run)
 
-            # Emit the result immediately if this evaluation completed.
-            result = self.result_if_complete(run)
-            if result is not None:
-                yield result
+                # Emit the result immediately if this evaluation completed.
+                result = self.result_if_complete(run)
+                if result is not None:
+                    yield result
+            else:
+                for run in runs:
+                    self.advance_host_nodes(run)
+
+                    result = self.result_if_complete(run)
+                    if result is not None:
+                        yield result
 
 
 class SerialGraphSchedule(GraphScheduleBase):
