@@ -16,7 +16,7 @@ Nothing prevents you from using ChemFit without them. That being said, you shoul
 A recommended first step is to check if you can use one of the built-in ways:
 
 1. If you already have a pure Python function implementing your computation,
-   start with :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`, which
+   start with :func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`, which
    also features in the :ref:`quickstart` examples.
 2. If you use an external simulation tool such as LAMMPS, start with
    :func:`chemfit.external_quantity() <chemfit.api.external_quantity>` and see
@@ -116,7 +116,7 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
 
 .. code-block:: python
 
-    from chemfit.wrap_funcs import quantity
+    from chemfit import quantity
 
     @quantity(pass_ctx=True)
     def computer(params, *, ctx, f):
@@ -134,7 +134,7 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
 
     If ``pass_ctx==False``, all arguments except ``params`` have to be bound.
 
-If we forego the :py:func:`~chemfit.wrap_funcs.quantity` approach and we need external parameters, they should be accepted in the constructor.
+If we forego the :py:func:`~chemfit.abstract_objective_function.quantity` approach and we need external parameters, they should be accepted in the constructor.
 
 .. code-block:: python
 
@@ -153,7 +153,7 @@ If we forego the :py:func:`~chemfit.wrap_funcs.quantity` approach and we need ex
 
     A quantity computer becomes fully specified once it depends only on ``(parameters, ctx)``. At that point, all external parameters have been
     fixed, either via
-    :py:meth:`~chemfit.wrap_funcs.WrappedQuantityComputer.bind` (for wrapped
+    :py:meth:`~chemfit.abstract_objective_function.WrappedComponent.bind` (for wrapped
     functions) or via the constructor (for class-based implementations).
 
 
@@ -399,7 +399,7 @@ Here is a simple demonstration of the idea: We have an outer computer, which acc
 
 The benefit of this approach is two-fold
 
-1. We get full provenance. Child contexts and their results can be inspected through ``ctx.children``.
+1. We get full provenance. Child contexts and their results can be inspected through ``ctx.incoming``.
 2. Since the inner computers have their own context they can also be evaluated in parallel ... although the example above does not make use of this.
 
 .. note::
@@ -431,10 +431,10 @@ creation order:
 
 .. code-block:: python
 
-    ctx.children
-    ctx.children[0].meta
-    ctx.children[0].quantities
-    ctx.children[0].loss
+    ctx.incoming
+    ctx.incoming[0].meta
+    ctx.incoming[0].quantities
+    ctx.incoming[0].loss
 
 Each child exposes its parent through ``child_ctx.parents``. These properties
 return tuples, so topology cannot be changed through the public navigation API.

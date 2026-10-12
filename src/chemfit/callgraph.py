@@ -63,7 +63,7 @@ def objective_to_call_graph(
     nodes: list[GraphNode] = []
 
     def connect(source: int, target: int) -> None:
-        """``source`` must exectute before ``target."""
+        """Record that ``source`` must execute before ``target``."""
 
         a, b = nodes[source], nodes[target]
         nodes[source].outgoing = (*a.outgoing, target)
@@ -71,7 +71,7 @@ def objective_to_call_graph(
 
     def add_input(source: int | Root_, target: int) -> None:
         """
-        ``source``'s output is an input to ``target.
+        ``source``'s output is an input to ``target``.
 
         Only call this after calling ``connect(source,target)``
         """

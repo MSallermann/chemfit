@@ -1,5 +1,6 @@
-import nox
 from pathlib import Path
+
+import nox
 
 
 # mpi tests
@@ -36,9 +37,8 @@ def tests_mpi(session):  # noqa: ANN001
         "pytest",
         "-vv",
         "-s",
-        "tests",
-        "-k",
-        "mpi",
+        "tests/test_graph_schedule_semantics.py",
+        "tests/test_mpi_scheduler_failure.py",
         external=True,
     )
 

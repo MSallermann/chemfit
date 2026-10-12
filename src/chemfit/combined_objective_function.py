@@ -17,7 +17,6 @@ from chemfit.abstract_objective_function import (
 )
 
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
-QuantitiesT_co = TypeVar("QuantitiesT_co", bound=Mapping[str, object])
 ObjectiveLike = Callable[[ParametersT], float] | ObjectiveComponent[ParametersT, float]
 
 
@@ -90,6 +89,7 @@ def accepts_ctx(reducer: Callable) -> bool:
 
 class WrappedReducer:
     def __init__(self, reducer: SimpleReducer | Reducer):
+        """Record whether the reducer accepts the evaluation context."""
         self.reducer: SimpleReducer | Reducer = reducer
         self.pass_ctx: bool = accepts_ctx(reducer)
 
@@ -148,10 +148,9 @@ class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
         context. The resulting term values are multiplied by their
         corresponding weights, optionally filtered through
         ``exception_handler`` if evaluation fails, and then combined by the
-        configured reducer or aggregator.
+        configured reducer.
 
-        Generic callables are automatically wrapped as ``ObjectiveFunctor``
-        instances.
+        Generic callables are automatically wrapped as objective components.
 
         Args:
             objective_functions: Sequence of objective functors or compatible
@@ -159,16 +158,15 @@ class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
             weights: Optional non-negative weight for each objective term. If
                 ``None``, all weights default to ``1.0``.
             reduction: Callable that reduces the list of weighted term values
-                to a scalar. Defaults to :func:`sum_reducer`. Mutually exclusive
-                with ``aggregator``.
+                to a scalar. Defaults to :func:`sum_reducer`.
             exception_handler: Callable used to handle exceptions raised
                 during term evaluation. It may return a replacement value or
                 ``None`` to skip the term entirely.
 
         Raises:
-            ValueError: If no objective functions are supplied, both ``reduction``
-                and ``aggregator`` are supplied, the number of weights does not
-                match the number of objective functions, or any weight is negative.
+            ValueError: If no objective functions are supplied, the number of
+                weights does not match the number of objective functions, or
+                any weight is negative.
 
         """
 
@@ -233,9 +231,7 @@ class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
             A configured copy; the source objective is unchanged.
 
         Notes:
-            This replaces any reducer or aggregator configured earlier in the
-            fluent chain. A later :meth:`with_aggregator` call replaces it in
-            turn.
+            This replaces any reducer configured earlier in the fluent chain.
 
         Examples:
             Use the mean of the weighted terms::

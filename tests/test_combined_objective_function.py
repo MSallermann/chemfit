@@ -78,7 +78,7 @@ def test_fluent_configuration_is_independent():
     assert source.static_meta_data == {"tag": "original"}
     assert variant.static_meta_data == {"tag": "variant"}
     assert all(
-        a is b for a, b in zip(source.components, variant.components, strict=True)
+        a is b for a, b in zip(source.components(), variant.components(), strict=True)
     )
 
 

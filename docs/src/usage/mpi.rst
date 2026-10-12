@@ -3,7 +3,7 @@
 Running with MPI
 ================
 
-:class:`~chemfit.mpi_scheduler.MPITreeScheduler` executes objective leaf tasks
+:class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` executes objective leaf tasks
 on persistent MPI worker ranks. Rank zero expands parameter batches into leaf
 tasks, distributes them round-robin across nonzero ranks, restores returned
 context state, and performs composite reductions. The same scheduler works for
@@ -31,12 +31,12 @@ schedule's worker loop:
 .. code-block:: python
 
    import chemfit
-   from chemfit.mpi_scheduler import MPITreeScheduler
+   from chemfit.mpi_graph_schedule import MPIGraphScheduler
 
    terms = magic_from_elsewhere()
    objective = chemfit.combine(terms)
 
-   scheduler = MPITreeScheduler()
+   scheduler = MPIGraphScheduler()
    with scheduler.prepare(objective) as schedule:
        if schedule.rank == 0:
            ctx = chemfit.EvaluateContext()
@@ -44,7 +44,7 @@ schedule's worker loop:
        else:
            schedule.worker_loop()
 
-``worker_loop()`` takes no objective argument: the objective tree was bound by
+``worker_loop()`` takes no objective argument: the objective graph was bound by
 ``prepare``. Leaving the rank-zero context closes the schedule and sends a
 shutdown request to every worker. Worker contexts return parameters, loss,
 quantities, and metadata to rank zero; ``ctx.temp`` and ``ctx.shared`` are not
@@ -61,12 +61,12 @@ Nonzero ranks use the same prepared-schedule lifecycle and wait in
 .. code-block:: python
 
    import chemfit
-   from chemfit.mpi_scheduler import MPITreeScheduler
+   from chemfit.mpi_graph_schedule import MPIGraphScheduler
 
    terms = magic_from_elsewhere()
    objective = chemfit.combine(terms)
    initial = {"epsilon": 2.0, "sigma": 1.5}
-   scheduler = MPITreeScheduler()
+   scheduler = MPIGraphScheduler()
 
    with scheduler.prepare(objective) as schedule:
        if schedule.rank == 0:
@@ -96,9 +96,9 @@ serve work from the same schedule lifecycle:
 .. code-block:: python
 
    from chemfit.fitter import Fitter
-   from chemfit.mpi_scheduler import MPITreeScheduler
+   from chemfit.mpi_graph_schedule import MPIGraphScheduler
 
-   scheduler = MPITreeScheduler()
+   scheduler = MPIGraphScheduler()
 
    with scheduler.prepare(objective) as schedule:
        if schedule.rank == 0:
@@ -119,7 +119,7 @@ Communicators and debugging
 ---------------------------
 
 By default, the scheduler uses ``MPI.COMM_WORLD``. Supply another communicator
-with ``MPITreeScheduler(comm=...)`` when ChemFit should operate on a subgroup.
+with ``MPIGraphScheduler(comm=...)`` when ChemFit should operate on a subgroup.
 All ranks in that communicator must follow the same coordinator/worker
 lifecycle.
 
@@ -127,7 +127,7 @@ Set ``mpi_debug_log=True`` to wrap communicator methods with verbose logging:
 
 .. code-block:: python
 
-   scheduler = MPITreeScheduler(mpi_debug_log=True)
+   scheduler = MPIGraphScheduler(mpi_debug_log=True)
 
 This is intended for diagnosing protocol problems and can produce substantial
 output.
@@ -141,7 +141,7 @@ handler; a fitter either re-raises or replaces the failed evaluation according
 to its ``swallow_exceptions`` setting.
 
 A failure in worker or MPI machinery is catastrophic. Rank zero raises
-:class:`~chemfit.mpi_scheduler.MPIWorkerError`, closes the prepared schedule,
+:class:`~chemfit.mpi_graph_schedule.MPIWorkerError`, closes the prepared schedule,
 and requests worker shutdown. A catastrophically failed schedule cannot be
 reused.
 

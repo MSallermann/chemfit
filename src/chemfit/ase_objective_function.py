@@ -433,9 +433,10 @@ class ASEComputer(
             raise RuntimeError(msg)
         ctx.temp.atoms.calc = self.calculator_factory(parameters, ctx.temp.atoms, ctx)
 
-    def _compute(
+    def _run(
         self,
         parameters: ParametersT_contra,
+        /,
         ctx: EvaluateContext,
     ) -> QuantitiesT_co:
         """Prepare, evaluate, and extract quantities from an ASE calculation."""

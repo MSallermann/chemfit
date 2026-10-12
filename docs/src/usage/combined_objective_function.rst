@@ -21,7 +21,7 @@ configurations, or several physical properties at once.
 
    To add, remove, replace, or reorder terms, construct a fresh combined
    objective with :func:`chemfit.combine() <chemfit.api.combine>`. To change
-   supported configuration such as weights, reduction, aggregation, exception
+   supported configuration such as weights, reduction, exception
    handling, or metadata, use the fluent ``with_*`` API. Every fluent method
    returns a new configured object and leaves the original unchanged.
 
@@ -77,7 +77,7 @@ The remainder of this page documents that object's complete framework API.
 
 The terms do not need to be plain functions. Generic callables are accepted and
 wrapped internally. In practice many terms are instances of
-:py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`, for example
+:py:class:`~chemfit.abstract_objective_function.ObjectiveComponent`, for example
 objectives constructed from quantity computers.
 
 Fluent configuration
@@ -96,36 +96,34 @@ configuration can then be applied as a fluent chain:
    )
 
 Each method returns a configured copy and leaves its source object unchanged.
-Child objective and hook objects remain shared. ``with_reduction()`` and
-``with_aggregator()`` replace one another, so the last call determines the
-active reduction interface. ``with_exception_handler()`` changes how failed
-terms contribute to the final result. The sections below describe those
-semantics in detail.
+Child objective and hook objects remain shared. ``with_exception_handler()``
+changes how failed terms contribute to the final result. The sections below
+describe those semantics in detail.
 
 What actually happens during evaluation
 ---------------------------------------
 
 Calling a combined objective does three things.
 
-First, it spawns one child :py:class:`~chemfit.abstract_objective_function.EvaluateContext`
-per term.
+First, it creates one nested
+:py:class:`~chemfit.abstract_objective_function.EvaluateContext` per term.
 
 Second, direct calls evaluate every term serially in its own child context.
-Prepared tree schedules use their configured backend for the leaf work while
+Prepared graph schedules use their configured backend for atomic work while
 preserving the same context and reduction semantics.
 
 Third, it filters skipped terms and applies the configured reduction. The final
-result is stored in ``ctx.loss``.
+result is stored in ``ctx.output``.
 
 If you pass an explicit context, the child evaluations are directly available
-through ``ctx.children``. That makes combined objectives useful not just for
+through ``ctx.incoming``. That makes combined objectives useful not just for
 optimization but also for inspection and debugging.
 
 .. testcode::
 
     from chemfit.abstract_objective_function import EvaluateContext
     from chemfit.combined_objective_function import CombinedObjectiveFunction
-    from chemfit.wrap_funcs import objective
+    from chemfit import objective
 
     @objective()
     def term(params, a):
@@ -140,8 +138,8 @@ optimization but also for inspection and debugging.
     loss = objective({"x": 2.0}, ctx)
 
     print(loss) # 1.5
-    print(ctx.loss) # 1.5
-    print([child.loss for child in ctx.children]) # child losses
+    print(ctx.output) # 1.5
+    print([child.output for child in ctx.incoming]) # child losses
 
 .. testoutput::
     :hide:
@@ -238,10 +236,8 @@ That means these two are equivalent:
 
     2.5
 
-Reducer vs aggregator
----------------------
-
-There are two supported reduction interfaces.
+Simple and context-aware reducers
+---------------------------------
 
 A simple reducer has the signature
 
@@ -250,35 +246,30 @@ A simple reducer has the signature
    def reducer(terms: list[float]) -> float:
        ...
 
-An aggregator has the richer signature
+A context-aware reducer has the richer signature
 
 .. code-block:: python
 
-   def aggregator(
-       terms: list[float],
-       quantities: list[dict[str, object] | None],
-       ctx : EvaluateContext,
-   ) -> float:
+   def reducer(terms: list[float], *, ctx: EvaluateContext) -> float:
        ...
 
-Pass a simple reducer with ``reduction=`` and a context-aware aggregator with
-``aggregator=``. These options are mutually exclusive. The distinction is
-explicit, so callable objects, built-ins, and functions with optional parameters
-do not need to be classified from their signatures.
-
-The difference is that an aggregator can inspect both the term values and the
-child quantities, and it can write additional information into the parent context.
+Pass either form with ``reduction=`` or ``with_reduction()``. ChemFit detects
+whether the callable accepts the keyword-only ``ctx`` argument. A
+context-aware reducer can inspect the incoming term contexts and write
+additional information into the combined context.
 
 This is the right tool when the final loss should depend on more than the term
 values alone.
 
-Writing an aggregator
----------------------
+Writing a context-aware reducer
+-------------------------------
 
-Aggregators become useful when the terms are built from quantity computers.
+Context-aware reducers are useful when the terms are built from quantity
+components.
 
-In that case each child context may contain quantities produced during the term
-evaluation, and the aggregator can use them.
+In that case each incoming term context contains its pipeline stage contexts,
+so the reducer can inspect both the scalar term values and intermediate
+quantities.
 
 The following example is based on the actual test setup.
 
@@ -286,10 +277,11 @@ The following example is based on the actual test setup.
 
    from chemfit.abstract_objective_function import EvaluateContext
    from chemfit.combined_objective_function import CombinedObjectiveFunction
-   from chemfit.wrap_funcs import quantity
+   from chemfit import quantity
 
-   def custom_aggregator(terms, quantities, ctx):
+   def custom_reducer(terms, *, ctx):
        ctx.meta["foo"] = "bar"
+       quantities = [term_ctx.pipeline[0].output for term_ctx in ctx.incoming]
        return sum(q["test"] for q in quantities)
 
    @quantity()
@@ -301,7 +293,7 @@ The following example is based on the actual test setup.
            q1.bind(f=1).with_loss(lambda q: 0.0),
            q1.bind(f=2).with_loss(lambda q: 0.0),
        ],
-       aggregator=custom_aggregator,
+       reduction=custom_reducer,
    )
 
    ctx = EvaluateContext()
@@ -320,12 +312,12 @@ This example is worth looking at carefully.
 
 The two terms contribute zero loss individually, since both use
 ``with_loss(lambda q: 0.0)``. The final loss is therefore not coming from the
-terms at all. Instead, the aggregator computes the loss from the collected
+terms at all. Instead, the reducer computes the loss from the collected
 quantities.
 
-That is exactly the difference between a reducer and an aggregator. A reducer
-only sees the weighted term values. An aggregator sees the weighted term values,
-the child quantities, and the parent context.
+The keyword-only ``ctx`` argument is what distinguishes this form from a
+simple reducer. It provides access to the weighted values, nested contexts,
+and the combined context's metadata.
 
 Exception handling
 ------------------
@@ -374,7 +366,7 @@ Returning ``math.nan`` marks the whole reduction as invalid in the usual way:
    loss = objective({}, ctx)
 
    print(math.isnan(loss))     # True
-   print(math.isnan(ctx.loss)) # True
+   print(math.isnan(ctx.output)) # True
 
 .. testoutput::
     :hide:
@@ -408,10 +400,9 @@ Returning ``None`` skips the failed term entirely:
     1.0
     [1]
 
-This skip behavior is implemented through
-:py:meth:`~chemfit.combined_objective_function.CombinedObjectiveFunction.filter_terms`.
 Terms for which the exception handler returns ``None`` are removed before the
-reduction is applied.
+reduction is applied, and their indices are stored in
+``ctx.meta["skipped_indices"]``.
 
 Writing your own exception handler is straightforward:
 
@@ -430,7 +421,7 @@ Writing your own exception handler is straightforward:
 
     ctx = chemfit.EvaluateContext()
     print(objective({"x" : 2.0}, ctx))
-    print(ctx.children[1].meta["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
+    print(ctx.incoming[1].meta["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
 
 .. testoutput::
     :hide:
@@ -442,54 +433,46 @@ Writing your own exception handler is straightforward:
 
     The exception handler sees *only* the child context.
 
-Using a child context configurator
-----------------------------------
+Using context configurators
+---------------------------
 
-Each term gets its own child context. Sometimes those child contexts need to be
-configured before evaluation starts.
-
-That is what ``child_context_configurator`` is for.
-
-The configurator has the signature
+Every component supports ``with_ctx_configurator()``. The configurator runs
+when that component's context begins evaluation and has the signature
 
 .. code-block:: python
 
-   def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
+   def configurator(ctx):
        ...
 
-A small example:
+A combined objective can therefore configure its terms independently:
 
 .. testcode::
 
     from chemfit.abstract_objective_function import EvaluateContext
     from chemfit.combined_objective_function import CombinedObjectiveFunction
 
-    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
-        child_ctx.meta["configurator_number"] = idx_child_ctx + num_children
+    def with_term_number(term, number):
+        def configure(ctx):
+            ctx.meta["term_number"] = number
+
+        return term.with_ctx_configurator(configure)
 
     objective = CombinedObjectiveFunction(
-        [term1, term2],
-        child_context_configurator=configurator,
+        [with_term_number(term1, 0), with_term_number(term2, 1)],
     )
 
     ctx = EvaluateContext()
     objective({"x": 2.0}, ctx)
 
-    print([child.meta["configurator_number"] for child in ctx.children])
+    print([term_ctx.meta["term_number"] for term_ctx in ctx.incoming])
 
 .. testoutput::
 
-    [2, 3]
+    [0, 1]
 
-This is mostly useful when the terms need slightly different evaluation setup.
-
-For example, the configurator can assign different metadata, attach child-local
-configuration in ``child_ctx.config``, or prepare term-specific execution state.
-Configuration runs before the child's evaluation begins. ``parent_ctx`` is
-available strictly for read-only inspection, so the configurator can derive the
-child-specific setup from information stored at the parent level. It must never
-mutate the parent context (including ``config``, ``meta``, ``temp``, or other
-mutable state) or modify sibling contexts.
+This is useful for term-specific metadata or configuration. A configurator
+should modify only the context it receives; sibling and combined contexts are
+separate evaluation scopes.
 
 Parallel execution
 ------------------
@@ -504,18 +487,18 @@ the returned schedule:
 
    from concurrent.futures import ThreadPoolExecutor
 
-   from chemfit.executor_scheduler import ExecutorTreeScheduler
+   from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 
    with ThreadPoolExecutor(max_workers=4) as executor:
-       scheduler = ExecutorTreeScheduler(executor=executor)
+       scheduler = ExecutorGraphScheduler(executor=executor)
        with scheduler.prepare(objective) as schedule:
            value = schedule(parameters)
 
 In practice this means the same combined objective can be used
 
 - serially
-- with :py:class:`~chemfit.executor_scheduler.ExecutorTreeScheduler`
-- with :py:class:`~chemfit.mpi_scheduler.MPITreeScheduler`
+- with :py:class:`~chemfit.executor_graph_schedule.ExecutorGraphScheduler`
+- with :py:class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler`
 
 without changing the terms themselves. See :ref:`parallel_execution` for
 batch, executor, and MPI examples.

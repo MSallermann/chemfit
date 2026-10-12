@@ -37,14 +37,14 @@ A typical ChemFit workflow is:
 4. fit the parameters.
 
 The top-level API expresses this workflow directly: use
-:func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`, attach a loss with
+:func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`, attach a loss with
 ``with_loss()``, combine terms with
 :func:`chemfit.combine() <chemfit.api.combine>`, and optimize them with
 :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`.
 
 Underneath, these helpers operate on ChemFit's
 :class:`~chemfit.abstract_objective_function.QuantityComputer`,
-:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`, and
+:class:`~chemfit.abstract_objective_function.ObjectiveComponent`, and
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
 abstractions. A quantity computer maps a parameter dictionary to intermediate
 quantities, and a loss maps those quantities to a scalar objective value.
@@ -81,15 +81,15 @@ where :math:`x^2` and :math:`y^2` are intermediate quantities:
     9.0
 
 The quantity computer is defined via a simple Python function, mapping a :class:`dict` of parameters to a :class:`dict` of quantities.
-The :func:`~chemfit.wrap_funcs.quantity` decorator turns this function into a
-:class:`~chemfit.wrap_funcs.WrappedQuantityComputer` instance.
+The :func:`~chemfit.abstract_objective_function.quantity` decorator turns this function into a
+:class:`~chemfit.abstract_objective_function.WrappedComponent` instance.
 
 The :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
 method combines a quantity computer with a loss function to form a complete objective.
 
 .. note::
 
-    The wrapped :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` differs from the plain
+    The wrapped :class:`~chemfit.abstract_objective_function.WrappedComponent` differs from the plain
     function in that it can optionally accept an evaluation context
     (:class:`~chemfit.abstract_objective_function.EvaluateContext`).
 
@@ -142,8 +142,8 @@ where :math:`f` is an external parameter and then we combine them into an overal
 
 ``chemfit.combine()`` returns a
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
-That object provides reducers, aggregators, exception handling, child
-contexts, mutation, and scheduler-backed execution; see
+That object provides weighting, reducers, exception handling, context
+inspection, and scheduler-backed execution; see
 :ref:`combined_objective_functions` when you need those controls.
 
 ====================

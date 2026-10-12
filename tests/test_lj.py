@@ -65,9 +65,9 @@ def test_lj():
 
     ctx = EvaluateContext()
     ob(opt_params, ctx)
-    terms_meta_data = ctx.to_summary(recursive=True)["children"]
+    terms_meta_data = ctx.to_summary(recursive=True)["incoming"]
 
-    assert ob.n_terms() == len(terms_meta_data)
+    assert ob.n_components() == len(terms_meta_data)
     assert np.isclose(opt_params["epsilon"], eps)
     assert np.isclose(opt_params["sigma"], sigma)
 
@@ -287,54 +287,3 @@ def test_minimize_runs_bfgs_before_quantity_extraction(
     assert optimizer_calls == [(0.02, 17)]
     assert isinstance(minimized, ASEComputer)
     assert base.evaluator is not minimized.evaluator
-
-
-def test_lj_mpi():
-    mpi_scheduler = pytest.importorskip(
-        "chemfit.mpi_scheduler", reason="Missing mpi4py"
-    )
-
-    # Construct the objective function on *all* ranks
-    eps = 1.0
-    sigma = 1.0
-
-    ob = get_ob_func(eps, sigma)
-
-    initial_params = {"epsilon": 2.0, "sigma": 1.5}
-    scheduler = mpi_scheduler.MPITreeScheduler()
-
-    with scheduler.prepare(ob) as schedule:
-        if schedule.rank == 0:
-            smoke_result = chemfit.fit_nevergrad(
-                schedule,
-                initial=initial_params,
-                budget=1,
-                optimizer="OnePlusOne",
-            )
-            assert smoke_result.contexts[0].n_evals == 1
-            assert not schedule.closed
-
-            fitter = Fitter(
-                schedule,
-                initial_params=initial_params,
-            )
-            opt_params = fitter.fit_scipy()
-
-            ctx = EvaluateContext()
-            schedule(opt_params, ctx)
-            terms_meta_data = ctx.to_summary(recursive=True)["children"]
-
-            assert ob.n_terms() == len(terms_meta_data)
-            assert np.isclose(opt_params["epsilon"], eps)
-            assert np.isclose(opt_params["sigma"], sigma)
-        else:
-            schedule.worker_loop()
-
-
-if __name__ == "__main__":
-    import logging
-
-    logging.basicConfig(filename="test_lj.log")
-
-    # test_lj()
-    test_lj_mpi()

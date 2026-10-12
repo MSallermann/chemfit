@@ -2,15 +2,12 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Generic, Protocol, cast
+from typing import Any, Generic, Protocol, TypeAlias, cast
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
 from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
 
 from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext, NoOutput
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 
 class PreEvaluationHook(Protocol):
@@ -103,7 +100,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
     def with_loss(
         self,
-        loss_function: Callable[[OutputT_co], float],
+        loss_function: Callable[Concatenate[OutputT_co, ...], float],
         /,
         **kwargs: Any,
     ) -> OpaquePipeline[InputT_contra, float]:
@@ -203,6 +200,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         /,
         ctx: EvaluateContext,
     ) -> None:
+        ctx._reset_evaluation_state()  # noqa: SLF001
         self._apply_ctx_configurator(ctx)
         ctx.input = input_
         for hook in self.pre_eval_hooks:
@@ -278,7 +276,7 @@ class OpaquePipeline(ObjectiveComponent[InputT_contra, OutputT_co]):
         next_component: ObjectiveComponent[OutputT_co, NextT],
     ) -> OpaquePipeline[InputT_contra, NextT]:
         new = self.copy()
-        new._components = (*self._components, next_component)
+        new._components = (*self._components, next_component)  # noqa: SLF001
         return cast("OpaquePipeline[InputT_contra, NextT]", new)
 
     def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
@@ -386,7 +384,7 @@ def component(
     [Callable[Concatenate[InputT_contra, ...], OutputT_co]],
     WrappedComponent[InputT_contra, OutputT_co],
 ]:
-    """TODO."""
+    """Wrap a callable as an objective component."""
 
     def wrap(
         func: Callable[Concatenate[InputT_contra, ...], OutputT_co],
@@ -407,7 +405,7 @@ class ParentInput_: ...  # noqa: N801
 
 PARENT_INPUT = ParentInput_()
 
-type InputSource = int | ParentInput_
+InputSource: TypeAlias = int | ParentInput_
 
 
 class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
@@ -451,6 +449,7 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
     def combine_inputs(self) -> tuple[InputSource, ...]:
         """
         Input sources passed to combine_outcomes().
+
         Default simply passes all of them.
         """
         return tuple(range(len(self.components())))
@@ -520,6 +519,7 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
 
 class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
     def __init__(self, components: tuple[ObjectiveComponent[InputT_contra, Any], ...]):
+        """Initialize a nonempty collection of independent components."""
         super().__init__()
 
         self._components = components
@@ -558,7 +558,7 @@ class TupleJoinedComponent(JoinedComponent[InputT_contra, tuple[Any, ...]]):
     def combine_outcomes(
         self,
         outcomes: Sequence[Any],
-        ctx: EvaluateContext,
+        ctx: EvaluateContext,  # noqa: ARG002
     ) -> tuple[Any, ...]:
         return tuple(outcomes)
 
@@ -569,7 +569,7 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
         first: ObjectiveComponent[InputT_contra, MiddleT],
         second: ObjectiveComponent[MiddleT, OutputT_co],
     ) -> None:
-        """Bla."""
+        """Create a structural sequence of two components."""
         super().__init__()
         self._components: list[ObjectiveComponent[Any, Any]] = [first, second]
 
@@ -597,7 +597,9 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
         return (len(self._components) - 1,)
 
     def combine_outcomes(
-        self, outcomes: tuple[Any | Exception | NoOutput, ...], ctx: EvaluateContext
+        self,
+        outcomes: tuple[Any | Exception | NoOutput, ...],
+        ctx: EvaluateContext,  # noqa: ARG002
     ):
         outcome = outcomes[-1]
         if isinstance(outcome, Exception):
@@ -607,7 +609,7 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
 
 # Variance here follows the direction in which values cross the public API:
 #
-# * Parameters are only consumed by ObjectiveFunctor and QuantityComputer, so
+# * Parameters are only consumed by objective components, so
 #   they are contravariant. For example, an objective that accepts a broad
 #   Mapping[str, object] is safe wherever one accepting dict[str, float] is
 #   required. The Mapping bound is only an upper bound; it does not force user
@@ -644,7 +646,7 @@ def quantity(
     [Callable[Concatenate[ParametersT_contra, ...], QuantitiesT_co]],
     WrappedComponent[ParametersT_contra, QuantitiesT_co],
 ]:
-    """TODO."""
+    """Wrap a callable that returns a quantity mapping."""
 
     def wrap(
         func: Callable[Concatenate[ParametersT_contra, ...], QuantitiesT_co],
@@ -664,7 +666,7 @@ def objective(
     [Callable[Concatenate[ParametersT_contra, ...], float]],
     WrappedComponent[ParametersT_contra, float],
 ]:
-    """TODO."""
+    """Wrap a callable that returns a scalar objective value."""
 
     def wrap(
         func: Callable[Concatenate[ParametersT_contra, ...], float],

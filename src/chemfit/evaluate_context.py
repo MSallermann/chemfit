@@ -110,6 +110,16 @@ class EvaluateContext:
         self._outgoing: list[EvaluateContext] = []
         self.exception: BaseException | None = None
 
+    def _reset_evaluation_state(self) -> None:
+        """Clear per-call results while preserving configuration and shared state."""
+        self._clear_incoming()
+        self.input = None
+        self.output = NO_OUTPUT
+        self.temp = SimpleNamespace()
+        self.meta = {}
+        self.pipeline = []
+        self.exception = None
+
     def spawn_ctx(self) -> EvaluateContext:
         return EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
 
@@ -127,7 +137,7 @@ class EvaluateContext:
 
     def _clear_incoming(self) -> None:
         for ctx in self._incoming:
-            ctx._outgoing.remove(self)
+            ctx._outgoing.remove(self)  # noqa: SLF001
         self._incoming.clear()
 
     def add_incoming(self, ctx_incoming: EvaluateContext) -> None:
@@ -198,8 +208,8 @@ class EvaluateContext:
                 State previously produced by ``to_result_state()``.
 
         Side Effects:
-            Updates ``parameters``, ``loss``, ``quantities``, and ``meta``
-            on this context, and restores result state on its descendants.
+            Updates input, output, exception, and metadata on this context and
+            restores result state on opaque-pipeline descendants.
 
         """
 

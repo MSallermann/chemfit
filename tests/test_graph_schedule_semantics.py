@@ -20,21 +20,55 @@ from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 from chemfit.graph_schedule_base import SerialGraphScheduler
 from chemfit.scheduling import EvaluationRequest
 
+try:
+    from mpi4py import MPI
 
-def evaluate_graph(objective, value):
+    from chemfit.mpi_graph_schedule import MPIGraphScheduler
+except ImportError:
+    MPI = None
+
+
+LOCAL_SCHEDULERS = (
+    pytest.param(SerialGraphScheduler, id="serial"),
+    pytest.param(
+        lambda: ExecutorGraphScheduler(executor_factory=ThreadPoolExecutor),
+        id="thread-pool",
+    ),
+    pytest.param(
+        lambda: ExecutorGraphScheduler(executor_factory=ProcessPoolExecutor),
+        id="process-pool",
+    ),
+)
+SCHEDULERS = (
+    (pytest.param(MPIGraphScheduler, id="mpi"),)
+    if MPI is not None and MPI.COMM_WORLD.Get_size() > 1
+    else LOCAL_SCHEDULERS
+)
+
+
+@pytest.fixture(params=SCHEDULERS)
+def scheduler(request):
+    return request.param()
+
+
+def prepare_schedule(scheduler, objective):
+    schedule = scheduler.prepare(objective)
+    if getattr(schedule, "rank", 0) != 0:
+        with schedule:
+            schedule.worker_loop()
+        pytest.skip("MPI worker rank")
+    return schedule
+
+
+def evaluate_graph(scheduler, objective, value):
     ctx = EvaluateContext()
-    # result = SerialGraphScheduler().prepare(objective)(value, ctx)
-    # result = ExecutorGraphScheduler(executor_factory=ThreadPoolExecutor).prepare(
-    #     objective
-    # )(value, ctx)
-    result = ExecutorGraphScheduler(executor_factory=ProcessPoolExecutor).prepare(
-        objective
-    )(value, ctx)
+    with prepare_schedule(scheduler, objective) as schedule:
+        result = schedule(value, ctx)
 
     return result, ctx
 
 
-def test_successful_nested_pipeline_and_join():
+def test_successful_nested_pipeline_and_join(scheduler):
     """Graph and direct evaluation agree on values and child contexts."""
 
     @component()
@@ -64,7 +98,7 @@ def test_successful_nested_pipeline_and_join():
 
     direct_ctx = EvaluateContext()
     direct_result = objective(2, direct_ctx)
-    graph_result, graph_ctx = evaluate_graph(objective, 2)
+    graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
 
     assert direct_result == graph_result == 20
     assert [ctx.output for ctx in direct_ctx.incoming] == [4, 7, 21, 20]
@@ -73,7 +107,7 @@ def test_successful_nested_pipeline_and_join():
     assert graph_ctx.output == 20
 
 
-def test_failed_atomic_stage_skips_downstream_stage():
+def test_failed_atomic_stage_skips_downstream_stage(scheduler):
     @component()
     def fail(x):
         raise ValueError("atomic failure")
@@ -85,8 +119,11 @@ def test_failed_atomic_stage_skips_downstream_stage():
     objective = PipelineComponent(fail, must_not_run)
     ctx = EvaluateContext()
 
-    with pytest.raises(ValueError, match="atomic failure"):
-        SerialGraphScheduler().prepare(objective)(3, ctx)
+    with (
+        prepare_schedule(scheduler, objective) as schedule,
+        pytest.raises(ValueError, match="atomic failure"),
+    ):
+        schedule(3, ctx)
 
     assert isinstance(ctx.incoming[0].exception, ValueError)
     assert str(ctx.incoming[0].exception) == "atomic failure"
@@ -94,7 +131,7 @@ def test_failed_atomic_stage_skips_downstream_stage():
     assert ctx.incoming[1].exception is None
 
 
-def test_join_recovers_from_one_failed_term_and_runs_sibling():
+def test_join_recovers_from_one_failed_term_and_runs_sibling(scheduler):
     @component()
     def fail(x):
         raise ValueError("term failure")
@@ -107,7 +144,7 @@ def test_join_recovers_from_one_failed_term_and_runs_sibling():
         skip_exception_handler
     )
 
-    result, ctx = evaluate_graph(objective, 4)
+    result, ctx = evaluate_graph(scheduler, objective, 4)
 
     assert result == 8
     assert isinstance(ctx.incoming[0].exception, ValueError)
@@ -116,7 +153,7 @@ def test_join_recovers_from_one_failed_term_and_runs_sibling():
     assert ctx.incoming[1].exception is None
 
 
-def test_failed_structural_begin_aborts_only_its_own_scope():
+def test_failed_structural_begin_aborts_only_its_own_scope(scheduler):
     # Only structural hooks run in the coordinator process.
     calls = []
 
@@ -147,7 +184,7 @@ def test_failed_structural_begin_aborts_only_its_own_scope():
         [failed_branch, healthy_sibling]
     ).with_exception_handler(skip_exception_handler)
 
-    result, ctx = evaluate_graph(objective, 2)
+    result, ctx = evaluate_graph(scheduler, objective, 2)
 
     assert result == 5
     assert calls == ["begin hook", "end hook"]
@@ -158,7 +195,7 @@ def test_failed_structural_begin_aborts_only_its_own_scope():
     assert ctx.incoming[1].exception is None
 
 
-def test_failed_input_skips_entire_nested_structural_component():
+def test_failed_input_skips_entire_nested_structural_component(scheduler):
     # Structural hooks run in the coordinator; a skipped scope invokes neither.
     calls = []
 
@@ -182,8 +219,11 @@ def test_failed_input_skips_entire_nested_structural_component():
     objective = PipelineComponent(fail, inner)
     ctx = EvaluateContext()
 
-    with pytest.raises(ValueError, match="upstream failure"):
-        SerialGraphScheduler().prepare(objective)(2, ctx)
+    with (
+        prepare_schedule(scheduler, objective) as schedule,
+        pytest.raises(ValueError, match="upstream failure"),
+    ):
+        schedule(2, ctx)
 
     assert isinstance(ctx.incoming[0].exception, ValueError)
     assert ctx.incoming[1].output is NO_OUTPUT
@@ -192,7 +232,7 @@ def test_failed_input_skips_entire_nested_structural_component():
     assert calls == []
 
 
-def test_structural_end_failure_is_reported_without_aborting_siblings():
+def test_structural_end_failure_is_reported_without_aborting_siblings(scheduler):
     calls = []
 
     @component()
@@ -219,7 +259,7 @@ def test_structural_end_failure_is_reported_without_aborting_siblings():
         [failed_branch, healthy_sibling]
     ).with_exception_handler(skip_exception_handler)
 
-    result, ctx = evaluate_graph(objective, 2)
+    result, ctx = evaluate_graph(scheduler, objective, 2)
 
     assert result == 7
     assert calls == ["failed branch post"]
@@ -231,7 +271,7 @@ def test_structural_end_failure_is_reported_without_aborting_siblings():
     assert ctx.incoming[1].exception is None
 
 
-def test_batch_mixed_success_and_failure_keeps_request_indices():
+def test_batch_mixed_success_and_failure_keeps_request_indices(scheduler):
     """An unhandled failure in one request does not prevent other results."""
 
     @component()
@@ -244,9 +284,7 @@ def test_batch_mixed_success_and_failure_keeps_request_indices():
     def downstream(x):
         return x + 1
 
-    schedule = SerialGraphScheduler().prepare(
-        PipelineComponent(possibly_fail, downstream)
-    )
+    schedule = prepare_schedule(scheduler, PipelineComponent(possibly_fail, downstream))
     inputs = [2, -1, 5, -3]
     contexts = [EvaluateContext() for _ in inputs]
     requests = [
@@ -254,7 +292,8 @@ def test_batch_mixed_success_and_failure_keeps_request_indices():
         for value, ctx in zip(inputs, contexts, strict=True)
     ]
 
-    results = list(schedule.evaluate_many(requests))
+    with schedule:
+        results = list(schedule.evaluate_many(requests))
     assert len(results) == len(inputs)
     assert {result.index for result in results} == set(range(len(inputs)))
 
@@ -278,7 +317,7 @@ def test_batch_mixed_success_and_failure_keeps_request_indices():
         assert ctx.incoming[1].exception is None
 
 
-def test_batch_recovered_failures_are_isolated_per_request():
+def test_batch_recovered_failures_are_isolated_per_request(scheduler):
     """A COB recovers failures independently for each request in the batch."""
 
     @component()
@@ -294,18 +333,19 @@ def test_batch_recovered_failures_are_isolated_per_request():
     objective = CombinedObjectiveFunction(
         [sometimes_fail, healthy_sibling]
     ).with_exception_handler(skip_exception_handler)
-    schedule = SerialGraphScheduler().prepare(objective)
+    schedule = prepare_schedule(scheduler, objective)
 
     inputs = [1, 2, 3, 4]
     contexts = [EvaluateContext() for _ in inputs]
-    results = list(
-        schedule.evaluate_many(
-            [
-                EvaluationRequest(parameters=value, ctx=ctx)
-                for value, ctx in zip(inputs, contexts, strict=True)
-            ]
+    with schedule:
+        results = list(
+            schedule.evaluate_many(
+                [
+                    EvaluationRequest(parameters=value, ctx=ctx)
+                    for value, ctx in zip(inputs, contexts, strict=True)
+                ]
+            )
         )
-    )
 
     assert len(results) == len(inputs)
     assert {result.index for result in results} == set(range(len(inputs)))

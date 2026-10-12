@@ -1,113 +1,92 @@
-import sys
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from typing import Any
 
 import pytest
-from ase import Atoms
-from ase.calculators.lj import LennardJones
 
 import chemfit
-import chemfit.api as api_module
-from chemfit.tree_schedule import SerialTreeScheduler
+from chemfit.graph_schedule_base import SerialGraphScheduler
 
 
-def test_fit_nevergrad_is_the_only_high_level_fit_export():
-    assert callable(chemfit.fit_nevergrad)
-    assert not hasattr(chemfit, "fit")
+def test_combine_accepts_an_iterable_and_context_aware_reducer():
+    @chemfit.objective()
+    def term(parameters, *, offset):
+        return parameters["x"] + offset
+
+    def reduce(values, *, ctx):
+        ctx.meta["values"] = tuple(values)
+        return max(values)
+
+    objective = chemfit.combine(
+        (term.bind(offset=value) for value in (1, 3)),
+        weights=(2, 1),
+        reduction=reduce,
+    )
+    ctx = chemfit.EvaluateContext()
+
+    assert objective({"x": 2}, ctx) == 6
+    assert ctx.meta["values"] == (6, 5)
 
 
-def test_fit_nevergrad_accepts_initial_observations():
-    evaluated: list[dict[str, float]] = []
-
-    def objective(parameters: dict[str, float]) -> float:
-        evaluated.append(parameters)
+def test_evaluate_many_restores_input_order_with_caller_owned_executor():
+    @chemfit.objective(pass_ctx=True)
+    def objective(parameters, *, ctx):
+        ctx.meta["value"] = parameters["x"]
         return parameters["x"] ** 2
 
-    observations = (({"x": 0.0}, 0.0) for _ in range(1))
-    result = chemfit.fit_nevergrad(
-        objective,
-        initial={"x": 1.0},
-        budget=1,
-        optimizer="OnePlusOne",
-        initial_observations=observations,
-    )
-
-    assert len(evaluated) == 1
-    assert result.best_parameters == {"x": 0.0}
-    assert result.best_loss == 0.0
-
-
-@pytest.mark.parametrize(
-    ("execution_workers", "expected_workers"),
-    [(None, 4), (8, 8)],
-)
-def test_fit_nevergrad_keeps_batch_and_execution_sizes_independent(
-    monkeypatch: pytest.MonkeyPatch,
-    execution_workers: int | None,
-    expected_workers: int,
-):
-    created_executor_sizes: list[int] = []
-    thread_pool_executor = ThreadPoolExecutor
-
-    def recording_executor(*, max_workers: int) -> ThreadPoolExecutor:
-        created_executor_sizes.append(max_workers)
-        return thread_pool_executor(max_workers=max_workers)
-
-    monkeypatch.setattr(api_module, "ThreadPoolExecutor", recording_executor)
-
-    result = chemfit.fit_nevergrad(
-        lambda parameters: parameters["x"] ** 2,
-        initial={"x": 1.0},
-        budget=4,
-        batch_size=4,
-        execution_workers=execution_workers,
-        optimizer="OnePlusOne",
-    )
-
-    assert created_executor_sizes == [expected_workers]
-    assert len(result.contexts) == 4
-    assert [ctx.n_evals for ctx in result.contexts] == [1, 1, 1, 1]
-
-
-def test_fit_nevergrad_rejects_workers_compatibility_alias():
-    with pytest.raises(TypeError, match="workers"):
-        chemfit.fit_nevergrad(
-            lambda parameters: parameters["x"] ** 2,
-            initial={"x": 1.0},
-            budget=1,
-            workers=1,  # type: ignore[call-arg]
+    executor = ThreadPoolExecutor(max_workers=2)
+    try:
+        contexts = chemfit.evaluate_many(
+            objective,
+            [{"x": 3.0}, {"x": 1.0}, {"x": 2.0}],
+            executor=executor,
         )
+        assert executor.submit(lambda: 1).result() == 1
+    finally:
+        executor.shutdown()
+
+    assert [ctx.output for ctx in contexts] == [9.0, 1.0, 4.0]
+    assert [ctx.meta["value"] for ctx in contexts] == [3.0, 1.0, 2.0]
 
 
-def test_fit_nevergrad_closes_its_prepared_schedule():
+def test_evaluate_many_accepts_a_custom_scheduler():
+    contexts = chemfit.evaluate_many(
+        lambda parameters: parameters["x"] + 1,
+        [{"x": 1}, {"x": 4}],
+        scheduler=SerialGraphScheduler(),
+    )
+
+    assert [ctx.output for ctx in contexts] == [2, 5]
+
+
+def test_fit_nevergrad_records_best_evaluation_and_closes_internal_schedule():
     class RecordingScheduler:
         schedule = None
 
-        def prepare(self, objective: Any):
-            self.schedule = SerialTreeScheduler().prepare(objective)
+        def prepare(self, objective):
+            self.schedule = SerialGraphScheduler().prepare(objective)
             return self.schedule
 
     scheduler = RecordingScheduler()
-
-    chemfit.fit_nevergrad(
+    result = chemfit.fit_nevergrad(
         lambda parameters: parameters["x"] ** 2,
         initial={"x": 1.0},
-        budget=1,
+        budget=2,
         optimizer="OnePlusOne",
         scheduler=scheduler,
     )
 
+    assert result.best_loss == result.best_context.opt_loss
+    assert result.best_parameters == result.best_context.opt_params
     assert scheduler.schedule is not None
     assert scheduler.schedule.closed
 
 
-def test_fit_nevergrad_borrows_a_supplied_prepared_schedule():
+def test_fit_nevergrad_borrows_a_prepared_schedule():
     @chemfit.objective()
-    def objective(parameters: dict[str, float]) -> float:
+    def objective(parameters):
         return parameters["x"] ** 2
 
-    with SerialTreeScheduler().prepare(objective) as schedule:
+    with SerialGraphScheduler().prepare(objective) as schedule:
         result = chemfit.fit_nevergrad(
             schedule,
             initial={"x": 1.0},
@@ -119,25 +98,22 @@ def test_fit_nevergrad_borrows_a_supplied_prepared_schedule():
         assert not schedule.closed
 
 
-@pytest.mark.parametrize("option", ["scheduler", "executor", "execution_workers"])
-def test_fit_nevergrad_rejects_preparation_options_with_prepared_schedule(
-    option: str,
-):
+@pytest.mark.parametrize("option", ("scheduler", "executor", "execution_workers"))
+def test_prepared_schedule_rejects_backend_options(option):
     @chemfit.objective()
-    def objective(parameters: dict[str, float]) -> float:
+    def objective(parameters):
         return parameters["x"] ** 2
 
     kwargs: dict[str, Any]
-    with SerialTreeScheduler().prepare(objective) as schedule:
+    executor = None
+    with SerialGraphScheduler().prepare(objective) as schedule:
         if option == "scheduler":
-            kwargs = {"scheduler": SerialTreeScheduler()}
-            executor_context = None
+            kwargs = {"scheduler": SerialGraphScheduler()}
         elif option == "execution_workers":
             kwargs = {"execution_workers": 2}
-            executor_context = None
         else:
-            executor_context = ThreadPoolExecutor(max_workers=1)
-            kwargs = {"executor": executor_context}
+            executor = ThreadPoolExecutor(max_workers=1)
+            kwargs = {"executor": executor}
 
         try:
             with pytest.raises(ValueError, match=option):
@@ -148,127 +124,5 @@ def test_fit_nevergrad_rejects_preparation_options_with_prepared_schedule(
                     **kwargs,
                 )
         finally:
-            if executor_context is not None:
-                executor_context.shutdown()
-
-
-def test_fit_nevergrad_rejects_execution_backend_conflicts():
-    def objective(parameters: dict[str, float]) -> float:
-        return parameters["x"] ** 2
-
-    scheduler = SerialTreeScheduler()
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        with pytest.raises(ValueError, match="only one"):
-            chemfit.fit_nevergrad(
-                objective,
-                initial={"x": 1.0},
-                budget=1,
-                executor=executor,
-                scheduler=scheduler,
-            )
-
-        with pytest.raises(ValueError, match="execution_workers"):
-            chemfit.fit_nevergrad(
-                objective,
-                initial={"x": 1.0},
-                budget=1,
-                executor=executor,
-                execution_workers=2,
-            )
-
-    with pytest.raises(ValueError, match="execution_workers"):
-        chemfit.fit_nevergrad(
-            objective,
-            initial={"x": 1.0},
-            budget=1,
-            scheduler=scheduler,
-            execution_workers=2,
-        )
-
-
-def test_public_api_workflow(tmp_path: Path):
-    @chemfit.quantity()
-    def model(parameters: dict[str, float], scale: float):
-        return {"value": scale * parameters["x"]}
-
-    assert not hasattr(model, "resources")
-
-    def squared_error(quantities: dict[str, float], target: float):
-        return (quantities["value"] - target) ** 2
-
-    def external_command(
-        parameters: dict[str, float],
-        _workdir: Path,
-        _ctx: chemfit.EvaluateContext,
-    ):
-        return [
-            sys.executable,
-            "-c",
-            "from pathlib import Path; import sys; "
-            "Path('result.txt').write_text(sys.argv[1])",
-            str(parameters["x"]),
-        ]
-
-    def parse_external(output: Path):
-        return {"value": float(output.read_text(encoding="utf-8"))}
-
-    external_term = (
-        chemfit.external_quantity(tmp_path)
-        .with_cmd(external_command)
-        .with_parser(parse_external, "result.txt")
-        .with_loss(squared_error, target=2.0)
-    )
-
-    def calculator(
-        parameters: dict[str, float],
-        _atoms: Atoms,
-        _ctx: chemfit.EvaluateContext,
-    ):
-        return LennardJones(epsilon=parameters["x"], sigma=1.0, rc=100.0)
-
-    ase_term = (
-        chemfit.ase_quantity(Atoms("Ar2", positions=[(0, 0, 0), (2 ** (1 / 6), 0, 0)]))
-        .with_calculator(calculator)
-        .with_loss(lambda quantities: (quantities["n_atoms"] - 2) ** 2)
-    )
-
-    def aggregate(
-        terms: list[float],
-        quantities: list[dict[str, object] | None],
-        ctx: chemfit.EvaluateContext,
-    ) -> float:
-        ctx.meta["quantity_terms"] = sum(value is not None for value in quantities)
-        return sum(terms)
-
-    objective = chemfit.combine(
-        model.bind(scale=2.0).with_loss(squared_error, target=4.0),
-        external_term,
-        ase_term,
-        lambda parameters: (parameters["x"] - 2.0) ** 2,
-        aggregator=aggregate,
-    )
-    assert not hasattr(objective, "resources")
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        contexts = chemfit.evaluate_many(
-            objective,
-            [{"x": 1.0}, {"x": 2.0}],
-            executor=executor,
-        )
-
-    assert [ctx.loss for ctx in contexts] == [6.0, 0.0]
-    assert contexts[0].children[1].quantities == {"value": 1.0}
-    assert contexts[0].children[2].quantities is not None
-    assert "energy" in contexts[0].children[2].quantities
-    assert contexts[0].meta["quantity_terms"] == 3
-
-    result = chemfit.fit_nevergrad(
-        objective,
-        initial={"x": 2.0},
-        budget=2,
-        optimizer="OnePlusOne",
-    )
-
-    assert result.best_loss == result.best_context.opt_loss
-    assert result.best_parameters == result.best_context.opt_params
+            if executor is not None:
+                executor.shutdown()

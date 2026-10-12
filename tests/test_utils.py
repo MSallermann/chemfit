@@ -1,15 +1,7 @@
 import pytest
 
 from chemfit.debug_utils import log_all_methods
-from chemfit.executor_utils import AttachContextAsReturnValue
 from chemfit.utils import check_params_near_bounds
-
-
-def test_context_wrapper_requires_context_as_final_argument():
-    wrapped = AttachContextAsReturnValue(lambda value: value)
-
-    with pytest.raises(TypeError, match="final positional argument"):
-        wrapped("not a context")
 
 
 def test_check_params():

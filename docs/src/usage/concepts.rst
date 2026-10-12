@@ -11,7 +11,7 @@ The goal is to provide a mental model that helps you design your own
 objective functions and understand how ChemFit executes them.
 
 Most workflows begin with top-level helpers such as
-:func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`,
+:func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`,
 :func:`chemfit.combine() <chemfit.api.combine>`, and
 :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`.
 Those helpers operate on the objects described here: ``quantity()`` creates a
@@ -35,7 +35,7 @@ The basic building blocks are:
   which computes intermediate quantities from a parameter dictionary.
 - A loss function, which maps these quantities to a scalar value.
 
-These two are combined into an :class:`~chemfit.abstract_objective_function.ObjectiveFunctor`.
+These two are combined into an :class:`~chemfit.abstract_objective_function.ObjectiveComponent`.
 
 More complex objectives are constructed by combining multiple such terms using
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
@@ -48,7 +48,7 @@ Conceptually, this looks like:
         ↓
     QuantityComputer
         ↓
-    ObjectiveFunctor (loss)
+    ObjectiveComponent (loss)
         ↓
     CombinedObjectiveFunction
         ↓
@@ -56,12 +56,6 @@ Conceptually, this looks like:
 
 This structure allows complex objectives to be built from many simple,
 independent contributions.
-
-.. note::
-
-    For advanced use-cases, combined objective functions can compute their loss
-    from the quantities of individual child terms, instead of simple scalar losses.
-    This is achieved by supplying a custom :class:`~chemfit.combined_objective_function.Aggregator`.
 
 -------------------------
 
@@ -89,7 +83,7 @@ Execution backends are selected with a
 :class:`~chemfit.scheduling.Scheduler`. A scheduler prepares an
 objective-specific schedule. The prepared schedule is callable for one
 parameter mapping and provides ``evaluate_many`` for batches. Serial,
-executor-backed, and MPI tree schedulers all operate on the same objective
+executor-backed, and MPI graph schedulers all operate on the same objective
 definition; see :ref:`parallel_execution`.
 
 -------------------------
@@ -102,12 +96,10 @@ to store all per-evaluation state.
 
 A context is created for each evaluation and passed through the computation.
 
-It serves several purposes:
-
-- storing input parameters
-- recording computed quantities
-- storing the final loss
-- collecting metadata during evaluation
+It stores the component input, output or exception, metadata, and the context
+links created by structural compositions. A quantity component's ``output``
+is its quantities dictionary; a complete objective's ``output`` is its scalar
+loss.
 
 Each evaluation has its own context, which avoids shared mutable state and
 makes parallel execution safe.
@@ -123,11 +115,11 @@ The context can be used to record additional information during evaluation:
 
 .. testcode::
 
-    from chemfit.wrap_funcs import quantity
+    from chemfit import quantity
     from chemfit.abstract_objective_function import EvaluateContext
 
     @quantity(pass_ctx=True)
-    def computer(params, ctx):
+    def computer(params, *, ctx):
         value = params["x"] ** 2
         ctx.meta["x_squared"] = value
         return {"x2": value}
@@ -135,7 +127,7 @@ The context can be used to record additional information during evaluation:
     ctx = EvaluateContext()
     computer({"x": 3.0}, ctx)
 
-    print(ctx.quantities)  # {'x2': 9.0}
+    print(ctx.output)      # {'x2': 9.0}
     print(ctx.meta)        # {'x_squared': 9.0}
 
 .. testoutput::
@@ -146,30 +138,28 @@ The context can be used to record additional information during evaluation:
 
 ---------------------------
 
-Parent and child contexts
-===========================
+Context graphs
+==============
 
-When combining multiple objective terms, ChemFit creates a hierarchy of contexts.
+Structural components create a context graph mirroring their data flow.
 
-- The top-level evaluation uses a *parent context*
-- Each objective term is evaluated in its own *child context*
+- The top-level evaluation uses the context supplied by the caller.
+- Each nested component receives its own context.
+- ``incoming`` and ``outgoing`` expose dependency links without allowing the
+  topology to be mutated through those properties.
 
 Conceptually:
 
 .. code-block:: text
 
-    parent context
-        ├── child context (term 1)
-        ├── child context (term 2)
-        └── ...
+    term 1 context ──┐
+                     ├── combined-objective context
+    term 2 context ──┘
 
-Each child context stores the results of its corresponding term.
-
-After evaluation, relevant information from child contexts can be collected
-into the parent context as metadata.
-
-This structure mirrors the composition of the objective function and is key
-to enabling parallel execution.
+Each incoming context stores its component's input, output, exception, and
+metadata. Pipelines additionally expose their ordered stage contexts through
+``pipeline``. This makes nested results inspectable without flattening or
+copying metadata into the root context.
 
 -------------------------
 
@@ -185,13 +175,13 @@ Typical uses include:
 - storing diagnostic information
 - tracking which terms contributed to the final loss
 
-Metadata is propagated upward from child contexts to the parent context,
-allowing you to inspect the full evaluation after it completes.
+Metadata stays on the context whose component produced it. Inspect
+``ctx.incoming`` or ``ctx.pipeline`` when nested component metadata is needed.
 
 Static metadata belongs to a reusable computation or objective definition. Add
 it fluently with
 :py:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_meta` or
-:py:meth:`~chemfit.abstract_objective_function.ObjectiveFunctor.with_meta`:
+:py:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_meta`:
 
 .. code-block:: python
 
@@ -214,10 +204,8 @@ objective metadata is applied last. Objective metadata therefore wins if the
 computer and objective use the same key.
 
 Values discovered during a particular evaluation are dynamic metadata and
-should still be written directly to ``ctx.meta`` by the evaluating callable or
-a hook. The ``static_meta_data`` dictionaries remain available as underlying
-storage for backward compatibility, but ``with_meta()`` is the preferred
-configuration interface.
+should be written directly to ``ctx.meta`` by the evaluating callable or a
+hook.
 
 -------------------------
 
@@ -227,7 +215,7 @@ Configuration and shared state
 Contexts provide two namespaces for passing information:
 
 ``config``
-    A per-context namespace that is copied to child contexts.
+    A per-context namespace that is copied when nested contexts are spawned.
     This is useful for passing configuration or control information
     to nested evaluations.
 
@@ -264,10 +252,9 @@ Conceptually:
 Using one context per evaluation avoids shared mutable state and makes
 parallel evaluation safe.
 
-This is distinct from the child-context mechanism used inside
-:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`,
-where one parent context owns multiple child contexts for the terms of a
-single objective evaluation.
+This is distinct from the linked contexts created inside structural
+components: those contexts represent different nodes of one evaluation,
+whereas the contexts above represent separate root evaluations.
 
 
 Design principles

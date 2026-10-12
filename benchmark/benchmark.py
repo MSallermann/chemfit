@@ -17,15 +17,12 @@ from dask.distributed import Client
 from loky import ProcessPoolExecutor
 from mpi4py import MPI
 
-from chemfit.abstract_objective_function import (
-    EvaluateContext,
-    QuantityComputerObjectiveFunction,
-)
+from chemfit.abstract_objective_function import EvaluateContext, quantity
 from chemfit.combined_objective_function import CombinedObjectiveFunction
-from chemfit.executor_scheduler import ExecutorTreeScheduler
-from chemfit.mpi_scheduler import MPITreeSchedule, MPITreeScheduler
-from chemfit.scheduling import SerialScheduler
-from chemfit.wrap_funcs import quantity
+from chemfit.executor_graph_schedule import ExecutorGraphScheduler
+from chemfit.graph_schedule_base import SerialGraphScheduler
+from chemfit.mpi_graph_schedule import MPIGraphSchedule, MPIGraphScheduler
+from chemfit.scheduling import PreparedSchedule
 
 
 def gil_sleep_busy(seconds: float) -> None:
@@ -83,13 +80,13 @@ def make_scheduler(bm_params: BenchmarkParams, resources: ExitStack):
         executor = resources.enter_context(
             ThreadPoolExecutor(max_workers=bm_params.n_workers)
         )
-        return ExecutorTreeScheduler(executor=executor)
+        return ExecutorGraphScheduler(executor=executor)
 
     if method == Method.loky_processpool:
         executor = resources.enter_context(
             ProcessPoolExecutor(max_workers=bm_params.n_workers)
         )
-        return ExecutorTreeScheduler(executor=executor)
+        return ExecutorGraphScheduler(executor=executor)
 
     if method == Method.dask:
         scheduler_file = Path(__file__).with_name("scheduler.json")
@@ -98,27 +95,21 @@ def make_scheduler(bm_params: BenchmarkParams, resources: ExitStack):
         )
         if bm_params.n_workers is not None:
             client.wait_for_workers(bm_params.n_workers, timeout=30.0)
-        return ExecutorTreeScheduler(executor=client.get_executor())
+        return ExecutorGraphScheduler(executor=client.get_executor())
 
     if method == Method.mpi:
-        return MPITreeScheduler(mpi_debug_log=False)
+        return MPIGraphScheduler(mpi_debug_log=False)
 
-    return SerialScheduler()
+    return SerialGraphScheduler()
 
 
 def make_objective(n_terms: int) -> CombinedObjectiveFunction:
-    terms = [
-        QuantityComputerObjectiveFunction(
-            loss_function=rmsd,
-            quantity_computer=do_stuff,
-        )
-        for _ in range(n_terms)
-    ]
+    terms = [do_stuff.with_loss(rmsd) for _ in range(n_terms)]
     return CombinedObjectiveFunction(terms)
 
 
 def benchmark_objective(
-    cob: CombinedObjectiveFunction,
+    schedule: PreparedSchedule[Any, Any],
     bm_params: BenchmarkParams,
     n_terms: int,
     time_taken_list: list[dict],
@@ -133,7 +124,7 @@ def benchmark_objective(
             ctx.config.wait_time = wait_time
 
             for _ in range(bm_params.n_warmup):
-                cob(params, ctx)
+                schedule(params, ctx)
 
             time_total = 0.0
 
@@ -149,10 +140,10 @@ def benchmark_objective(
 
                 # Scheduler construction, worker startup, and warmup are excluded.
                 time_start = time.perf_counter()
-                res = cob(params, ctx)
+                res = schedule(params, ctx)
                 time_total += time.perf_counter() - time_start
 
-                expected = cob.n_terms() * sum(v**2 for v in params.values())
+                expected = n_terms * sum(v**2 for v in params.values())
 
                 print(f"   {res = }")
                 print(f"   {expected = }")
@@ -178,11 +169,11 @@ def run_benchmark(bm_params: BenchmarkParams) -> BenchmarkResult:
         for n_terms in bm_params.n_terms_list:
             cob = make_objective(n_terms)
             with scheduler.prepare(cob) as schedule:
-                if isinstance(schedule, MPITreeSchedule) and schedule.rank != 0:
+                if isinstance(schedule, MPIGraphSchedule) and schedule.rank != 0:
                     schedule.worker_loop()
                     continue
 
-                benchmark_objective(cob, bm_params, n_terms, time_taken_list)
+                benchmark_objective(schedule, bm_params, n_terms, time_taken_list)
 
     return BenchmarkResult(
         params=bm_params,
