@@ -367,8 +367,8 @@ locally in each process.
 Turning a computer into an objective
 ------------------------------------
 
-Like every quantity computer, an ``ASEComputer`` becomes an objective through
-:py:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`:
+Like every component, an ``ASEComputer`` becomes an objective through
+:py:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`:
 
 .. code-block:: python
 
@@ -391,7 +391,7 @@ Evaluation details remain available through the supplied context:
    ctx = EvaluateContext()
    quantities = computer({"epsilon": 1.0, "sigma": 1.0}, ctx)
 
-   print(ctx.quantities)
+   print(ctx.output)
    print(ctx.temp.atoms)
 
 Custom evaluators

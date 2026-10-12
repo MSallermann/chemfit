@@ -17,7 +17,6 @@ protocol.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
@@ -32,16 +31,19 @@ from typing_extensions import Self
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
-    InputT_contra,
     OutputT_co,
 )
 
+InputT = TypeVar("InputT")
+
 if TYPE_CHECKING:
+    from collections.abc import Iterator, Sequence
+
     from chemfit.abstract_objective_function import ObjectiveComponent
 
 
 @dataclass(frozen=True)
-class EvaluationRequest(Generic[InputT_contra]):
+class EvaluationRequest(Generic[InputT]):
     """
     Input for one evaluation in a prepared-schedule batch.
 
@@ -53,7 +55,7 @@ class EvaluationRequest(Generic[InputT_contra]):
 
     """
 
-    parameters: InputT_contra
+    parameters: InputT
     ctx: EvaluateContext
 
 
@@ -83,12 +85,12 @@ class EvaluationResult(Generic[OutputT_co]):
 
 
 @runtime_checkable
-class PreparedSchedule(Protocol[InputT_contra, OutputT_co]):
+class PreparedSchedule(Protocol[InputT, OutputT_co]):
     """
     Reusable, objective-specific execution plan produced by a scheduler.
 
     A prepared schedule owns state derived from a particular objective, such
-    as a compiled call tree, worker placement, or distributed object
+    as a compiled call graph, worker placement, or distributed object
     registrations. It may be reused for multiple evaluations until it is
     closed or the objective structure changes. Call the schedule directly to
     evaluate one parameter mapping synchronously, or use ``evaluate_many`` for
@@ -100,7 +102,7 @@ class PreparedSchedule(Protocol[InputT_contra, OutputT_co]):
 
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[InputT_contra]],
+        requests: Sequence[EvaluationRequest[InputT]],
         /,
     ) -> Iterator[EvaluationResult]:
         """
@@ -125,9 +127,7 @@ class PreparedSchedule(Protocol[InputT_contra, OutputT_co]):
 
         ...
 
-    def evaluate(
-        self, parameters: InputT_contra, ctx: EvaluateContext, /
-    ) -> OutputT_co:
+    def evaluate(self, parameters: InputT, ctx: EvaluateContext, /) -> OutputT_co:
         """
         Evaluate one parameter mapping synchronously with an explicit context.
 
@@ -151,7 +151,7 @@ class PreparedSchedule(Protocol[InputT_contra, OutputT_co]):
         ...
 
     def __call__(
-        self, parameters: InputT_contra, ctx: EvaluateContext | None = None
+        self, parameters: InputT, ctx: EvaluateContext | None = None
     ) -> OutputT_co:
         """
         Evaluate one parameter mapping synchronously.
@@ -197,7 +197,7 @@ class PreparedSchedule(Protocol[InputT_contra, OutputT_co]):
         ...
 
 
-class PreparedScheduleBase(ABC, Generic[InputT_contra, OutputT_co]):
+class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
     """
     Convenience base class for prepared schedules.
 
@@ -216,7 +216,7 @@ class PreparedScheduleBase(ABC, Generic[InputT_contra, OutputT_co]):
     @abstractmethod
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[InputT_contra]],
+        requests: Sequence[EvaluationRequest[InputT]],
         /,
     ) -> Iterator[EvaluationResult]:
         """
@@ -231,21 +231,21 @@ class PreparedScheduleBase(ABC, Generic[InputT_contra, OutputT_co]):
 
     def evaluate(
         self,
-        parameters: InputT_contra,
+        parameters: InputT,
         ctx: EvaluateContext,
         /,
     ) -> OutputT_co:
         """Evaluate one request with an explicit context."""
 
         (result,) = self.evaluate_many(
-            (EvaluationRequest[InputT_contra](parameters=parameters, ctx=ctx),)
+            (EvaluationRequest[InputT](parameters=parameters, ctx=ctx),)
         )
         if isinstance(result.value, Exception):
             raise result.value
         return result.value
 
     def __call__(
-        self, parameters: InputT_contra, ctx: EvaluateContext | None = None
+        self, parameters: InputT, ctx: EvaluateContext | None = None
     ) -> OutputT_co:
         """
         Evaluate one parameter mapping synchronously.
@@ -345,7 +345,7 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
         Args:
             objective: Root objective to prepare. For a combined objective,
-                preparation covers its complete nested call tree.
+                preparation covers its complete nested call graph.
 
         Returns:
             Objective-specific execution plan reusable for repeated parameter
@@ -371,16 +371,16 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
 
 class SerialSchedule(
-    PreparedScheduleBase[InputT_contra, OutputT_co], Generic[InputT_contra, OutputT_co]
+    PreparedScheduleBase[InputT, OutputT_co], Generic[InputT, OutputT_co]
 ):
-    def __init__(self, ob: ObjectiveComponent[InputT_contra, OutputT_co]) -> None:
+    def __init__(self, ob: ObjectiveComponent[InputT, OutputT_co]) -> None:
         """Initialize a reference serial schedule."""
         super().__init__()
         self.ob = ob
 
     def evaluate_many(
         self,
-        requests: Sequence[EvaluationRequest[InputT_contra]],
+        requests: Sequence[EvaluationRequest[InputT]],
     ) -> Iterator[EvaluationResult[OutputT_co]]:
         if self.closed:
             msg = "Prepared schedule is closed."
@@ -401,12 +401,12 @@ class SerialSchedule(
 
 
 class SerialScheduler(
-    Scheduler[SerialSchedule[InputT_contra, OutputT_co]],
-    Generic[InputT_contra, OutputT_co],
+    Scheduler[SerialSchedule[InputT, OutputT_co]],
+    Generic[InputT, OutputT_co],
 ):
     def prepare(
         self,
-        objective: ObjectiveComponent[InputT_contra, OutputT_co],
+        objective: ObjectiveComponent[InputT, OutputT_co],
         /,
-    ) -> SerialSchedule[InputT_contra, OutputT_co]:
+    ) -> SerialSchedule[InputT, OutputT_co]:
         return SerialSchedule(objective)

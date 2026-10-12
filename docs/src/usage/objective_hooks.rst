@@ -4,7 +4,7 @@ Evaluation hooks
 ================
 
 Evaluation hooks attach instrumentation to an
-:class:`~chemfit.abstract_objective_function.ObjectiveFunctor` without changing
+:class:`~chemfit.abstract_objective_function.ObjectiveComponent` without changing
 its evaluation implementation. Register either a hook object with
 ``pre_eval(ctx)`` and/or ``post_eval(ctx)`` methods, or pass ordinary callables
 through the ``pre=`` and ``post=`` keyword arguments. No hook base class is
@@ -40,7 +40,7 @@ key.
     print(ctx.meta["timing"]["elapsed_seconds"])
 
 ``chemfit.objective()`` returns a wrapped
-:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`; the same hook
+:class:`~chemfit.abstract_objective_function.ObjectiveComponent`; the same hook
 API applies to custom and composed objective functors.
 
 ``register_eval_hook`` returns the objective, allowing chained registrations.
@@ -73,17 +73,7 @@ whether evaluation succeeded:
 For a one-sided hook, simply omit the other method. Keep hook instance
 attributes for configuration, not mutable per-evaluation state.
 
-A successful post-hook may also transform the objective result by replacing
-``ctx.loss``. The replacement becomes both the stored context loss and the
-value returned to the caller:
-
-.. code-block:: python
-
-    def clamp_loss(ctx):
-        if ctx.loss is not None:
-            ctx.loss = max(ctx.loss, 0.0)
-
-    objective.register_eval_hook(post=clamp_loss)
+A successful post-hook may not transform the objective result.
 
 Registering functions directly
 ------------------------------
@@ -118,27 +108,26 @@ Lifecycle and errors
 
 Each objective call follows this order:
 
-1. Set ``ctx.parameters`` to the supplied mapping and reset ``ctx.loss`` to
+1. Set ``ctx.parameters`` to the supplied mapping and reset ``ctx.output`` to
    ``None``.
 2. Run pre-hooks in registration order.
-3. Run ``_evaluate`` and assign its return value to ``ctx.loss``.
+3. Run ``_evaluate`` and assign its return value to ``ctx.output``.
 4. Run post-hooks in registration order, not reverse order.
-5. Return the final value of ``ctx.loss``.
+5. Return the final value of ``ctx.output``.
 
-On a successful evaluation, a post-hook may replace ``ctx.loss``. Later
-post-hooks observe the replacement, and the final value is the objective's
-caller-visible result. For a combined objective, each leaf's final value is
+
+For a combined objective, each leaf's final value is
 what enters its parent reduction. A post-hook on the root combined objective
 may then replace the reduced loss. These semantics are the same for direct
-calls and prepared schedulers, including tree schedulers.
+calls and prepared schedulers, including graph schedulers.
 
-If ``_evaluate`` raises, post-hooks still run. They see ``ctx.loss is None`` and
-the exception in ``ctx.temp.exception``. On successful evaluation,
-``ctx.temp.exception`` is ``None`` before post-hooks run.
+If ``_evaluate`` raises, post-hooks still run. They see ``ctx.output is None`` and
+the exception in ``ctx.exception``. On successful evaluation,
+``ctx.exception`` is ``None`` before post-hooks run.
 
 Ordinary exceptions from post-hooks are collected while the remaining
 post-hooks are attempted. If evaluation succeeded, ChemFit raises
-``ObjectiveFunctor.PostEvalHookError``; its ``exceptions`` tuple contains the
+``PostEvalHookError``; its ``exceptions`` tuple contains the
 individual failures in registration order. If evaluation failed, its original
 exception is re-raised instead, and post-hook failures are not reported
 separately. Process-control exceptions such as ``KeyboardInterrupt`` are not
@@ -157,29 +146,28 @@ Nested objectives
 -----------------
 
 By default, registration affects only the given objective. To instrument a
-combined objective and its nested terms, register after building the call tree:
+combined objective and its nested terms, register after building the call graph:
 
 .. code-block:: python
 
     from chemfit.combined_objective_function import CombinedObjectiveFunction
 
     inner = CombinedObjectiveFunction([
-        WrappedObjectiveFunctor(lambda params: params["x"] ** 2),
+        WrappedComponent(lambda params: params["x"] ** 2),
     ])
     combined = CombinedObjectiveFunction([
         inner,
-        WrappedObjectiveFunctor(lambda params: params["x"] + 1),
+        WrappedComponent(lambda params: params["x"] + 1),
     ])
     combined.register_eval_hook(TimingHook(), recursive=True)
 
     ctx = EvaluateContext()
     combined({"x": 2.0}, ctx)
-    child_timing = ctx.children[0].meta["timing"]
+    child_timing = ctx.incoming[0].meta["timing"]
 
 Each term runs with its own child context. Child contexts are available through
-``ctx.children`` and expose ``parameters``, ``quantities``, ``loss``, and
-``meta`` directly. Further descendants are available through each child's
-``children`` property.
+``ctx.incoming``. Further descendants are available through each child's
+``incoming`` property.
 Parent timing includes nested work; child timing measures the individual term.
 
 Recursive registration follows distinct child evaluation scopes through
@@ -198,7 +186,7 @@ Parallel execution
 
 Register hooks before submitting work to a process executor. For MPI, register
 term hooks on every rank before nonzero ranks enter
-``MPITreeSchedule.worker_loop()``; registering only on rank zero does not
+``MPIGraphSchedule.worker_loop()``; registering only on rank zero does not
 update worker objectives.
 
 Hooks can execute concurrently or in another process. Do not append to a

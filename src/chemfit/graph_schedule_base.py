@@ -1,7 +1,8 @@
 from collections.abc import Iterator, Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Any, Generic, cast
+from typing import Any, Generic, TypeVar, cast
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
@@ -19,11 +20,12 @@ from chemfit.callgraph import (
 from chemfit.scheduling import (
     EvaluationRequest,
     EvaluationResult,
-    InputT_contra,
     OutputT_co,
     PreparedScheduleBase,
     Scheduler,
 )
+
+InputT = TypeVar("InputT")
 
 
 class BatchState(SimpleNamespace):
@@ -52,17 +54,7 @@ PENDING = _Pending()
 
 
 class _Running:
-    """
-    Sentinel for inactive evaluations.
-
-    This is for nodes that can never be reached due to an exception in a parent
-    setup phase.
-
-    Note:
-        None cannot represent this state because it denotes an omitted term in
-        ChemFit.
-
-    """
+    """Sentinel for atomic evaluations submitted to a backend."""
 
     __slots__ = ()
 
@@ -75,38 +67,20 @@ class _Running:
 RUNNING = _Running()
 
 
-# @dataclass(frozen=True)
-# class Success:
-#     value: Any
-
-
-# @dataclass(frozen=True)
-# class Failure:
-#     exception: Exception
-
-
-# NodeOutcome = Success | Failure
-
 NodeOutcome = OutputT_co | Exception
 
-# Per-node execution state. Nodes begin INACTIVE, become PENDING when they are
-# reachable for this run, and are finally replaced by their raw NodeOutcome.
+# Nodes begin pending, may become running, and are finally replaced by outcomes.
 NodeSlot = NodeOutcome | _Pending | _Running
 
-# Propagation either reaches the root and produces its outcome, or the run is
-# still waiting for other nodes to complete.
-PropagationResult = NodeOutcome
 
-SetupOutcome = PropagationResult
-
-
-class GraphException(BaseException): ...
+class GraphScheduleError(RuntimeError):
+    """Report an invalid internal graph-scheduling state."""
 
 
 @dataclass
 class EvaluationState:
     """
-    Mutable tree state for one objective evaluation.
+    Mutable graph state for one objective evaluation.
 
     Args:
         graph: Compiled objective graph evaluated by the schedule.
@@ -120,18 +94,15 @@ class EvaluationState:
     remaining_dependencies: list[int]
 
     def __init__(self, graph: CallGraph, root_ctx: EvaluateContext):
-        """Initialize all nodes as inactive and register the root context."""
+        """Initialize all nodes as pending and register the root context."""
 
         self.contexts = [None] * len(graph.nodes)
 
         self.root_ctx = root_ctx
         self.contexts[graph.root_id] = root_ctx
 
-        self.node_slots = [PENDING] * len(graph.nodes)  # all nodes start out as PENDING
-
+        self.node_slots = [PENDING] * len(graph.nodes)
         self.graph = graph
-
-        # a node can only run if this reaches zero
         self.remaining_dependencies = [len(node.incoming) for node in graph.nodes]
 
     def assemble_node_input(self, node_id: int) -> tuple[Any, ...] | NodeOutcome:
@@ -150,7 +121,7 @@ class EvaluationState:
                     msg = (
                         "Tried to construct input from PENDING or already RUNNING node"
                     )
-                    raise GraphException(msg)
+                    raise GraphScheduleError(msg)
                 node_input[idx] = cast("NodeOutcome", slot)
 
         # FinishNodes always receive a tuple
@@ -160,7 +131,7 @@ class EvaluationState:
         # Other nodes receive one-element tuples in unpacked form
         return node_input[0] if len(node_input) == 1 else tuple(node_input)
 
-    def mark_node_running(self, node_id: int):
+    def mark_node_running(self, node_id: int) -> None:
         self.node_slots[node_id] = RUNNING
 
     def complete(self, node_id: int, outcome: NodeOutcome) -> None:
@@ -181,7 +152,7 @@ class EvaluationState:
         slot = self.node_slots[node_id]
         if slot is not RUNNING and slot is not PENDING:
             msg = f"Node {node_id} is not running or pending."
-            raise GraphException(msg)
+            raise GraphScheduleError(msg)
 
         self.node_slots[node_id] = outcome
 
@@ -217,11 +188,9 @@ class EvaluationState:
         ctx = self.contexts[node_id]
         assert ctx is not None
 
-        try:
+        # End hooks still run, but the begin failure remains authoritative.
+        with suppress(Exception):
             node.objective._end_evaluation(exception, ctx)  # noqa: SLF001
-        except Exception:
-            # Preserve the original initialization failure.
-            pass
 
         self.complete(node.paired_end_node_id, exception)
 
@@ -244,33 +213,17 @@ class EvaluationState:
 
         if isinstance(slot, (_Pending, _Running)):
             msg = f"Node {node_id} has no completed outcome."
-            raise GraphException(msg)
+            raise GraphScheduleError(msg)
 
         return slot
 
-    def dependency_completed(self, source: int, target: int) -> bool:
-        """
-        Record one dependency completion for a composite node.
-
-        Args:
-            node_id: Identifier of the parent composite node.
-
-        Returns:
-            True when every child of the node has completed.
-
-        Raises:
-            RuntimeError: If more completions are recorded than the node has
-                children.
-
-        """
-
+    def dependency_completed(self, source: int, target: int) -> None:
+        """Record one dependency completion and reject duplicate propagation."""
         self.remaining_dependencies[target] -= 1
 
         if self.remaining_dependencies[target] < 0:
             msg = f"Node {target} has received a dependency completion from {source}, but it has zero open dependencies."
-            raise GraphException(msg)
-
-        return self.remaining_dependencies[target] == 0
+            raise GraphScheduleError(msg)
 
     def is_pending(self, node_id: int) -> bool:
         """
@@ -307,44 +260,39 @@ class EvaluationState:
             if dep == 0 and self.is_pending(node_id)
         ]
 
-    def count_pending(self) -> int:
-        return sum(slot is PENDING for slot in self.node_slots)
-
 
 @dataclass
-class EvaluationRun(Generic[InputT_contra]):
+class EvaluationRun(Generic[InputT]):
     """
     Associate one batch request with its root input and graph state.
 
     Args:
         index: Position of the request in the original input batch.
-        root_input: Parameter mapping for the evaluation.
-        state: Mutable state of this evaluation's tree traversal.
+        state: Mutable state of this evaluation's graph traversal.
 
     """
 
     index: int
-    root_input: InputT_contra
     state: EvaluationState
     yielded: bool = False
 
 
 @dataclass(frozen=True)
-class NodeTask(Generic[InputT_contra]):
+class NodeTask(Generic[InputT]):
     """
     Describe one pending leaf evaluation independently of its backend.
 
     Args:
         run_id: Position of the associated run in the active run sequence.
-        node_id: Identifier of the leaf in the compiled call tree.
-        parameters: Parameter mapping for the associated evaluation run.
+        node_id: Identifier of the atomic node in the compiled call graph.
+        input: Input assembled for the node.
         ctx: Context belonging to this leaf evaluation.
 
     """
 
     run_id: int
     node_id: int
-    input: InputT_contra
+    input: InputT
     ctx: EvaluateContext
 
 
@@ -355,7 +303,7 @@ class NodeCompletion:
 
     Args:
         run_id: Position of the associated run in the active run sequence.
-        node_id: Identifier of the completed leaf in the call tree.
+        node_id: Identifier of the completed node in the call graph.
         outcome: Numerical result or ordinary objective exception.
         ctx_result_state: Optional context state produced outside the
             coordinator process and requiring restoration before propagation.
@@ -368,12 +316,13 @@ class NodeCompletion:
     ctx_result_state: dict[str, Any] | None = None
 
 
-class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
+class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
     def __init__(self, graph: CallGraph):
+        """Initialize a reusable schedule for one compiled graph."""
         super().__init__()
         self.graph = graph
 
-    def execute_start_node(self, node_id: int, run: EvaluationRun):
+    def execute_start_node(self, node_id: int, run: EvaluationRun) -> None:
         node = cast("StartNode", self.graph.nodes[node_id])
         component = node.objective
         assert isinstance(component, StructuralComponent)
@@ -416,11 +365,12 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
 
         run.state.complete(node_id, component_input)
 
-    def execute_finish_node(self, node_id: int, run: EvaluationRun):
+    def execute_finish_node(self, node_id: int, run: EvaluationRun) -> None:
         node = cast("FinishNode", self.graph.nodes[node_id])
         component = node.objective
         assert isinstance(component, StructuralComponent)
         component_input = run.state.assemble_node_input(node_id)
+        assert isinstance(component_input, tuple)
         component_ctx = run.state.contexts[node_id]
         assert component_ctx is not None
 
@@ -464,21 +414,17 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
                     self.execute_finish_node(node_id, run)
 
     def collect_ready_tasks(
-        self, runs: Sequence[EvaluationRun[InputT_contra]]
+        self, runs: Sequence[EvaluationRun[InputT]]
     ) -> list[NodeTask]:
-
         tasks: list[NodeTask] = []
 
         for run in runs:
-            # list of node ids with zero pending dependencies
             runnable_nodes = run.state.runnable_nodes()
 
             for node_id in runnable_nodes:
                 node = self.graph.nodes[node_id]
 
                 if isinstance(node, AtomicNode):
-
-                    # Check if we skip this node
                     exception: Exception | None = None
                     for source in node.inputs:
                         if source is ROOT:
@@ -541,12 +487,15 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
 
     def abort_batch(self, batch_state: BatchState) -> None:
         """Best effort cancellation of pending tasks."""
-        ...
 
-    def evaluate_many(self, requests: Sequence[EvaluationRequest[InputT_contra]]):
-
+    def evaluate_many(  # noqa: PLR0912, PLR0915
+        self, requests: Sequence[EvaluationRequest[InputT]]
+    ) -> Iterator[EvaluationResult]:
+        if self.closed:
+            msg = "Prepared schedule is closed."
+            raise RuntimeError(msg)
         batch_state = BatchState()
-        runs: list[EvaluationRun[InputT_contra]] = []
+        runs: list[EvaluationRun[InputT]] = []
 
         try:
             # 1. Build the list of runs
@@ -556,11 +505,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
                     self.graph,
                     root_ctx=req.ctx,
                 )
-                runs.append(
-                    EvaluationRun(
-                        index=idx, root_input=req.parameters, state=eval_state
-                    )
-                )
+                runs.append(EvaluationRun(index=idx, state=eval_state))
 
             # 2. Initialize structural components
             for run in runs:
@@ -573,7 +518,6 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
             # 3. Process worker completions
             tasks_in_flight = 0
             while not all(run.yielded for run in runs):
-
                 # Submit newly available work
                 tasks = self.collect_ready_tasks(runs)
 
@@ -608,19 +552,32 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
                     if result is not None:
                         yield result
                 else:
+                    completed = 0
                     for run in runs:
                         self.advance_host_nodes(run)
 
                         result = self.result_if_complete(run)
                         if result is not None:
+                            completed += 1
                             yield result
-        except BaseException:
-            self.abort_batch(batch_state)
-            self.close()
+                    if completed == 0 and not all(run.yielded for run in runs):
+                        msg = "Graph evaluation stalled without runnable nodes."
+                        raise GraphScheduleError(msg)
+        except BaseException as exception:
+            try:
+                self.abort_batch(batch_state)
+            except BaseException as cleanup_exception:
+                if hasattr(exception, "add_note"):
+                    exception.add_note(
+                        f"Batch cancellation failed: {cleanup_exception!r}"
+                    )
+            self._close_after_catastrophic_failure(exception)
+            raise
 
 
 class SerialGraphSchedule(GraphScheduleBase):
     def __init__(self, graph: CallGraph):
+        """Initialize a serial graph schedule."""
         super().__init__(graph)
 
     def submit_tasks(
@@ -641,12 +598,11 @@ class SerialGraphSchedule(GraphScheduleBase):
         """Return a completed task."""
 
         task = batch_state.tasks.pop(0)
-        input = task.input
         ctx = task.ctx
         node = self.graph.nodes[task.node_id]
 
         try:
-            outcome = node.objective(input, ctx)
+            outcome = node.objective(task.input, ctx)
         except Exception as e:
             outcome = e
 
@@ -654,26 +610,26 @@ class SerialGraphSchedule(GraphScheduleBase):
             run_id=task.run_id,
             node_id=task.node_id,
             outcome=outcome,
-            ctx_result_state=ctx.to_result_state(),
+            ctx_result_state=None,
         )
 
 
 class SerialGraphScheduler(Scheduler[SerialGraphSchedule]):
-    """Prepare synchronous tree schedules for objective functors."""
+    """Prepare synchronous graph schedules for objective components."""
 
     def prepare(
         self,
-        objective: ObjectiveComponent[InputT_contra, OutputT_co],
+        objective: ObjectiveComponent[InputT, OutputT_co],
         /,
     ) -> SerialGraphSchedule:
         """
-        Compile an objective functor into a serial tree schedule.
+        Compile an objective component into a serial graph schedule.
 
         Args:
             objective: Root ordinary or composite objective to schedule.
 
         Returns:
-            Prepared serial schedule for the objective tree.
+            Prepared serial schedule for the objective graph.
 
         """
 

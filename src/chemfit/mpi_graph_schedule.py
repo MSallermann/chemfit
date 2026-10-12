@@ -1,4 +1,5 @@
-"""MPI backend for ChemFit's graph scheduler.
+"""
+MPI backend for ChemFit's graph scheduler.
 
 Rank 0 owns graph traversal and structural-component lifecycles. Other ranks
 run a persistent worker loop and evaluate only AtomicNode tasks. Tasks are
@@ -17,9 +18,8 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mpi4py import MPI
 
@@ -37,7 +37,10 @@ from chemfit.graph_schedule_base import (
     NodeOutcome,
     NodeTask,
 )
-from chemfit.scheduling import EvaluationRequest, EvaluationResult, Scheduler
+from chemfit.scheduling import Scheduler
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +92,7 @@ class MPIGraphSchedule(GraphScheduleBase):
         *,
         mpi_debug_log: bool = False,
     ) -> None:
+        """Bind a call graph to an MPI communicator."""
         super().__init__(graph)
         self.comm = comm
         self.rank = comm.Get_rank()
@@ -108,9 +112,11 @@ class MPIGraphSchedule(GraphScheduleBase):
 
     def _ensure_coordinator(self) -> None:
         if self.rank != 0:
-            raise RuntimeError("Graph evaluation is only supported on MPI rank 0")
+            msg = "Graph evaluation is only supported on MPI rank 0"
+            raise RuntimeError(msg)
         if self.closed:
-            raise RuntimeError("Prepared MPI graph schedule is closed")
+            msg = "Prepared MPI graph schedule is closed"
+            raise RuntimeError(msg)
 
     @staticmethod
     def _ensure_batch_state(batch_state: BatchState) -> None:
@@ -123,7 +129,8 @@ class MPIGraphSchedule(GraphScheduleBase):
     ) -> NodeCompletion:
         node = self.graph.nodes[task.node_id]
         if not isinstance(node, AtomicNode):
-            raise MPIWorkerError(f"MPI worker received non-atomic node {task.node_id}")
+            msg = f"MPI worker received non-atomic node {task.node_id}"
+            raise MPIWorkerError(msg)
 
         try:
             outcome: NodeOutcome = node.objective(task.input, task.ctx)
@@ -173,13 +180,15 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         if self.size == 1:
             if not batch_state.pending_tasks:
-                raise MPIWorkerError("No queued MPI tasks to complete")
+                msg = "No queued MPI tasks to complete"
+                raise MPIWorkerError(msg)
             task = batch_state.pending_tasks.popleft()
             return self._evaluate_worker_task(task, capture_context_state=False)
 
         in_flight: dict[int, NodeTask] = batch_state.in_flight
         if not in_flight:
-            raise MPIWorkerError("No MPI tasks are in flight")
+            msg = "No MPI tasks are in flight"
+            raise MPIWorkerError(msg)
 
         status = MPI.Status()
         message = self.comm.recv(
@@ -190,24 +199,28 @@ class MPIGraphSchedule(GraphScheduleBase):
         source = status.Get_source()
 
         if isinstance(message, _WorkerFailure):
-            raise MPIWorkerError(
+            msg = (
                 f"Worker rank {message.rank} failed with "
                 f"{message.exception_type}: {message.message}"
             )
+            raise MPIWorkerError(msg)
 
         expected_task = in_flight.pop(source, None)
         if expected_task is None:
-            raise MPIWorkerError(f"Unexpected completion from idle worker {source}")
+            msg = f"Unexpected completion from idle worker {source}"
+            raise MPIWorkerError(msg)
         if not isinstance(message, NodeCompletion):
-            raise MPIWorkerError(f"Unexpected MPI worker result: {message!r}")
+            msg = f"Unexpected MPI worker result: {message!r}"
+            raise MPIWorkerError(msg)
         if (message.run_id, message.node_id) != (
             expected_task.run_id,
             expected_task.node_id,
         ):
-            raise MPIWorkerError(
+            msg = (
                 f"Worker {source} returned completion for unexpected task "
                 f"({message.run_id}, {message.node_id})"
             )
+            raise MPIWorkerError(msg)
 
         self._dispatch_available(batch_state)
         return message
@@ -223,10 +236,11 @@ class MPIGraphSchedule(GraphScheduleBase):
             if not isinstance(command, _Shutdown):
                 request.Cancel()
                 request.Wait()
-                raise MPIWorkerError(
+                msg = (
                     f"Worker {self.rank} received unexpected command while "
                     f"sending a result: {command!r}"
                 )
+                raise MPIWorkerError(msg)
 
             request.Cancel()
             request.Wait()
@@ -237,7 +251,8 @@ class MPIGraphSchedule(GraphScheduleBase):
     def worker_loop(self) -> None:
         """Process tasks on a nonzero MPI rank until shutdown."""
         if self.rank == 0:
-            raise RuntimeError("worker_loop() cannot be called on MPI rank 0")
+            msg = "worker_loop() cannot be called on MPI rank 0"
+            raise RuntimeError(msg)
 
         failed = False
         while True:
@@ -295,21 +310,6 @@ class MPIGraphSchedule(GraphScheduleBase):
             batch_state.pending_tasks.clear()
         self.close()
 
-    def evaluate_many(
-        self,
-        requests: Sequence[EvaluationRequest],
-    ) -> Iterator[EvaluationResult]:
-        """Evaluate on the coordinator; close workers on catastrophic failure."""
-        self._ensure_coordinator()
-        try:
-            yield from super().evaluate_many(requests)
-        except BaseException:
-            try:
-                self.close()
-            except Exception:
-                logger.exception("Failed to close MPI schedule after an error")
-            raise
-
     def close(self) -> None:
         """Release workers and permanently close the prepared schedule."""
         if self.closed:
@@ -329,6 +329,7 @@ class MPIGraphScheduler(Scheduler[MPIGraphSchedule]):
         *,
         mpi_debug_log: bool = False,
     ) -> None:
+        """Configure the communicator and optional protocol logging."""
         super().__init__()
         self.comm = MPI.COMM_WORLD if comm is None else comm
         self.mpi_debug_log = mpi_debug_log

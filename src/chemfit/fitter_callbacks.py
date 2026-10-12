@@ -15,6 +15,7 @@ from typing import Any
 
 import numpy as np
 
+from chemfit.evaluate_context import NoOutput
 from chemfit.fitter import FitterEvaluateContext
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,10 @@ class NumpyEncoder(json.JSONEncoder):
     def default(self, o: Any):
         if isinstance(o, np.ndarray):
             return o.tolist()
+        if isinstance(o, NoOutput):
+            return None
+        if isinstance(o, BaseException):
+            return f"{type(o).__name__}: {o}"
         return super().default(o)
 
 

@@ -57,7 +57,7 @@ class TimingHook:
     hooks run during exception unwinding.
 
     To time a combined objective and all its terms, register once after building
-    the objective tree::
+    the objective graph::
 
         objective.register_eval_hook(hook=TimingHook(), recursive=True)
 

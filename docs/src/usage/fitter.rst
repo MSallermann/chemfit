@@ -109,22 +109,22 @@ Objective interface
 The fitter accepts either:
 
 - a plain callable ``f(params) -> float``
-- an :py:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`
+- an :py:class:`~chemfit.abstract_objective_function.ObjectiveComponent`
 - a caller-owned :py:class:`~chemfit.scheduling.PreparedSchedule`
 
 A plain callable is wrapped in a
-:py:class:`~chemfit.wrap_funcs.WrappedObjectiveFunctor`. Existing
-``ObjectiveFunctor`` instances are used directly. Both forms use an internally
+:py:class:`~chemfit.abstract_objective_function.WrappedComponent`. Existing
+``ObjectiveComponent`` instances are used directly. Both forms use an internally
 managed serial schedule. A supplied prepared schedule is used directly and is
 never closed or replaced by the fitter. Loss normalization and incumbent
 bookkeeping are applied by the fitter around scheduled evaluations.
 
-To use an evaluation context, supply an ``ObjectiveFunctor``. The
-:py:func:`~chemfit.wrap_funcs.objective` decorator is the shortest route:
+To use an evaluation context, supply an ``ObjectiveComponent``. The
+:py:func:`~chemfit.abstract_objective_function.objective` decorator is the shortest route:
 
 .. code-block:: python
 
-    from chemfit.wrap_funcs import objective
+    from chemfit import objective
 
     @objective(pass_ctx=True)
     def contextual_objective(params, *, ctx):
@@ -461,10 +461,10 @@ the optimizer loop:
 .. code-block:: python
 
     from concurrent.futures import ThreadPoolExecutor
-    from chemfit.executor_scheduler import ExecutorTreeScheduler
+    from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 
     with ThreadPoolExecutor(4) as executor:
-        scheduler = ExecutorTreeScheduler(executor=executor)
+        scheduler = ExecutorGraphScheduler(executor=executor)
         with scheduler.prepare(objective) as schedule:
             fitter = Fitter(
                 schedule,
@@ -508,7 +508,7 @@ the final batch contains only the remaining candidates. For example,
 Each candidate slot uses its own
 :py:class:`~chemfit.fitter.FitterEvaluateContext`. Actual concurrency is
 determined by the prepared schedule. Passing an objective directly creates an
-internally managed :class:`~chemfit.scheduling.SerialSchedule`, which
+internally managed :class:`~chemfit.graph_schedule_base.SerialGraphSchedule`, which
 evaluates the batch serially.
 
 For concurrent execution, prepare an executor-backed schedule and pass it to
@@ -519,9 +519,9 @@ the fitter:
     from concurrent.futures import ThreadPoolExecutor
     from functools import partial
 
-    from chemfit.executor_scheduler import ExecutorTreeScheduler
+    from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 
-    scheduler = ExecutorTreeScheduler(
+    scheduler = ExecutorGraphScheduler(
         executor_factory=partial(ThreadPoolExecutor, max_workers=4),
     )
     with scheduler.prepare(objective) as schedule:

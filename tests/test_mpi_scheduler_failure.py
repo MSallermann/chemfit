@@ -5,12 +5,12 @@ from typing import Any
 
 import pytest
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.abstract_objective_function import EvaluateContext, ObjectiveComponent
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 MPI = pytest.importorskip("mpi4py.MPI", reason="Missing mpi4py")
-mpi_scheduler = pytest.importorskip(
-    "chemfit.mpi_scheduler",
+mpi_schedule = pytest.importorskip(
+    "chemfit.mpi_graph_schedule",
     reason="Missing mpi4py",
 )
 
@@ -27,10 +27,10 @@ class UnpickleableInterrupt(KeyboardInterrupt):
         raise TypeError(msg)
 
 
-class CatastrophicLeaf(ObjectiveFunctor[Parameters]):
+class CatastrophicLeaf(ObjectiveComponent[Parameters, float]):
     """Raise an unpickleable BaseException on an MPI worker."""
 
-    def _evaluate(self, parameters: Parameters, ctx: EvaluateContext) -> float:
+    def _run(self, parameters: Parameters, /, ctx: EvaluateContext) -> float:
         """Interrupt worker evaluation."""
 
         del parameters, ctx
@@ -87,7 +87,7 @@ class ShutdownComm:
         """Return the queued shutdown command."""
 
         del source, tag
-        return mpi_scheduler._Shutdown()  # noqa: SLF001
+        return mpi_schedule._Shutdown()  # noqa: SLF001
 
 
 def test_worker_failure_payload_does_not_pickle_original_exception() -> None:
@@ -97,7 +97,7 @@ def test_worker_failure_payload_does_not_pickle_original_exception() -> None:
     with pytest.raises(TypeError, match="cannot be pickled"):
         pickle.dumps(exception)
 
-    failure = mpi_scheduler._describe_worker_failure(3, exception)  # noqa: SLF001
+    failure = mpi_schedule._describe_worker_failure(3, exception)  # noqa: SLF001
 
     assert pickle.loads(pickle.dumps(failure)) == failure  # noqa: S301
     assert failure.rank == 3
@@ -108,10 +108,10 @@ def test_worker_failure_payload_does_not_pickle_original_exception() -> None:
 def test_pending_worker_send_is_interrupted_by_shutdown() -> None:
     """A worker can consume shutdown without completing its result send."""
 
-    schedule = object.__new__(mpi_scheduler.MPITreeSchedule)
+    schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
     schedule.comm = ShutdownComm()
     schedule.rank = 2
-    failure = mpi_scheduler._WorkerFailure(  # noqa: SLF001
+    failure = mpi_schedule._WorkerFailure(  # noqa: SLF001
         rank=2,
         exception_type="KeyboardInterrupt",
         message="stop",
@@ -127,13 +127,13 @@ def test_unpickleable_worker_failure_reaches_rank_zero_as_mpi_error() -> None:
     """Reconstruct a serializable worker failure as MPIWorkerError."""
 
     objective = CombinedObjectiveFunction([CatastrophicLeaf()])
-    with mpi_scheduler.MPITreeScheduler().prepare(objective) as schedule:
+    with mpi_schedule.MPIGraphScheduler().prepare(objective) as schedule:
         if schedule.rank != 0:
             schedule.worker_loop()
             return
 
         expected = "Worker rank 1 failed with UnpickleableInterrupt: remote catastrophe"
-        with pytest.raises(mpi_scheduler.MPIWorkerError, match=expected):
+        with pytest.raises(mpi_schedule.MPIWorkerError, match=expected):
             schedule.evaluate({"x": 1.0}, EvaluateContext())
 
         assert schedule.closed

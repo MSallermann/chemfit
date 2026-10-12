@@ -14,10 +14,14 @@ import numpy.typing as npt
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
-from chemfit.scheduling import EvaluationRequest, PreparedSchedule, SerialScheduler
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ObjectiveComponent,
+    WrappedComponent,
+)
+from chemfit.graph_schedule_base import SerialGraphScheduler
+from chemfit.scheduling import EvaluationRequest, PreparedSchedule
 from chemfit.utils import check_params_near_bounds
-from chemfit.wrap_funcs import WrappedObjectiveFunctor
 from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 
 if TYPE_CHECKING:
@@ -43,14 +47,21 @@ class FitterEvaluateContext(EvaluateContext):
         """
 
         super().__init__()
+        self.loss: float | None = None
         self.n_evals: int = 0
         self.opt_loss: float | None = None
         self.opt_params: dict[str, Any] | None = None
         self.opt_meta: dict[str, Any] | None = None
         self.opt_quantities: dict[str, Any] | None = None
 
+    @property
+    def parameters(self) -> Any:
+        """Return the parameters from the current evaluation."""
+        return self.input
+
     def __getstate__(self) -> dict[str, Any]:
         state = super().__getstate__()
+        state["loss"] = self.loss
         state["n_evals"] = self.n_evals
         state["opt_loss"] = self.opt_loss
         state["opt_params"] = self.opt_params
@@ -60,6 +71,7 @@ class FitterEvaluateContext(EvaluateContext):
 
     def __setstate__(self, state: dict[str, Any]):
         super().__setstate__(state)
+        self.loss = state["loss"]
         self.n_evals = state["n_evals"]
         self.opt_loss = state["opt_loss"]
         self.opt_params = state["opt_params"]
@@ -71,6 +83,7 @@ class FitterEvaluateContext(EvaluateContext):
         state.update(
             {
                 "n_evals": self.n_evals,
+                "loss": self.loss,
                 "opt_loss": self.opt_loss,
                 "opt_params": self.opt_params,
                 "opt_meta": self.opt_meta,
@@ -81,6 +94,7 @@ class FitterEvaluateContext(EvaluateContext):
 
     def apply_result_state(self, state: dict[str, Any]):
         super().apply_result_state(state)
+        self.loss = state["loss"]
         self.n_evals = state["n_evals"]
         self.opt_loss = state["opt_loss"]
         self.opt_params = state["opt_params"]
@@ -125,8 +139,8 @@ class Fitter(Generic[ParametersT]):
         self,
         objective_function: (
             Callable[[ParametersT], float]
-            | ObjectiveFunctor[ParametersT]
-            | PreparedSchedule[ParametersT]
+            | ObjectiveComponent[ParametersT, float]
+            | PreparedSchedule[ParametersT, float]
         ),
         initial_params: Mapping[str, Any],
         bounds: Mapping[str, object] | None = None,
@@ -139,16 +153,16 @@ class Fitter(Generic[ParametersT]):
         """
         Driver class for parameter optimization.
 
-        A `Fitter` evaluates a plain callable, an ``ObjectiveFunctor``, or an
+        A `Fitter` evaluates a plain callable, an ``ObjectiveComponent``, or an
         already prepared schedule and exposes convenience methods for running
         optimizations with Nevergrad and SciPy. Plain callables receive only
         the parameter mapping; wrap a context-aware callable as an
-        ``ObjectiveFunctor`` first.
+        ``ObjectiveComponent`` first.
 
         Args:
-            objective_function (Callable | ObjectiveFunctor | PreparedSchedule):
+            objective_function (Callable | ObjectiveComponent | PreparedSchedule):
                 Objective or prepared execution plan to minimize. Plain
-                callables are converted to ``WrappedObjectiveFunctor`` objects
+                callables are converted to ``WrappedComponent`` objects
                 and evaluated through an internally managed serial schedule.
                 A prepared schedule remains caller-owned.
             initial_params: Nested mapping of concrete initial parameter
@@ -197,12 +211,16 @@ class Fitter(Generic[ParametersT]):
         self.bounds: Mapping[str, object] = {} if bounds is None else bounds
 
         if isinstance(objective_function, PreparedSchedule):
-            self._objective_function: ObjectiveFunctor[ParametersT] | None = None
-            self._schedule: PreparedSchedule[ParametersT] | None = objective_function
+            self._objective_function: ObjectiveComponent[ParametersT, float] | None = (
+                None
+            )
+            self._schedule: PreparedSchedule[ParametersT, float] | None = (
+                objective_function
+            )
             self._owns_schedule = False
         else:
-            if not isinstance(objective_function, ObjectiveFunctor):
-                objective_function = WrappedObjectiveFunctor(
+            if not isinstance(objective_function, ObjectiveComponent):
+                objective_function = WrappedComponent(
                     func=objective_function, pass_ctx=False
                 )
             self._objective_function = objective_function
@@ -250,7 +268,9 @@ class Fitter(Generic[ParametersT]):
 
             ctx.opt_params = copy.deepcopy(dict(parameters))
             ctx.opt_meta = copy.deepcopy(ctx.meta)
-            ctx.opt_quantities = copy.deepcopy(ctx.quantities)
+            ctx.opt_quantities = (
+                copy.deepcopy(ctx.output) if isinstance(ctx.output, dict) else None
+            )
 
         return loss
 
@@ -387,7 +407,7 @@ class Fitter(Generic[ParametersT]):
         if self._owns_schedule:
             self._close_schedule()
             assert self._objective_function is not None
-            self._schedule = SerialScheduler().prepare(self._objective_function)
+            self._schedule = SerialGraphScheduler().prepare(self._objective_function)
         elif self._schedule is None or self._schedule.closed:
             msg = "Prepared schedule is closed."
             raise RuntimeError(msg)
@@ -781,9 +801,13 @@ class Fitter(Generic[ParametersT]):
         if len(flat_bounds) == 0:
             bounds = None
         else:
-            bounds = np.array(
-                [flat_bounds.get(key, (None, None)) for key in self._keys]
-            )
+            bounds = [
+                cast(
+                    "tuple[float | None, float | None]",
+                    flat_bounds.get(key, (None, None)),
+                )
+                for key in self._keys
+            ]
 
         # Since we know that scipy.optimize works synchronously, we create a single context, which we'll keep alive.
         self.init(contexts=None if ctx is None else [ctx])
@@ -802,13 +826,13 @@ class Fitter(Generic[ParametersT]):
                 assert isinstance(loss, float)
                 return loss
 
-            def callback_scipy(_intermediate_result: OptimizeResult):
+            def callback_scipy(intermediate_result: OptimizeResult):
                 self.step()
 
-            res = minimize(
+            res = minimize(  # pyright: ignore[reportCallIssue]
                 f_scipy,
                 x0,
-                method=method,
+                method=method,  # pyright: ignore[reportArgumentType]
                 bounds=bounds,
                 **kwargs,
                 callback=callback_scipy,

@@ -2,10 +2,17 @@
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
-    ObjectiveFunctor,
+    ObjectiveComponent,
+    PipelineComponent,
     QuantityComputer,
+    StructuralComponent,
+    WrappedComponent,
+    component,
+    objective,
+    quantity,
 )
 from chemfit.api import (
+    FitResult,
     ase_quantity,
     combine,
     evaluate_many,
@@ -21,30 +28,48 @@ from chemfit.combined_objective_function import (
     skip_exception_handler,
     sum_reducer,
 )
-from chemfit.executor_scheduler import ExecutorTreeScheduler
+from chemfit.executor_graph_schedule import (
+    ExecutorGraphSchedule,
+    ExecutorGraphScheduler,
+)
 from chemfit.fitter import Fitter, FitterEvaluateContext
 from chemfit.fitter_callbacks import (
     CheckpointBestParameters,
     SaveMetaData,
     log_progress,
 )
-from chemfit.scheduling import Scheduler, SerialScheduler
-from chemfit.wrap_funcs import objective, quantity
+from chemfit.graph_schedule_base import SerialGraphSchedule, SerialGraphScheduler
+from chemfit.scheduling import (
+    EvaluationRequest,
+    EvaluationResult,
+    PreparedSchedule,
+    Scheduler,
+)
 
 __all__ = [
     "CheckpointBestParameters",
     "CombinedObjectiveFunction",
     "EvaluateContext",
-    "ExecutorTreeScheduler",
+    "EvaluationRequest",
+    "EvaluationResult",
+    "ExecutorGraphSchedule",
+    "ExecutorGraphScheduler",
+    "FitResult",
     "Fitter",
     "FitterEvaluateContext",
-    "ObjectiveFunctor",
+    "ObjectiveComponent",
+    "PipelineComponent",
+    "PreparedSchedule",
     "QuantityComputer",
     "SaveMetaData",
     "Scheduler",
-    "SerialScheduler",
+    "SerialGraphSchedule",
+    "SerialGraphScheduler",
+    "StructuralComponent",
+    "WrappedComponent",
     "ase_quantity",
     "combine",
+    "component",
     "evaluate_many",
     "external_quantity",
     "fit_nevergrad",

@@ -98,9 +98,7 @@ def _relative_paths(output_files: tuple[Path | str, ...]) -> tuple[Path, ...]:
     return files
 
 
-class ExternalQuantityComputer(
-    QuantityComputer[ParametersT, QuantitiesT]
-):
+class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
     def __init__(
         self,
         base_working_directory: Path | str,

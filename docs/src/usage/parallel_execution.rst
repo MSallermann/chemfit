@@ -38,10 +38,10 @@ With no custom execution backend, an effective ``execution_workers`` value of
 one uses an internally managed serial schedule. Larger values use an internally
 managed :class:`concurrent.futures.ThreadPoolExecutor`-backed schedule.
 
-For an objective tree with ``L`` recursive leaf nodes, a batch of ``B``
-candidates may expose up to ``B * L`` leaf tasks. Allowing all of those leaves
+For an objective graph with ``L`` available work nodes, a batch of ``B``
+candidates may expose up to ``B * L`` tasks. Allowing all of those nodes
 to execute concurrently can therefore require
-``execution_workers = batch_size * number_of_leaves``. This is a concurrency
+``execution_workers = batch_size * number_of_nodes``. This is a concurrency
 upper bound: a sensible setting must also account for available hardware and
 the resources consumed by each leaf task. The leaf count includes leaves below
 nested composite objectives, not only the direct children of the root.
@@ -83,7 +83,7 @@ executor or scheduler and returns their populated contexts in input order:
    with ThreadPoolExecutor(max_workers=4) as executor:
        contexts = evaluate_many(objective, parameters, executor=executor)
 
-   losses = [ctx.loss for ctx in contexts]
+   losses = [ctx.output for ctx in contexts]
 
 The function creates one
 :class:`~chemfit.abstract_objective_function.EvaluateContext` per parameter
@@ -103,7 +103,7 @@ to one objective and returns a prepared schedule.
    from concurrent.futures import ThreadPoolExecutor
 
    from chemfit.abstract_objective_function import EvaluateContext
-   from chemfit.executor_scheduler import ExecutorTreeScheduler
+   from chemfit.executor_graph_schedule import ExecutorGraphScheduler
    from chemfit.scheduling import EvaluationRequest
 
    requests = [
@@ -112,7 +112,7 @@ to one objective and returns a prepared schedule.
    ]
 
    with ThreadPoolExecutor(max_workers=4) as executor:
-       scheduler = ExecutorTreeScheduler(executor=executor)
+       scheduler = ExecutorGraphScheduler(executor=executor)
        with scheduler.prepare(objective) as schedule:
            completed = list(schedule.evaluate_many(requests))
 
@@ -137,7 +137,7 @@ executor factory:
 
    from functools import partial
 
-   scheduler = ExecutorTreeScheduler(
+   scheduler = ExecutorGraphScheduler(
        executor_factory=partial(ThreadPoolExecutor, max_workers=4),
    )
 
@@ -173,10 +173,10 @@ concurrently:
    from functools import partial
 
    from concurrent.futures import ThreadPoolExecutor
-   from chemfit.executor_scheduler import ExecutorTreeScheduler
+   from chemfit.executor_graph_schedule import ExecutorGraphScheduler
    from chemfit.fitter import Fitter
 
-   scheduler = ExecutorTreeScheduler(
+   scheduler = ExecutorGraphScheduler(
        executor_factory=partial(ThreadPoolExecutor, max_workers=8),
    )
    with scheduler.prepare(objective) as schedule:
@@ -184,14 +184,14 @@ concurrently:
        optimum = fitter.fit_nevergrad(budget=100, batch_size=4)
 
 A schedule prepared by
-:class:`~chemfit.tree_schedule.SerialTreeScheduler` evaluates a Nevergrad
+:class:`~chemfit.tree_schedule.SerialGraphScheduler` evaluates a Nevergrad
 batch serially even when ``batch_size`` is greater than one.
 
 MPI
 ---
 
-:class:`~chemfit.mpi_scheduler.MPITreeScheduler` uses persistent nonzero MPI
-ranks as leaf-task workers while rank zero coordinates objective-tree
+:class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` uses persistent nonzero MPI
+ranks as leaf-task workers while rank zero coordinates objective-graph
 semantics and fitting. MPI programs must enter the worker loop on every
 nonzero rank. See :ref:`mpi` for the complete lifecycle and launch example.
 

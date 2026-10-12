@@ -46,9 +46,9 @@ Compute, attach a loss, combine, fit
    )
 
 ``chemfit.quantity()`` produces a
-:class:`~chemfit.wrap_funcs.WrappedQuantityComputer`, and ``with_loss()``
+:class:`~chemfit.abstract_objective_function.WrappedComponent`, and ``with_loss()``
 turns each configured simulation into an
-:class:`~chemfit.abstract_objective_function.ObjectiveFunctor`. Here the two
+:class:`~chemfit.abstract_objective_function.ObjectiveComponent`. Here the two
 terms compare the same model with reference energies at different distances.
 ``chemfit.combine()`` joins them into a
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
@@ -91,7 +91,7 @@ An already prepared schedule may instead be passed as the first argument to
 Direct objectives and contexts
 ------------------------------
 
-Use :func:`chemfit.wrap_funcs.objective` for a function that already returns a
+Use :func:`chemfit.abstract_objective_function.objective` for a function that already returns a
 scalar loss. Set ``pass_ctx=True`` when it needs the evaluation context:
 
 .. code-block:: python
@@ -107,7 +107,7 @@ scalar loss. Set ``pass_ctx=True`` when it needs the evaluation context:
 The decorators do not infer context use from the callable signature.
 ``pass_ctx=False`` is the default, in which case the wrapped callable receives
 only its parameter mapping plus arguments configured with ``bind``. The
-returned :class:`~chemfit.wrap_funcs.WrappedObjectiveFunctor` participates in
+returned :class:`~chemfit.abstract_objective_function.WrappedComponent` participates in
 the full objective lifecycle described in :ref:`concepts`.
 
 Fluent configuration and chaining
@@ -187,7 +187,7 @@ corresponding callable.
 The main fluent families are:
 
 - Every :class:`~chemfit.abstract_objective_function.QuantityComputer` and
-  :class:`~chemfit.abstract_objective_function.ObjectiveFunctor` provides
+  :class:`~chemfit.abstract_objective_function.ObjectiveComponent` provides
   ``with_meta()`` for copy-on-write static metadata.
 - Every :class:`~chemfit.abstract_objective_function.QuantityComputer` has
   :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`,
@@ -215,8 +215,8 @@ The main fluent families are:
   :meth:`~chemfit.external_computer.ExternalQuantityComputer.wait_for` adds
   completion files. See :ref:`external_computer`.
 - Wrapped Python quantities and objectives provide
-  :meth:`~chemfit.wrap_funcs.WrappedQuantityComputer.bind` and
-  :meth:`~chemfit.wrap_funcs.WrappedObjectiveFunctor.bind` for specializing
+  :meth:`~chemfit.abstract_objective_function.WrappedComponent.bind` and
+  :meth:`~chemfit.abstract_objective_function.WrappedComponent.bind` for specializing
   additional callable arguments.
 
 Because the source object is unchanged, it can be used as a reusable base for
@@ -242,7 +242,7 @@ arguments or as one iterable:
    objective = chemfit.combine(terms)
 
 Each term may be an
-:class:`~chemfit.abstract_objective_function.ObjectiveFunctor` or a plain
+:class:`~chemfit.abstract_objective_function.ObjectiveComponent` or a plain
 ``objective(parameters) -> float`` callable. Plain callables are wrapped
 without context injection.
 
@@ -295,7 +295,7 @@ Going deeper
 
 The convenience helpers are entry points, not a separate object model:
 
-All of :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>`,
+All of :func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`,
 :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>`, and
 :func:`chemfit.external_quantity() <chemfit.api.external_quantity>` return a
 subclass of :class:`~chemfit.abstract_objective_function.QuantityComputer`,
@@ -304,8 +304,8 @@ which provides the general evaluation semantics and
 
 More specifically:
 
-- :func:`chemfit.quantity() <chemfit.wrap_funcs.quantity>` returns a
-  :class:`~chemfit.wrap_funcs.WrappedQuantityComputer` for wrapping ordinary
+- :func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>` returns a
+  :class:`~chemfit.abstract_objective_function.WrappedComponent` for wrapping ordinary
   Python functions; see :ref:`writing_quantity_computers` for custom
   implementations.
 - :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>` returns an

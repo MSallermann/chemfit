@@ -1,21 +1,20 @@
-from chemfit.graph_schedule_base import (
-    GraphScheduleBase,
-    NodeCompletion,
-    BatchState,
-    NodeTask,
-    NodeOutcome,
-)
+from collections.abc import Callable, Sequence
+from concurrent.futures import FIRST_COMPLETED, Executor, Future, wait
+
 from chemfit.abstract_objective_function import (
-    ObjectiveComponent,
     InputT_contra,
+    ObjectiveComponent,
     OutputT_co,
 )
-from chemfit.scheduling import Scheduler
 from chemfit.callgraph import CallGraph, objective_to_call_graph
-from collections.abc import Sequence
-
-from concurrent.futures import Executor, Future, wait, FIRST_COMPLETED
-from typing import cast, Callable
+from chemfit.graph_schedule_base import (
+    BatchState,
+    GraphScheduleBase,
+    NodeCompletion,
+    NodeOutcome,
+    NodeTask,
+)
+from chemfit.scheduling import Scheduler
 
 
 def evaluate_leaf_task(
@@ -40,11 +39,12 @@ def evaluate_leaf_task(
 
 class ExecutorGraphSchedule(GraphScheduleBase):
     def __init__(self, graph: CallGraph, executor: Executor, owns_executor: bool):
+        """Bind a call graph to an executor and its ownership policy."""
         super().__init__(graph)
         self.executor = executor
         self.owns_executor = owns_executor
 
-    def close(self):
+    def close(self) -> None:
         """
         Close the schedule and shut down an owned executor.
 
@@ -58,7 +58,7 @@ class ExecutorGraphSchedule(GraphScheduleBase):
 
         try:
             if self.owns_executor:
-                self.executor.shutdown(cancel_futures=True)
+                self.executor.shutdown()
         finally:
             super().close()
 
@@ -101,7 +101,7 @@ class ExecutorGraphSchedule(GraphScheduleBase):
 
 
 class ExecutorGraphScheduler(Scheduler[ExecutorGraphSchedule]):
-    """Prepare synchronous tree schedules for objective functors."""
+    """Prepare graph schedules backed by a caller or factory-owned executor."""
 
     def __init__(
         self,
@@ -134,13 +134,13 @@ class ExecutorGraphScheduler(Scheduler[ExecutorGraphSchedule]):
         self, objective: ObjectiveComponent[InputT_contra, OutputT_co]
     ) -> ExecutorGraphSchedule:
         """
-        Compile an objective functor into a serial tree schedule.
+        Compile an objective component into an executor-backed graph schedule.
 
         Args:
             objective: Root ordinary or composite objective to schedule.
 
         Returns:
-            Prepared serial schedule for the objective tree.
+            Prepared executor-backed schedule for the objective graph.
 
         """
 

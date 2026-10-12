@@ -100,7 +100,7 @@ parameters ────├─ liquid / density ────── loss ─┼─
 
 The individual terms do not need to use the same simulation method. ASE calculations, external programs, and custom Python computations can participate in the same objective.
 
-Objectives can also be [nested and combined](https://chemfit.readthedocs.io/en/latest/src/usage/combined_objective_function.html) with weights, custom reductions or aggregators, evaluation metadata, and exception handling.
+Objectives can also be [nested and combined](https://chemfit.readthedocs.io/en/latest/src/usage/combined_objective_function.html) with weights, custom reductions, evaluation metadata, and exception handling.
 
 # External simulation workflows
 
@@ -156,9 +156,9 @@ See [parallel execution](https://chemfit.readthedocs.io/en/latest/src/usage/para
 The same objective can also be evaluated across MPI ranks:
 
 ```python
-from chemfit.mpi_scheduler import MPITreeScheduler
+from chemfit.mpi_graph_schedule import MPIGraphScheduler
 
-scheduler = MPITreeScheduler()
+scheduler = MPIGraphScheduler()
 
 with scheduler.prepare(objective) as schedule:
     if schedule.rank == 0:
@@ -199,7 +199,7 @@ See the [fitting documentation](https://chemfit.readthedocs.io/en/latest/src/usa
 
 # Evaluation data and instrumentation
 
-ChemFit retains information about individual evaluations through evaluation contexts. These can contain parameters, computed quantities, losses, metadata, and nested child evaluations.
+ChemFit retains inputs, outputs, metadata, failures, and nested evaluations in evaluation contexts.
 
 [Evaluation hooks](https://chemfit.readthedocs.io/en/latest/src/usage/objective_hooks.html) can add instrumentation such as timing, unique evaluation IDs, logging, or application-specific diagnostics without changing the simulation or loss implementation.
 
@@ -215,7 +215,7 @@ Related frameworks offer different strengths:
 - **[Dakota](https://dakota.sandia.gov/)** offers extensive capabilities for optimization, parameter estimation, sensitivity analysis, and uncertainty quantification. ChemFit emphasizes defining and customizing fitting objectives directly in Python rather than providing a comprehensive numerical methods suite.
 - **[pyiron](https://pyiron.org/)** provides an integrated environment for atomistic simulations, including job management, data storage, and potential fitting. ChemFit is more narrowly focused on fitting objectives that can combine arbitrary Python computations, ASE calculations, and external simulation programs.
 
-ChemFit's built-in scheduler handles tree-structured objectives rather than arbitrary task-dependency graphs. Custom schedulers, executors, and hooks allow more sophisticated infrastructure to be integrated, but persistent workflow management and general DAG scheduling are not provided out of the box.
+ChemFit compiles composed objectives into dependency graphs. Its schedulers execute those graphs in serial, with threads or processes, or across MPI ranks. Persistent workflow management is outside its scope. Custom schedulers and hooks allow more sophisticated infrastructure to be integrated.
 
 It is a fitting-specific library that can be used independently of a larger workflow ecosystem, while remaining extensible enough to integrate with one.
 

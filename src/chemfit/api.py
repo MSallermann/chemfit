@@ -12,7 +12,11 @@ from typing_extensions import TypeVar
 
 from ase import Atoms
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveFunctor
+from chemfit.abstract_objective_function import (
+    EvaluateContext,
+    ObjectiveComponent,
+    WrappedComponent,
+)
 from chemfit.ase_objective_function import (
     ASEComputer,
     ASEEvaluator,
@@ -23,13 +27,13 @@ from chemfit.ase_objective_function import (
     QuantityProcessor,
 )
 from chemfit.combined_objective_function import (
-    Aggregator,
     CombinedObjectiveFunction,
     ExceptionHandler,
     Reducer,
+    SimpleReducer,
     raising_exception_handler,
 )
-from chemfit.executor_scheduler import ExecutorTreeScheduler
+from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 from chemfit.external_computer import ExternalQuantityComputer
 from chemfit.fitter import CallbackT, Fitter, FitterEvaluateContext
 from chemfit.scheduling import (
@@ -37,7 +41,6 @@ from chemfit.scheduling import (
     PreparedSchedule,
     Scheduler,
 )
-from chemfit.wrap_funcs import WrappedObjectiveFunctor
 
 ParamsT = TypeVar("ParamsT", bound=Mapping[str, object], default=dict[str, Any])
 QuantityT = TypeVar(
@@ -45,8 +48,8 @@ QuantityT = TypeVar(
     bound=dict[str, Any],
     default=dict[str, Any],
 )
-ObjectiveLike = Callable[[ParamsT], float] | ObjectiveFunctor[ParamsT]
-FitObjective = ObjectiveLike[ParamsT] | PreparedSchedule[ParamsT]
+ObjectiveLike = Callable[[ParamsT], float] | ObjectiveComponent[ParamsT, float]
+FitObjective = ObjectiveLike[ParamsT] | PreparedSchedule[ParamsT, float]
 
 
 @overload
@@ -55,8 +58,7 @@ def combine(
     /,
     *,
     weights: Sequence[float] | None = None,
-    reduction: Reducer | None = None,
-    aggregator: Aggregator | None = None,
+    reduction: Reducer | SimpleReducer | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
 ) -> CombinedObjectiveFunction[ParamsT]: ...
 
@@ -65,8 +67,7 @@ def combine(
 def combine(
     *args: ObjectiveLike[ParamsT],
     weights: Sequence[float] | None = None,
-    reduction: Reducer | None = None,
-    aggregator: Aggregator | None = None,
+    reduction: Reducer | SimpleReducer | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
 ) -> CombinedObjectiveFunction[ParamsT]: ...
 
@@ -74,8 +75,7 @@ def combine(
 def combine(
     *args: ObjectiveLike[ParamsT] | Iterable[ObjectiveLike[ParamsT]],
     weights: Sequence[float] | None = None,
-    reduction: Reducer | None = None,
-    aggregator: Aggregator | None = None,
+    reduction: Reducer | SimpleReducer | None = None,
     exception_handler: ExceptionHandler = raising_exception_handler,
 ) -> CombinedObjectiveFunction[ParamsT]:
     """
@@ -94,8 +94,6 @@ def combine(
             ``1.0``.
         reduction: Callable that reduces the weighted term values to one
             float. The default is :func:`chemfit.sum_reducer`.
-        aggregator: Context-aware alternative to ``reduction``. It receives
-            the weighted values, child quantities, and parent context.
         exception_handler: Policy for an exception raised by a term. The
             default re-raises it.
 
@@ -103,8 +101,7 @@ def combine(
         A :class:`CombinedObjectiveFunction` containing the supplied terms.
 
     Raises:
-        ValueError: If both ``reduction`` and ``aggregator`` are supplied, or
-            if ``weights`` are invalid.
+        ValueError: If ``weights`` are invalid.
 
     Examples:
         Combine two preconfigured terms with different weights::
@@ -123,11 +120,6 @@ def combine(
                 reduction=chemfit.mean_reducer,
             )
 
-    Notes:
-        ``reduction`` consumes only the weighted scalar values. Use
-        ``aggregator`` when combining terms also requires child quantities or
-        access to the parent :class:`EvaluateContext`.
-
     """
 
     if len(args) == 1 and not callable(args[0]):
@@ -139,9 +131,7 @@ def combine(
         objective_functions=objective_functions,
         weights=weights,
         reduction=reduction,
-        aggregator=aggregator,
         exception_handler=exception_handler,
-        child_context_configurator=child_context_configurator,
     )
 
 
@@ -369,7 +359,7 @@ def evaluate_many(
     Args:
         objective: Objective functor or compatible one-argument callable.
         parameters: Parameter mappings to evaluate, in desired result order.
-        executor: Executor used through an :class:`ExecutorTreeScheduler`.
+        executor: Executor used through an :class:`ExecutorGraphScheduler`.
             The caller retains ownership and is responsible for shutting it
             down.
         scheduler: Scheduler used to prepare and execute the objective.
@@ -394,7 +384,7 @@ def evaluate_many(
                     executor=executor,
                 )
 
-            losses = [ctx.loss for ctx in contexts]
+            losses = [ctx.output for ctx in contexts]
 
     Notes:
         Exactly one execution backend is required. A supplied executor remains
@@ -412,10 +402,10 @@ def evaluate_many(
 
     if scheduler is None:
         assert executor is not None
-        scheduler = ExecutorTreeScheduler(executor=executor)
+        scheduler = ExecutorGraphScheduler(executor=executor)
 
-    if not isinstance(objective, ObjectiveFunctor):
-        ob = WrappedObjectiveFunctor(objective)
+    if not isinstance(objective, ObjectiveComponent):
+        ob = WrappedComponent(objective)
     else:
         ob = objective
 
@@ -559,14 +549,14 @@ def _fit_nevergrad_with_fitter(
     return FitResult(recommendation=recommendation, contexts=tuple(fitter.contexts))
 
 
-def _as_objective_functor(
+def _as_objective_component(
     objective: ObjectiveLike[ParamsT],
-) -> ObjectiveFunctor[ParamsT]:
-    """Return one objective-functor instance suitable for preparation."""
+) -> ObjectiveComponent[ParamsT, float]:
+    """Return one objective component suitable for preparation."""
 
-    if isinstance(objective, ObjectiveFunctor):
+    if isinstance(objective, ObjectiveComponent):
         return objective
-    return WrappedObjectiveFunctor(objective, pass_ctx=False)
+    return WrappedComponent(objective, pass_ctx=False)
 
 
 def fit_nevergrad(
@@ -609,12 +599,12 @@ def fit_nevergrad(
             internally managed serial schedule; larger values use an internally
             managed thread-pool-backed schedule.
             Values greater than ``batch_size`` may be useful when each candidate
-            exposes multiple objective leaves. For an objective tree with
-            ``number_of_leaves`` recursive leaf nodes, a batch may expose up to
-            ``batch_size * number_of_leaves`` leaf tasks. Allowing all of them to
+            exposes multiple atomic nodes. For an objective graph with
+            ``number_of_nodes`` atomic nodes, a batch may expose up to
+            ``batch_size * number_of_nodes`` tasks. Allowing all of them to
             execute concurrently can therefore require that many execution
             workers, subject to available hardware and the resources consumed by
-            each leaf task.
+            each task.
         bounds: Optional nested mapping from parameter leaves to
             ``(lower, upper)`` pairs.
         optimizer: Name registered in ``nevergrad.optimizers.registry``.
@@ -762,7 +752,7 @@ def fit_nevergrad(
         raise ValueError(msg)
 
     if scheduler is None and executor is not None:
-        scheduler = ExecutorTreeScheduler(executor=executor)
+        scheduler = ExecutorGraphScheduler(executor=executor)
 
     if scheduler is None:
         effective_execution_workers = (
@@ -780,13 +770,13 @@ def fit_nevergrad(
                 parametrization=parametrization,
                 initial_observations=initial_observations,
             )
-        scheduler = ExecutorTreeScheduler(
+        scheduler = ExecutorGraphScheduler(
             executor_factory=lambda: ThreadPoolExecutor(
                 max_workers=effective_execution_workers
             )
         )
 
-    objective_function = _as_objective_functor(objective)
+    objective_function = _as_objective_component(objective)
 
     with scheduler.prepare(objective_function) as schedule:
         return _fit_nevergrad_with_fitter(
