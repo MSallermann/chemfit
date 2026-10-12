@@ -539,74 +539,84 @@ class GraphScheduleBase(PreparedScheduleBase[InputT_contra, OutputT_co]):
         """Block until one submitted task completes."""
         raise NotImplementedError
 
+    def abort_batch(self, batch_state: BatchState) -> None:
+        """Best effort cancellation of pending tasks."""
+        ...
+
     def evaluate_many(self, requests: Sequence[EvaluationRequest[InputT_contra]]):
 
         batch_state = BatchState()
         runs: list[EvaluationRun[InputT_contra]] = []
 
-        # 1. Build the list of runs
-        for idx, req in enumerate(requests):
-            req.ctx.input = req.parameters
-            eval_state = EvaluationState(
-                self.graph,
-                root_ctx=req.ctx,
-            )
-            runs.append(
-                EvaluationRun(index=idx, root_input=req.parameters, state=eval_state)
-            )
+        try:
+            # 1. Build the list of runs
+            for idx, req in enumerate(requests):
+                req.ctx.input = req.parameters
+                eval_state = EvaluationState(
+                    self.graph,
+                    root_ctx=req.ctx,
+                )
+                runs.append(
+                    EvaluationRun(
+                        index=idx, root_input=req.parameters, state=eval_state
+                    )
+                )
 
-        # 2. Initialize structural components
-        for run in runs:
-            self.advance_host_nodes(run)
-
-            result = self.result_if_complete(run)
-            if result is not None:
-                yield result
-
-        # 3. Process worker completions
-        tasks_in_flight = 0
-        while not all(run.yielded for run in runs):
-
-            # Submit newly available work
-            tasks = self.collect_ready_tasks(runs)
-
-            if tasks:
-                self.submit_tasks(tasks, batch_state)
-                tasks_in_flight += len(tasks)
-
-            # Wait for exactly one completion.
-            if tasks_in_flight:
-                completion = self.next_completion(batch_state)
-                tasks_in_flight -= 1
-
-                run_id = completion.run_id
-                run = runs[run_id]
-                node_id = completion.node_id
-
-                ctx = runs[run_id].state.contexts[node_id]
-                assert ctx is not None
-
-                if completion.ctx_result_state is not None:
-                    ctx_result_state = completion.ctx_result_state
-                    ctx.apply_result_state(ctx_result_state)
-
-                # Record atomic completion and unlock downstream nodes
-                run.state.complete(completion.node_id, completion.outcome)
-
-                # Propagate through structural nodes immediately.
+            # 2. Initialize structural components
+            for run in runs:
                 self.advance_host_nodes(run)
 
-                # Emit the result immediately if this evaluation completed.
                 result = self.result_if_complete(run)
                 if result is not None:
                     yield result
-            else:
-                for run in runs:
+
+            # 3. Process worker completions
+            tasks_in_flight = 0
+            while not all(run.yielded for run in runs):
+
+                # Submit newly available work
+                tasks = self.collect_ready_tasks(runs)
+
+                if tasks:
+                    self.submit_tasks(tasks, batch_state)
+                    tasks_in_flight += len(tasks)
+
+                # Wait for exactly one completion.
+                if tasks_in_flight:
+                    completion = self.next_completion(batch_state)
+                    tasks_in_flight -= 1
+
+                    run_id = completion.run_id
+                    run = runs[run_id]
+                    node_id = completion.node_id
+
+                    ctx = runs[run_id].state.contexts[node_id]
+                    assert ctx is not None
+
+                    if completion.ctx_result_state is not None:
+                        ctx_result_state = completion.ctx_result_state
+                        ctx.apply_result_state(ctx_result_state)
+
+                    # Record atomic completion and unlock downstream nodes
+                    run.state.complete(completion.node_id, completion.outcome)
+
+                    # Propagate through structural nodes immediately.
                     self.advance_host_nodes(run)
 
+                    # Emit the result immediately if this evaluation completed.
                     result = self.result_if_complete(run)
                     if result is not None:
                         yield result
+                else:
+                    for run in runs:
+                        self.advance_host_nodes(run)
+
+                        result = self.result_if_complete(run)
+                        if result is not None:
+                            yield result
+        except BaseException:
+            self.abort_batch(batch_state)
+            self.close()
 
 
 class SerialGraphSchedule(GraphScheduleBase):
