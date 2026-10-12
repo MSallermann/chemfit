@@ -180,8 +180,8 @@ def objective_to_call_graph(
 
 def call_graph_to_dot(
     graph: CallGraph,
-    dot_output_path: Path | None = None,
-    svg_output_path: Path | None = None,
+    dot_output_path: Path | str | None = None,
+    svg_output_path: Path | str | None = None,
     path_to_dot_exec: Path = Path("dot"),
 ) -> str:
     """Generate a Graphviz DOT representation of a CallGraph."""
@@ -238,7 +238,7 @@ def call_graph_to_dot(
     res = "\n".join(lines)
 
     if dot_output_path is not None:
-        dot_output_path.write_text(res)
+        Path(dot_output_path).write_text(res)
 
     if svg_output_path is not None:
         if dot_output_path is None:
