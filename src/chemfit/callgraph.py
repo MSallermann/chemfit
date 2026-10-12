@@ -31,13 +31,19 @@ class GraphNode:
     # is passed without the surrounding tuple
     inputs: tuple[int | Root_, ...] = ()
 
+    def __repr__(self) -> str:
+        return f"{type(self)}: id={self.id}, obj={type(self.objective)}"
 
+
+@dataclass
 class StartNode(GraphNode):
-    pass
+    paired_end_node_id: int = -1
+    contained_component_start_ids: tuple[int, ...] = ()
 
 
+@dataclass
 class FinishNode(GraphNode):
-    pass
+    paired_start_node_id: int = -1
 
 
 class AtomicNode(GraphNode):
@@ -47,6 +53,8 @@ class AtomicNode(GraphNode):
 @dataclass(frozen=True)
 class CallGraph:
     nodes: tuple[GraphNode, ...]
+    root_id: int
+    result_id: int
 
 
 def objective_to_call_graph(
@@ -95,7 +103,8 @@ def objective_to_call_graph(
 
         # add the start node of the structural component
         start_id = len(nodes)
-        nodes.append(StartNode(start_id, component))
+        start_node = StartNode(start_id, component)
+        nodes.append(start_node)
 
         #######################################
         # Add contained components and finish node
@@ -116,7 +125,14 @@ def objective_to_call_graph(
         # we can already append the finish node
         # it depends on all contained components finishing (duh)
         end_id = len(nodes)
-        nodes.append(FinishNode(end_id, component))
+        end_node = FinishNode(end_id, component)
+        end_node.paired_start_node_id = start_id
+        nodes.append(end_node)
+
+        # We can now also assign the ids of the contained components now
+        # and off the paired end_node
+        start_node.contained_component_start_ids = tuple(component_start_ids)
+        start_node.paired_end_node_id = end_id
 
         ####################################
         # Hook up the dependencies
@@ -159,17 +175,17 @@ def objective_to_call_graph(
     start_id, end_id = add(objective)
     add_input(ROOT, start_id)
 
-    return CallGraph(nodes=tuple(nodes))
+    return CallGraph(nodes=tuple(nodes), root_id=start_id, result_id=end_id)
 
 
 def call_graph_to_dot(
     graph: CallGraph,
     dot_output_path: Path | None = None,
     svg_output_path: Path | None = None,
+    path_to_dot_exec: Path = Path("dot"),
 ) -> str:
-    import subprocess
-
     """Generate a Graphviz DOT representation of a CallGraph."""
+    import subprocess
 
     lines = [
         "digraph CallGraph {",
@@ -177,13 +193,21 @@ def call_graph_to_dot(
         '    node [shape=box, style=rounded, fontname="Helvetica"];',
         '    edge [fontname="Helvetica"];',
         '    ROOT [shape=ellipse, label="ROOT"];',
+        '    RESULT [shape=ellipse, label="RESULT"];',
     ]
 
     for node in graph.nodes:
         kind = type(node).__name__.removesuffix("Node")
         component = type(node.objective).__name__
 
-        lines.append(f'    n{node.id} [label="{node.id}: {kind}\\n{component}"];')
+        attributes = [
+            f'label="{node.id}: {kind}\\n{component}"',
+        ]
+
+        if node.id in (graph.root_id, graph.result_id):
+            attributes.append("penwidth=2")
+
+        lines.append(f'    n{node.id} [{", ".join(attributes)}];')
 
     # Execution dependencies
     for node in graph.nodes:
@@ -194,26 +218,43 @@ def call_graph_to_dot(
     for node in graph.nodes:
         for index, source in enumerate(node.inputs):
             source_id = "ROOT" if isinstance(source, Root_) else f"n{source}"
+
+            attributes = ["style=dashed", "color=blue"]
+
+            if len(node.inputs) > 1:
+                attributes.append(f'label="{index}"')
+
             lines.append(
                 f"    {source_id} -> n{node.id} "
-                f'[style=dashed, color=blue, label="{index}"];'
+                f'[{", ".join(attributes)}];'  # noqa: ISC001
             )
+
+    # Final output
+    lines.append(
+        f"    n{graph.result_id} -> RESULT " "[style=dashed, color=blue];" # noqa: ISC001
+    )
 
     lines.append("}")
     res = "\n".join(lines)
 
     if dot_output_path is not None:
-        with dot_output_path.open("w") as f:
-            f.write(res)
+        dot_output_path.write_text(res)
 
     if svg_output_path is not None:
         if dot_output_path is None:
-            msg = "Have to set `dot_output_path` if `svg_output_path` is set."
-            raise ValueError(msg)
+            raise ValueError(
+                "Have to set `dot_output_path` if `svg_output_path` is set."  # noqa: EM101
+            )
 
         subprocess.run(
-            ["dot", "-Tsvg", f"{dot_output_path}", "-o", f"{svg_output_path}"],
-            check=False,
+            [
+                path_to_dot_exec,
+                "-Tsvg",
+                str(dot_output_path),
+                "-o",
+                str(svg_output_path),
+            ],
+            check=True,
         )
 
     return res
