@@ -1,0 +1,29 @@
+digraph PipelineJoin {
+    graph [
+        rankdir=LR,
+        bgcolor="#ffffff",
+        fontname="Helvetica",
+        nodesep=0.35,
+        ranksep=0.45,
+        pad=0.15
+    ];
+    node [shape=box, style="rounded,filled", fontname="Helvetica", margin="0.16,0.10"];
+    edge [fontname="Helvetica", color="#64748b", arrowsize=0.75];
+
+    parameters [shape=ellipse, fillcolor="#f8fafc", label="parameters"];
+    pipeline_begin [fillcolor="#f1f5f9", label="Pipeline\nbegin"];
+    simulation [fillcolor="#dcfce7", label="Atomic node\nshared simulation"];
+    join_begin [fillcolor="#f1f5f9", label="Join / combine\nbegin"];
+    energy [fillcolor="#dbeafe", label="Atomic node\nenergy loss"];
+    forces [fillcolor="#dbeafe", label="Atomic node\nforce loss"];
+    join_finish [fillcolor="#f1f5f9", label="Join / combine\nfinish"];
+    pipeline_finish [fillcolor="#f1f5f9", label="Pipeline\nfinish"];
+    result [shape=ellipse, fillcolor="#f8fafc", label="total loss"];
+
+    parameters -> pipeline_begin -> simulation -> join_begin;
+    join_begin -> energy;
+    join_begin -> forces;
+    energy -> join_finish;
+    forces -> join_finish;
+    join_finish -> pipeline_finish -> result;
+}

@@ -35,6 +35,17 @@ OutputT_co = TypeVar("OutputT_co", covariant=True)
 
 
 class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
+    """
+    Base class for a context-aware computation from one input to one output.
+
+    ``ObjectiveComponent`` is ChemFit's general runtime abstraction. Despite
+    the class name, an instance need not be a complete scalar objective: its
+    role is determined by its input and output types. For example, a quantity
+    computer maps fitting parameters to a quantity dictionary, while an
+    optimizer-facing objective maps fitting parameters to a scalar loss.
+    Pipelines, joins, and intermediate transforms are components as well.
+    """
+
     def __init__(self) -> None:
         """Initialize a generic objective component."""
 
@@ -82,6 +93,24 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         /,
         **kwargs: Any,
     ) -> OpaquePipeline[InputT_contra, float]:
+        """
+        Return a new opaque pipeline that applies a loss to this output.
+
+        The source component is retained as the first pipeline stage and is
+        not modified. When the source is a quantity computer, the returned
+        pipeline has the ``parameters -> float`` contract of an objective
+        term. Bound keyword arguments configure the loss function.
+
+        Args:
+            loss_function: Callable receiving this component's output followed
+                by any arguments supplied through ``kwargs``.
+            **kwargs: Keyword arguments bound to ``loss_function``.
+
+        Returns:
+            A new opaque pipeline containing this component and the wrapped
+            loss function.
+
+        """
         return OpaquePipeline(
             first=self,
             second=WrappedComponent(loss_function).bind(**kwargs),
@@ -319,8 +348,7 @@ class WrappedComponent(
             **kwargs: Keyword arguments to bind.
 
         Returns:
-            A new wrapped objective functor with the requested arguments
-            pre-applied.
+            A new wrapped component with the requested arguments pre-applied.
 
         """
         new = super().copy()
@@ -331,18 +359,18 @@ class WrappedComponent(
 
     def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
         """
-        Evaluate the wrapped callable as an objective component.
+        Evaluate the wrapped callable as a component.
 
         If ``pass_ctx`` is ``True``, the wrapped callable receives both the
         parameter dictionary and the evaluation context. Otherwise, it
         receives only the parameter dictionary.
 
         Args:
-            parameters: Parameter dictionary for the current evaluation.
+            input_: Input value for the current evaluation.
             ctx: Evaluation context for the current call.
 
         Returns:
-            Scalar loss value returned by the wrapped callable.
+            Value returned by the wrapped callable.
 
         """
 
@@ -361,7 +389,7 @@ def component(
     [Callable[Concatenate[InputT_contra, ...], OutputT_co]],
     WrappedComponent[InputT_contra, OutputT_co],
 ]:
-    """Wrap a callable as an objective component."""
+    """Wrap a generic input-to-output callable as an objective component."""
 
     def wrap(
         func: Callable[Concatenate[InputT_contra, ...], OutputT_co],

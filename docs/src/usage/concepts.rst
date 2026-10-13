@@ -10,54 +10,86 @@ objective functions are structured and evaluated.
 The goal is to provide a mental model that helps you design your own
 objective functions and understand how ChemFit executes them.
 
-Most workflows begin with top-level helpers such as
-:func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`,
-:func:`chemfit.combine() <chemfit.api.combine>`, and
-:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`.
-Those helpers operate on the objects described here: ``quantity()`` creates a
-:class:`~chemfit.abstract_objective_function.WrappedComponent` that satisfies
-the ``QuantityComputer`` typing alias, ``combine()`` returns a
-:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`, and
-``fit_nevergrad()`` drives them through :class:`~chemfit.fitter.Fitter` and a prepared
-:class:`~chemfit.scheduling.Scheduler`. This page explains that underlying
-machinery rather than replacing it with convenience-function terminology.
+Most workflows begin with :func:`chemfit.quantity()
+<chemfit.abstract_objective_function.quantity>`, add a loss with
+``with_loss()``, and assemble terms with :func:`chemfit.combine()
+<chemfit.api.combine>`. Before looking at execution, it helps to separate the
+runtime object model from the role each object plays.
 
 -------------------------
 
-Objective functions as compositions
-=====================================
+.. _component_vocabulary:
 
-In ChemFit, an objective function is built from small, composable pieces.
+Components, quantity computers, and objectives
+===============================================
 
-The basic building blocks are:
+These terms describe two different things:
 
-- A quantity computer—an
-  :class:`~chemfit.abstract_objective_function.ObjectiveComponent` matching the
-  ``QuantityComputer`` typing alias—which computes intermediate quantities
-  from a parameter dictionary.
-- A loss function, which maps these quantities to a scalar value.
+- **Component** is the runtime abstraction. Every ChemFit computation and
+  composition object derives from
+  :class:`~chemfit.abstract_objective_function.ObjectiveComponent` and maps one
+  input to one output.
+- **Quantity computer** and **objective** describe particular input/output
+  roles a component can have.
 
-These two are combined into an :class:`~chemfit.abstract_objective_function.ObjectiveComponent`.
+The name ``ObjectiveComponent`` is deliberately general despite containing
+the word *objective*. Not every ``ObjectiveComponent`` is a complete objective
+that an optimizer can minimize. It may instead produce quantities, apply an
+intermediate transform, join branches, or connect pipeline stages.
 
-More complex objectives are constructed by combining multiple such terms using
-:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
+.. list-table:: Canonical ChemFit vocabulary
+   :header-rows: 1
+   :widths: 20 25 29 26
 
-Conceptually, this looks like:
+   * - Term
+     - Contract
+     - Typical construction
+     - Meaning
+   * - Component
+     - ``InputT -> OutputT``
+     - ``component()`` or an ``ObjectiveComponent`` subclass
+     - Any unit participating in ChemFit's evaluation lifecycle
+   * - Quantity computer
+     - ``parameters -> quantities dict``
+     - ``quantity()``, ``ase_quantity()``, or ``external_quantity()``
+     - Computes scientific values that a loss or later stage consumes
+   * - Loss function
+     - ``quantities -> float``
+     - An ordinary callable passed to ``with_loss()``
+     - Scores quantities against reference data; it is wrapped internally
+   * - Objective term
+     - ``parameters -> float``
+     - ``objective()`` or ``quantity_computer.with_loss(...)``
+     - Produces one scalar contribution suitable for optimization
+   * - Combined objective
+     - ``parameters -> float``
+     - ``combine(term_a, term_b, ...)``
+     - Weights and reduces several objective terms to the total loss
+
+``QuantityComputer`` is a typing alias for an ``ObjectiveComponent`` with the
+quantity-computer contract; it is not another runtime base class. Likewise,
+``component()``, ``quantity()``, and ``objective()`` all wrap a Python function
+in :class:`~chemfit.abstract_objective_function.WrappedComponent`. The helpers
+differ in their type contracts and communicate the intended role:
 
 .. code-block:: text
 
-    parameters
-        ↓
-    QuantityComputer
-        ↓
-    ObjectiveComponent (loss)
-        ↓
-    CombinedObjectiveFunction
-        ↓
-    total loss
+    parameters -> quantity computer -> quantities -> loss function -> term loss
+                  |_______________________________________________|
+                                  objective term
 
-This structure allows complex objectives to be built from many simple,
-independent contributions.
+    parameters -> objective term A --+
+                 objective term B --+--> combined objective -> total loss
+
+Calling ``with_loss()`` does not make the quantity computer itself become an
+objective. It returns a new pipeline containing the quantity computer followed
+by the loss. That complete pipeline has the ``parameters -> float`` contract,
+so it is an objective term; the original quantity computer remains unchanged.
+
+Use *component* when discussing behavior shared by every node, such as hooks,
+contexts, pipelines, and scheduling. Use *quantity computer* only for a
+component that returns a quantity dictionary, and use *objective* for a
+callable or component that maps fitting parameters to a scalar loss.
 
 -------------------------
 

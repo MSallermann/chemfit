@@ -1,0 +1,35 @@
+digraph CompositionBoundary {
+    graph [
+        rankdir=TB,
+        bgcolor="#ffffff",
+        fontname="Helvetica",
+        nodesep=0.35,
+        ranksep=0.45,
+        pad=0.15
+    ];
+    node [shape=box, style="rounded,filled", fontname="Helvetica", margin="0.16,0.10"];
+    edge [fontname="Helvetica", color="#64748b", arrowsize=0.75];
+
+    subgraph cluster_opaque {
+        label="Opaque pipeline: one scheduler task";
+        color="#94a3b8";
+        style="rounded";
+        opaque_input [shape=ellipse, fillcolor="#f8fafc", label="parameters"];
+        opaque [fillcolor="#dbeafe", label="Atomic node\nsimulation → loss"];
+        opaque_result [shape=ellipse, fillcolor="#f8fafc", label="term loss"];
+        opaque_input -> opaque -> opaque_result;
+    }
+
+    subgraph cluster_structural {
+        label="Structural pipeline: graph-visible stages";
+        color="#94a3b8";
+        style="rounded";
+        structural_input [shape=ellipse, fillcolor="#f8fafc", label="parameters"];
+        begin [fillcolor="#f1f5f9", label="Pipeline begin"];
+        simulation [fillcolor="#dcfce7", label="Atomic node\nsimulation"];
+        loss [fillcolor="#dcfce7", label="Atomic node\nloss"];
+        finish [fillcolor="#f1f5f9", label="Pipeline finish"];
+        structural_result [shape=ellipse, fillcolor="#f8fafc", label="term loss"];
+        structural_input -> begin -> simulation -> loss -> finish -> structural_result;
+    }
+}

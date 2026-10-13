@@ -13,6 +13,34 @@ output there. Hooks may be registered on a quantity computer, the objective
 produced by ``computer.with_loss(...)``, or any other component. The chosen
 component determines which evaluation scope and context the hook observes.
 
+Hooks are most useful for behavior that surrounds an evaluation but is not
+part of its scientific calculation:
+
+.. list-table:: Common hook use cases
+   :header-rows: 1
+   :widths: 28 36 36
+
+   * - Use case
+     - Hook behavior
+     - Context field
+   * - Reject unphysical parameters
+     - A pre-hook returns a penalty without running the component
+     - Record the violated constraint in ``ctx.meta``
+   * - Reuse a cached result
+     - A pre-hook returns a cache hit; a post-hook stores a cache miss
+     - Keep only the per-call cache key or hit status in ``ctx.temp`` or
+       ``ctx.meta``
+   * - Record timing, convergence, or provenance
+     - A pre-hook starts collection and a post-hook finalizes it
+     - Use ``ctx.temp`` for transient state and ``ctx.meta`` for the result
+   * - Normalize failures or non-finite results
+     - A post-hook inspects and, when appropriate, replaces ``ctx.output``
+     - Preserve diagnostic details in ``ctx.meta``
+
+The cache itself is not portable shared context state. For process or MPI
+execution, use a backend-appropriate external cache whose client can be
+created or serialized safely on each worker.
+
 Built-in hooks
 --------------
 
@@ -50,9 +78,10 @@ key.
 
 ``chemfit.objective()`` returns a wrapped
 :class:`~chemfit.abstract_objective_function.ObjectiveComponent`; the same hook
-API applies to custom and composed objective functors.
+API applies to every component, including quantity computers and composed
+objective terms.
 
-``register_eval_hook`` returns the objective, allowing chained registrations.
+``register_eval_hook`` returns the component, allowing chained registrations.
 Register metadata-producing post-hooks before consumers such as a logger, so
 the consumer sees their output. Registering the same callback again on the same
 component is a no-op; distinct callbacks are appended in registration order.
@@ -64,31 +93,42 @@ Writing a custom hook
 ---------------------
 
 Use ``ctx.temp`` for temporary per-call state and ``ctx.meta`` for results that
-should be included in collected metadata. The following symmetric hook records
-whether evaluation succeeded:
+should be included in collected metadata. A practical pre-hook can reject an
+unphysical parameter proposal before an expensive simulation starts:
 
 .. testcode::
 
-    class StatusHook:
+    @chemfit.objective()
+    def lj_fit_loss(params):
+        return (params["epsilon"] - 1.0) ** 2
+
+    class PositiveParametersHook:
+        def __init__(self, *names):
+            self.names = names
+
         def pre_eval(self, ctx):
-            ctx.meta["status"] = "running"
+            invalid = [name for name in self.names if ctx.input[name] <= 0]
+            if invalid:
+                ctx.meta["rejected_parameters"] = invalid
+                return float("inf")
 
-        def post_eval(self, ctx):
-            ctx.meta["status"] = (
-                "failed" if isinstance(ctx.output, Exception) else "completed"
-            )
+    lj_fit_loss.register_eval_hook(
+        hook=PositiveParametersHook("epsilon", "sigma")
+    )
 
-    objective.register_eval_hook(hook=StatusHook())
+    valid_ctx = chemfit.EvaluateContext()
+    rejected_ctx = chemfit.EvaluateContext()
 
-    ctx = chemfit.EvaluateContext()
-    print(objective({"x": 3.0}, ctx))
-    print(ctx.meta["status"])
+    print(lj_fit_loss({"epsilon": 0.5, "sigma": 1.0}, valid_ctx))
+    print(lj_fit_loss({"epsilon": 0.5, "sigma": -1.0}, rejected_ctx))
+    print(rejected_ctx.meta["rejected_parameters"])
 
 .. testoutput::
     :hide:
 
-    9.0
-    completed
+    0.25
+    inf
+    ['sigma']
 
 For a one-sided hook, simply omit the other method. Keep hook instance
 attributes for configuration, not mutable per-evaluation state.
@@ -100,32 +140,36 @@ Registering functions directly
 ------------------------------
 
 For callbacks that do not need a configuration object, pass functions
-directly with ``pre=`` and ``post=``:
+directly with ``pre=`` and ``post=``. Here the callbacks collect optimizer
+diagnostics without changing the objective's return value:
 
 .. testcode::
 
-    def mark_running(ctx):
-        ctx.meta["status"] = "running"
+    import math
 
-    def record_outcome(ctx):
-        ctx.meta["status"] = (
-            "failed" if isinstance(ctx.output, Exception) else "completed"
-        )
+    def record_parameter_scale(ctx):
+        ctx.meta["max_abs_parameter"] = max(map(abs, ctx.input.values()))
+
+    def record_loss_diagnostics(ctx):
+        if not isinstance(ctx.output, Exception):
+            ctx.meta["finite_loss"] = math.isfinite(ctx.output)
 
     objective.register_eval_hook(
-        pre=mark_running,
-        post=record_outcome,
+        pre=record_parameter_scale,
+        post=record_loss_diagnostics,
     )
 
     ctx = chemfit.EvaluateContext()
     print(objective({"x": 4.0}, ctx))
-    print(ctx.meta["status"])
+    print(ctx.meta["max_abs_parameter"])
+    print(ctx.meta["finite_loss"])
 
 .. testoutput::
     :hide:
 
     16.0
-    completed
+    4.0
+    True
 
 Either keyword may be supplied on its own, or both may be registered in one
 call. At least one callback is required. The ``hook=`` form is mutually

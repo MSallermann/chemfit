@@ -4,14 +4,21 @@
 Writing Quantity Computers
 #############################
 
-This page contains practical guidance for writing your own quantity computers from scratch.
+This page contains practical guidance for writing a component with the
+``parameters -> quantities dict`` contract: a quantity computer. See
+:ref:`component_vocabulary` for how that role differs from a general component
+and a scalar objective.
 
 ********************
 Before we start...
 ********************
 
-Before we start, let us clearly state that "quantity computers" are merely a useful convention.
-Nothing prevents you from using ChemFit without them. That being said, you should probably use them.
+A quantity computer is a role, not a separate runtime class. It is an
+:class:`~chemfit.abstract_objective_function.ObjectiveComponent` whose input is
+a fitting-parameter mapping and whose output is a dictionary of quantities.
+Use one when the scientific calculation should remain separate from the loss
+that scores its results. If a function already computes the final scalar loss,
+wrap it with ``objective()`` instead.
 
 A recommended first step is to check if you can use one of the built-in ways:
 
@@ -38,7 +45,7 @@ If none of the built-in computers are to your taste, think about sub-classing th
 Let's cook
 ********************
 
-For a completely fresh quantity computer, derive from
+For a custom quantity computer, derive from
 :py:class:`~chemfit.abstract_objective_function.ObjectiveComponent` and
 implement ``ObjectiveComponent._run``. ``QuantityComputer`` is the typing alias
 for a component mapping parameter dictionaries to quantity dictionaries.
@@ -178,11 +185,39 @@ The :class:`~chemfit.evaluate_context.EvaluateContext`
 provides a structured way to exchange information during evaluation
 without relying on shared state.
 
-It exposes three main fields:
+Its main user-facing fields have distinct jobs:
 
 - ``ctx.meta`` — for *results and diagnostics*
+- ``ctx.temp`` — for *transient state within one component call*
 - ``ctx.config`` — for *read-only configuration*
 - ``ctx.shared`` — for *controlled shared state*
+
+Scientific outputs needed by downstream components do not belong in any of
+these fields: return them from ``_run()``. Use the context for operational
+information around that result.
+
+.. list-table:: Choosing where evaluation data belongs
+   :header-rows: 1
+   :widths: 38 20 42
+
+   * - Example
+     - Location
+     - Reason
+   * - Energy, forces, density, or another loss input
+     - Return value
+     - It is part of the scientific data flow
+   * - SCF iterations, convergence, timing, or provenance
+     - ``ctx.meta``
+     - It should survive evaluation for inspection
+   * - A timer start or cache key used only by hooks in this call
+     - ``ctx.temp``
+     - It is transient implementation state
+   * - Whether this evaluation requests forces or extra diagnostics
+     - ``ctx.config``
+     - It changes execution policy for one context
+   * - A large, read-only reference table reused by sibling terms
+     - ``ctx.shared``
+     - Local children can share it without deep-copying it
 
 ====================
 ctx.meta
@@ -216,8 +251,8 @@ For descriptive metadata that is fixed when the computer is configured, use
 
 The method returns a shallow copy, so ``base`` is unchanged. Static metadata is
 merged into that component's ``ctx.meta`` during finalization, after ``_run()``
-and before its post-hooks. If the computer is turned into an objective with
-``with_loss()``, objective metadata can be added afterward as well:
+and before its post-hooks. If ``with_loss()`` is used to return an objective
+term containing the computer, metadata can be added to that new term as well:
 
 .. code-block:: python
 
@@ -247,6 +282,54 @@ Typical static annotations include:
     If something is needed for the loss or further computation, return it.
     If it is only useful for inspection, debugging, or bookkeeping, store
     it in ``ctx.meta``.
+
+====================
+ctx.temp
+====================
+
+``ctx.temp`` carries private, per-call state between pre-hooks, ``_run()``, and
+post-hooks. It is cleared when a context is reused and is not included in
+summaries or transported back from process and MPI workers. This makes it the
+right place for timers, cache keys, open-call bookkeeping, or prepared input
+that has no value after the component finishes.
+
+For example, a pre-hook can select reference data before the quantity
+calculation begins without adding that preparation to ``_run()``:
+
+.. testcode::
+
+    from chemfit import EvaluateContext, ObjectiveComponent
+
+    class ReferenceEnergyHook:
+        def __init__(self, reference_energies):
+            self.reference_energies = reference_energies
+
+        def pre_eval(self, ctx):
+            species = ctx.input["species"]
+            ctx.temp.reference_energy = self.reference_energies[species]
+
+    class ReferenceShift(ObjectiveComponent):
+        def _run(self, params, ctx):
+            return params["energy"] - ctx.temp.reference_energy
+
+    shift = ReferenceShift().register_eval_hook(
+        hook=ReferenceEnergyHook({"H2": -1.17})
+    )
+
+    result = shift(
+        {"species": "H2", "energy": -1.0},
+        EvaluateContext(),
+    )
+    print(round(result, 2))
+
+.. testoutput::
+    :hide:
+
+    0.17
+
+If the selected value should be preserved for later inspection, copy the
+relevant diagnostic to ``ctx.meta`` in a post-hook. Do not rely on ``ctx.temp``
+as a result channel.
 
 ====================
 ctx.config
@@ -316,40 +399,48 @@ It is not a backend-independent distributed cache or shared-memory facility.
     worker are not returned to the driver.
 
 The portable use of ``ctx.shared`` is therefore limited to read-only,
-serializable input. Even then, data needed to prepare an individual evaluation
-is usually clearer in a pre-evaluation hook. The hook can inspect ``ctx.input``
-and place transient setup data in ``ctx.temp`` for ``_run()`` to consume:
+serializable input. One practical case is a large reference dataset read by
+several children: local child contexts can reuse the same object without a
+deep copy, while process and MPI workers receive serializable copies.
 
 .. testcode::
 
-    from chemfit import EvaluateContext, ObjectiveComponent
+    from types import SimpleNamespace
 
-    class ReferenceEnergyHook:
-        def __init__(self, reference_energies):
-            self.reference_energies = reference_energies
+    import chemfit
 
-        def pre_eval(self, ctx):
-            species = ctx.input["species"]
-            ctx.temp.reference_energy = self.reference_energies[species]
+    @chemfit.component(pass_ctx=True)
+    def energy_error(sample, *, ctx):
+        reference = ctx.shared.reference["energy"]
+        return (sample["energy"] - reference) ** 2
 
-    class ReferenceShift(ObjectiveComponent):
-        def _run(self, params, ctx):
-            return params["energy"] - ctx.temp.reference_energy
+    @chemfit.component(pass_ctx=True)
+    def force_error(sample, *, ctx):
+        reference = ctx.shared.reference["forces"]
+        return sum(
+            (predicted - expected) ** 2
+            for predicted, expected in zip(sample["forces"], reference)
+        )
 
-    shift = ReferenceShift().register_eval_hook(
-        hook=ReferenceEnergyHook({"H2": -1.17})
+    residuals = chemfit.join(energy_error, force_error)
+    shared = SimpleNamespace(
+        reference={"energy": -10.0, "forces": [0.0, 0.0]}
     )
+    ctx = chemfit.EvaluateContext(shared=shared)
 
-    result = shift(
-        {"species": "H2", "energy": -1.0},
-        EvaluateContext(),
+    print(
+        residuals(
+            {"energy": -8.0, "forces": [2.0, 0.0]},
+            ctx,
+        )
     )
-    print(round(result, 2))
+    print(ctx.incoming[0].shared is ctx.incoming[1].shared)
 
 .. testoutput::
     :hide:
 
-    0.17
+    (4.0, 4.0)
+    True
 
 A mutable cache in ``ctx.shared`` is safe only when its storage and locking
 match the selected backend. For example, a ``threading.Lock`` works for a
