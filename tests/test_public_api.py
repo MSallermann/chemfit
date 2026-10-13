@@ -98,7 +98,7 @@ def test_fit_nevergrad_borrows_a_prepared_schedule():
         assert not schedule.closed
 
 
-@pytest.mark.parametrize("option", ("scheduler", "executor", "execution_workers"))
+@pytest.mark.parametrize("option", ["scheduler", "executor", "execution_workers"])
 def test_prepared_schedule_rejects_backend_options(option):
     @chemfit.objective()
     def objective(parameters):

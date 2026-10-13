@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from chemfit.evaluate_context import EvaluateContext, NO_OUTPUT
+from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext
 
 
 def test_defaults():
@@ -13,7 +13,6 @@ def test_defaults():
 
     assert ctx.input is None
     assert ctx.output is NO_OUTPUT
-    assert ctx.exception is None
     assert ctx.meta == {}
     assert ctx.incoming == ()
     assert ctx.outgoing == ()
@@ -64,7 +63,7 @@ def test_shared_dependency_and_clear_incoming():
     right.add_incoming(source)
 
     assert source.outgoing == (left, right)
-    left._clear_incoming()
+    left._clear_incoming()  # noqa: SLF001 - exercise graph cleanup directly
     assert left.incoming == ()
     assert source.outgoing == (right,)
     assert right.incoming == (source,)
@@ -100,7 +99,7 @@ def test_worker_input_pickle_does_not_transfer_graph_or_pipeline():
     ctx.add_incoming(EvaluateContext())
     ctx.pipeline.append(EvaluateContext())
 
-    restored = pickle.loads(pickle.dumps(ctx))
+    restored = pickle.loads(pickle.dumps(ctx))  # noqa: S301 - trusted test value
 
     assert restored.input == {"x": 4}
     assert restored.config.value == 2
@@ -140,17 +139,17 @@ def test_result_state_round_trip_preserves_pipeline_not_graph():
     assert all(stage.incoming == () for stage in target.pipeline)
 
 
-def test_result_state_preserves_exceptions_in_nested_pipeline():
+def test_result_state_preserves_exception_outcomes_in_nested_pipeline():
     source = EvaluateContext()
-    source.exception = RuntimeError("outer")
+    source.output = RuntimeError("outer")
     stage = source.spawn_ctx()
-    stage.exception = ValueError("inner")
+    stage.output = ValueError("inner")
     source.pipeline.append(stage)
 
     target = EvaluateContext()
     target.apply_result_state(source.to_result_state())
 
-    assert isinstance(target.exception, RuntimeError)
-    assert str(target.exception) == "outer"
-    assert isinstance(target.pipeline[0].exception, ValueError)
-    assert str(target.pipeline[0].exception) == "inner"
+    assert isinstance(target.output, RuntimeError)
+    assert str(target.output) == "outer"
+    assert isinstance(target.pipeline[0].output, ValueError)
+    assert str(target.pipeline[0].output) == "inner"

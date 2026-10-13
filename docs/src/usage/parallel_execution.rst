@@ -8,10 +8,10 @@ ChemFit can overlap work at two related levels:
 1. several optimizer candidates can be evaluated in one batch;
 2. leaf terms of a combined objective can run concurrently.
 
-Tree schedulers handle both levels with the same pool of execution slots. A
-batch of candidates is expanded into its reachable objective leaves, and the
-backend executes those leaves serially, through an executor, or on MPI worker
-ranks.
+Graph schedulers handle both levels with the same pool of execution slots. A
+batch of candidates is expanded into its runnable atomic components, and the
+backend executes those components serially, through an executor, or on MPI
+worker ranks.
 
 One-shot fitting
 ----------------
@@ -155,9 +155,9 @@ execution adds serialization overhead, and objectives, hooks, parameters, and
 worker input context state must be serializable.
 
 Executor and MPI schedules return result-bearing context state to the driver:
-parameters, loss, quantities, and metadata. ``ctx.temp`` is scratch state and
+input, output, pipeline state, and metadata. ``ctx.temp`` is scratch state and
 ``ctx.shared`` is not transported back. Store results that must survive worker
-execution in ``ctx.meta`` or in the returned quantities.
+execution in ``ctx.meta`` or ``ctx.output``.
 
 Fitter batching and execution
 -----------------------------
@@ -184,7 +184,7 @@ concurrently:
        optimum = fitter.fit_nevergrad(budget=100, batch_size=4)
 
 A schedule prepared by
-:class:`~chemfit.tree_schedule.SerialGraphScheduler` evaluates a Nevergrad
+:class:`~chemfit.graph_schedule_base.SerialGraphScheduler` evaluates a Nevergrad
 batch serially even when ``batch_size`` is greater than one.
 
 MPI

@@ -38,11 +38,12 @@ If none of the built-in computers are to your taste, think about sub-classing th
 Let's cook
 ********************
 
-For a completely fresh QuantityComputer, derive from the
-:py:class:`~chemfit.abstract_objective_function.QuantityComputer` base class
-and implement ``QuantityComputer._compute``. That's it.
+For a completely fresh quantity computer, derive from
+:py:class:`~chemfit.abstract_objective_function.ObjectiveComponent` and
+implement ``ObjectiveComponent._run``. ``QuantityComputer`` is the typing alias
+for a component mapping parameter dictionaries to quantity dictionaries.
 
-The ``_compute`` method should accept exactly two arguments: a parameter
+The ``_run`` method should accept exactly two arguments: a parameter
 mapping (commonly ``dict[str, Any]``) and an
 :py:class:`~chemfit.abstract_objective_function.EvaluateContext`.
 It should return the dictionary of quantities.
@@ -59,9 +60,9 @@ This is probably a point at which we should familiarize ourselves with the...
 
     .. code-block:: python
 
-        class GoldenRuleViolator(QuantityComputer):
+        class GoldenRuleViolator(ObjectiveComponent):
             # ...
-            def _compute(self, params, ctx):
+            def _run(self, params, ctx):
                 self.bad = params["x"] # <-- bad mojo
                 # ...
                 return {"mojo" : self.bad}
@@ -80,9 +81,9 @@ Let's fix the ``GoldenRuleViolator``:
 
 .. code-block:: python
 
-    class GoodCitizen(QuantityComputer):
+    class GoodCitizen(ObjectiveComponent):
         # ...
-        def _compute(self, params, ctx):
+        def _run(self, params, ctx):
             bad = params["x"]
             ctx.meta["bad"] = bad # <-- no problemo
             # ...
@@ -138,14 +139,14 @@ If we forego the :py:func:`~chemfit.abstract_objective_function.quantity` approa
 
 .. code-block:: python
 
-    from chemfit.abstract_objective_function import QuantityComputer
+    from chemfit.abstract_objective_function import ObjectiveComponent
 
-    class Computer(QuantityComputer):
+    class Computer(ObjectiveComponent):
 
         def __init__(self,f):
             self.f = f
 
-        def _compute(self, params, ctx):
+        def _run(self, params, ctx):
             # We can make use of self.f in here
             ...
 
@@ -374,159 +375,159 @@ Summary
 - ``ctx.shared``: shared state, use with care
 
 ******************************************
-Calling computers from within computers
+Composing custom components
 ******************************************
 
-.. note::
+Calling another component directly from ``_run()`` is valid, but that nested
+call is opaque to a graph scheduler. Use it only when the whole operation
+should remain one atomic task. If the nested computations should be scheduled
+independently, express them with a
+:class:`~chemfit.abstract_objective_function.StructuralComponent`.
 
-    This section is for fairly advanced use and is particularly relevant when
-    implementing a component that performs its own nested computations.
+The built-in
+:class:`~chemfit.abstract_objective_function.PipelineComponent` passes each
+stage's output to the next stage.
+:class:`~chemfit.abstract_objective_function.JoinedComponent` is the base for
+components whose children can run independently, including
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
-If we want to make calls to other computers from our custom computer, the recommended approach is to make use of the child context system to supply fresh contexts to the inner computers.
+==============================
+Writing a structural component
+==============================
 
-Here is a simple demonstration of the idea: We have an outer computer, which accepts a parent :py:class:`~chemfit.abstract_objective_function.EvaluateContext` and then later on splits of two child contexts using the :py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts` context manager.
+A structural component describes its immediate children and their data flow:
 
-.. code-block:: python
+- ``components()`` returns the children in topological order.
+- ``component_dependencies()`` declares execution ordering.
+- ``component_inputs()`` declares the sources assembled for each child.
+- ``resolve_child_input()`` decides whether a ready child runs.
+- ``combine_inputs()`` selects sources passed to ``combine_outcomes()``.
+- ``combine_outcomes()`` produces the structural component's result.
 
-    class OuterComputer(QuantityComputer):
-
-        def _compute(self, params, ctx):
-            # ...
-            with ctx.child_contexts(2) as child_contexts:
-                q1 = inner_computer1(params, child_contexts[0])
-                q2 = inner_computer2(params, child_contexts[1])
-            # ...
-
-The benefit of this approach is two-fold
-
-1. We get full provenance. Child contexts and their results can be inspected through ``ctx.incoming``.
-2. Since the inner computers have their own context they can also be evaluated in parallel ... although the example above does not make use of this.
-
-.. note::
-
-    For parallel evaluation with an executor, use the :py:func:`~chemfit.executor_utils.map_with_context` function.
-    Differently from the regular executor ``map`` function, it correctly handles the ``ctx`` fields even if execution happens in different processes.
-    See also :ref:`parallel_execution`.
-
-=============================================================
-Child-parent relationships for the different context fields
-=============================================================
-
-When creating child contexts via
-:py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`,
-the different fields of the context behave differently.
-
-Understanding this behavior is important when composing quantity
-computers.
-
---------------------
-ctx.meta
---------------------
-
-Each child context receives its own independent ``meta`` dictionary.
-
-During evaluation, child computers write to their own ``ctx.meta``.
-The parent provides direct, read-only navigation to the child contexts in
-creation order:
+For example, this component evaluates two quantity computations independently
+and returns both dictionaries:
 
 .. code-block:: python
 
-    ctx.incoming
-    ctx.incoming[0].meta
-    ctx.incoming[0].quantities
-    ctx.incoming[0].loss
+    from chemfit.abstract_objective_function import (
+        PARENT_INPUT,
+        StructuralComponent,
+    )
 
-Each child exposes its parent through ``child_ctx.parents``. These properties
-return tuples, so topology cannot be changed through the public navigation API.
-Metadata remains local to the context that owns it.
+    class QuantityPair(StructuralComponent):
+        def __init__(self, left, right):
+            super().__init__()
+            self._components = (left, right)
 
-For a dictionary summary, use ``ctx.to_summary()``. By default it describes
-only that context; ``ctx.to_summary(recursive=True)`` additionally includes a
-``"children"`` list of recursive child summaries. Creating a summary does not
-modify the contexts or store child data in ``ctx.meta``.
+        def components(self):
+            return self._components
 
---------------------
-ctx.config
---------------------
+        def component_dependencies(self):
+            return ((), ())
 
-The ``config`` namespace is deep-copied from the parent into each child.
+        def component_inputs(self):
+            return ((PARENT_INPUT,), (PARENT_INPUT,))
 
-All child contexts see the same configuration, allowing them to adapt
-their behavior consistently.
+        def combine_outcomes(self, outcomes, ctx):
+            return outcomes
 
-.. code-block:: python
+Both children receive the structural component's original input. Their empty
+dependency tuples allow a graph scheduler to run them concurrently. Direct
+evaluation uses the same declarations but visits the children sequentially.
 
-    value = getattr(ctx.config, "mode", None)
+==========================
+Input sources and skipping
+==========================
 
-Child contexts should treat their local ``config`` as read-only. A child
-context configurator may customize the copy before evaluation.
+An input source is one of:
 
---------------------
-ctx.shared
---------------------
+``PARENT_INPUT``
+    The input received by the enclosing structural component.
 
-The same ``shared`` namespace object is used by parent and child contexts
-during local execution.
+An integer
+    The outcome of the child with that index.
 
-This allows child computations to communicate and reuse data, for
-example through caching.
+A :class:`~chemfit.abstract_objective_function.Skipped` value
+    A literal skip. ``SKIPPED`` is the shared no-reason instance.
 
-.. code-block:: python
+Once a child's dependencies are complete, ChemFit assembles its declared
+sources and calls the parent's ``resolve_child_input(index, inputs, ctx)``.
+The default implementation skips the child when any source is an exception or
+already skipped. Exceptions become ``Skipped(reason=exception)`` so the
+original failure remains available to downstream policy.
 
-    cache = ctx.shared.cache
-
-Because ``ctx.shared`` may be accessed concurrently, all access must be
-thread-safe. Process executors serialize worker-input shared state but do not
-transport mutations to it back to the driver.
-
-===================================
-Configuring child contexts
-===================================
-
-Besides the number of children,
-:py:meth:`~chemfit.abstract_objective_function.EvaluateContext.child_contexts`
-accepts an optional argument of type
-:py:class:`~chemfit.abstract_objective_function.ChildContextConfigurator`.
-
-A child context configurator allows you to customize how child contexts
-are created.
-
-This can be useful when:
-
-- assigning identifiers or indices to child evaluations
-- modifying configuration for individual children
-
-The configurator is called once per child context and can modify the newly
-created child context before its evaluation begins. ``parent_ctx`` is provided
-strictly for read-only inspection: the configurator must never mutate the
-parent context, including its ``config``, ``meta``, ``temp``, or other mutable
-state. It must not modify sibling contexts.
-
-Conceptually, it allows you to control:
+Override ``resolve_child_input()`` for conditional execution or recovery:
 
 .. code-block:: python
 
-    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
-        ...
+    from chemfit.abstract_objective_function import Skipped
 
-For example, you may want to assign each child a unique identifier:
+    def resolve_child_input(self, index, inputs, ctx):
+        if index == 1 and not ctx.config.run_expensive:
+            return Skipped()
+        return super().resolve_child_input(index, inputs, ctx)
+
+A skipped child does not run pre-hooks, ``_run()``, or post-hooks. If it is
+itself structural, its entire subtree and finish lifecycle are skipped.
+
+================
+Reduction inputs
+================
+
+By default, ``combine_inputs()`` selects every immediate child outcome in
+component order. It may instead select a subset, ``PARENT_INPUT``, or literal
+``Skipped`` values. Selection affects only the values passed to
+``combine_outcomes()``: the structural scope still waits until every immediate
+child has completed or been skipped.
+
+``combine_outcomes()`` may therefore receive values, exceptions, and
+``Skipped`` instances. The structural component owns their interpretation. A
+pipeline re-raises the reason attached to its skipped final stage, while a
+join may recover from a failed or intentionally skipped term.
+
+=====================
+Context relationships
+=====================
+
+A structural evaluation creates one context for each immediate child before
+ordinary child execution starts. The structural context exposes them through
+``ctx.incoming``; each child context points back through ``outgoing``.
+Nested structural components form a context graph matching the component graph.
+
+Each spawned context receives:
+
+- a fresh ``meta`` dictionary and ``temp`` namespace;
+- a deep copy of the parent's ``config`` namespace;
+- the same ``shared`` namespace during local execution.
+
+A skipped child's context remains at ``NO_OUTPUT`` because its lifecycle never
+runs. Completed and failed children store their finalized value or exception
+in ``ctx.output``. There is no separate exception field.
+
+Use ``ctx.to_summary(recursive=True)`` for a serializable nested summary.
+Executor and MPI backends return input, output, pipeline, and metadata state
+from atomic workers; ``temp`` and mutations to process-local ``shared`` state
+are not transported back.
+
+==============================
+Configuring component contexts
+==============================
+
+Use ``with_ctx_configurator()`` when a particular component needs context
+configuration at evaluation start:
 
 .. code-block:: python
 
-    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
-        child_ctx.meta["child_index"] = idx_child_ctx
+    def configure(ctx, *, label):
+        ctx.meta["label"] = label
+        ctx.config.mode = "diagnostic"
 
-Or adjust configuration per child:
+    configured = computer.with_ctx_configurator(
+        configure,
+        label="reference",
+    )
 
-.. code-block:: python
-
-    def configurator(idx_child_ctx, child_ctx, num_children, parent_ctx):
-        child_ctx.config.worker_id = idx_child_ctx
-
-This mechanism configures evaluation semantics and metadata. Backend placement
-is controlled separately by the prepared scheduler.
-
-**Rule of thumb:**
-    Use a child context configurator when child evaluations need
-    systematic differences in their context. Otherwise, the default
-    behavior is sufficient.
+The configurator runs after per-call state is reset and before pre-hooks. It
+should modify only the context it receives. Apply different configurators to
+different child components when their setup differs. Backend placement remains
+the responsibility of the prepared scheduler.

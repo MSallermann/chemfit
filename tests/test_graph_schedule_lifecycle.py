@@ -92,7 +92,8 @@ def test_thread_backend_executes_independent_nodes_concurrently():
 def test_catastrophic_worker_failure_closes_schedule_but_not_borrowed_executor():
     @component()
     def interrupt(_value):
-        raise KeyboardInterrupt("worker interrupted")
+        msg = "worker interrupted"
+        raise KeyboardInterrupt(msg)
 
     executor = ThreadPoolExecutor(max_workers=1)
     schedule = ExecutorGraphScheduler(executor=executor).prepare(interrupt)

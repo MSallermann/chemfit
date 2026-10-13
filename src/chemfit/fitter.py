@@ -826,7 +826,7 @@ class Fitter(Generic[ParametersT]):
                 assert isinstance(loss, float)
                 return loss
 
-            def callback_scipy(intermediate_result: OptimizeResult):
+            def callback_scipy(intermediate_result: OptimizeResult):  # noqa: ARG001
                 self.step()
 
             res = minimize(  # pyright: ignore[reportCallIssue]

@@ -77,3 +77,8 @@ ignore = [
     'PD901',   # I like df
     'FIX002',
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    'ANN001', # Test helpers and pytest fixtures do not need argument annotations.
+]

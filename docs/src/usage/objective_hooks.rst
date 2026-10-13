@@ -65,7 +65,7 @@ whether evaluation succeeded:
 
         def post_eval(self, ctx):
             ctx.meta["status"] = (
-                "failed" if ctx.temp.exception is not None else "completed"
+                "failed" if isinstance(ctx.output, Exception) else "completed"
             )
 
     objective.register_eval_hook(StatusHook())
@@ -73,7 +73,8 @@ whether evaluation succeeded:
 For a one-sided hook, simply omit the other method. Keep hook instance
 attributes for configuration, not mutable per-evaluation state.
 
-A successful post-hook may not transform the objective result.
+A post-hook may transform the objective result by assigning ``ctx.output``.
+The transformed value is authoritative for downstream components and callers.
 
 Registering functions directly
 ------------------------------
@@ -88,7 +89,7 @@ directly with ``pre=`` and ``post=``:
 
     def record_outcome(ctx):
         ctx.meta["status"] = (
-            "failed" if ctx.temp.exception is not None else "completed"
+            "failed" if isinstance(ctx.output, Exception) else "completed"
         )
 
     objective.register_eval_hook(
@@ -108,12 +109,12 @@ Lifecycle and errors
 
 Each objective call follows this order:
 
-1. Set ``ctx.parameters`` to the supplied mapping and reset ``ctx.output`` to
-   ``None``.
+1. Reset per-call context state and set ``ctx.input`` to the supplied value.
 2. Run pre-hooks in registration order.
-3. Run ``_evaluate`` and assign its return value to ``ctx.output``.
-4. Run post-hooks in registration order, not reverse order.
-5. Return the final value of ``ctx.output``.
+3. Unless a pre-hook returned a result, run ``_run``.
+4. Assign the result or exception to ``ctx.output``.
+5. Run post-hooks in registration order, not reverse order.
+6. Return the final value of ``ctx.output`` or raise it if it is an exception.
 
 
 For a combined objective, each leaf's final value is
@@ -121,26 +122,17 @@ what enters its parent reduction. A post-hook on the root combined objective
 may then replace the reduced loss. These semantics are the same for direct
 calls and prepared schedulers, including graph schedulers.
 
-If ``_evaluate`` raises, post-hooks still run. They see ``ctx.output is None`` and
-the exception in ``ctx.exception``. On successful evaluation,
-``ctx.exception`` is ``None`` before post-hooks run.
+If ``_run`` or a pre-hook raises, post-hooks still run and see that exception
+in ``ctx.output``. A pre-hook may instead return a value to short-circuit
+``_run`` successfully. More than one non-``None`` pre-hook result is an error.
 
-Ordinary exceptions from post-hooks are collected while the remaining
-post-hooks are attempted. If evaluation succeeded, ChemFit raises
-``PostEvalHookError``; its ``exceptions`` tuple contains the
-individual failures in registration order. If evaluation failed, its original
-exception is re-raised instead, and post-hook failures are not reported
-separately. Process-control exceptions such as ``KeyboardInterrupt`` are not
-collected from post-hooks.
+If a post-hook raises, its exception replaces ``ctx.output`` and becomes the
+final failure; later post-hooks do not run. This is also how a post-hook can
+replace an earlier evaluation failure.
 
-A failing pre-hook aborts the call immediately: later pre-hooks, evaluation,
-and post-hooks do not run. Hooks therefore cannot rely on post-hooks for
-cleanup if a pre-hook fails.
-
-Contexts can be reused, but only parameters and loss are reset at call entry.
-Metadata, quantities, and scratch values may still contain previous state.
-Initialize any values your hook owns in its pre-hook. Use a separate context
-for every concurrent evaluation.
+Contexts can be reused: input, output, metadata, scratch data, pipeline state,
+and incoming links are reset at call entry, while ``config`` and ``shared``
+are preserved. Use a separate context for every concurrent evaluation.
 
 Nested objectives
 -----------------
@@ -150,16 +142,12 @@ combined objective and its nested terms, register after building the call graph:
 
 .. code-block:: python
 
-    from chemfit.combined_objective_function import CombinedObjectiveFunction
+    import chemfit
+    from chemfit.objective_hooks import TimingHook
 
-    inner = CombinedObjectiveFunction([
-        WrappedComponent(lambda params: params["x"] ** 2),
-    ])
-    combined = CombinedObjectiveFunction([
-        inner,
-        WrappedComponent(lambda params: params["x"] + 1),
-    ])
-    combined.register_eval_hook(TimingHook(), recursive=True)
+    inner = chemfit.combine(lambda params: params["x"] ** 2)
+    combined = chemfit.combine(inner, lambda params: params["x"] + 1)
+    combined.register_eval_hook(hook=TimingHook(), recursive=True)
 
     ctx = EvaluateContext()
     combined({"x": 2.0}, ctx)
@@ -176,10 +164,9 @@ objectives run; they do not introduce another objective or hook scope. Register
 hooks on the combined objective and, for MPI, construct the same hooked
 objective on every rank.
 
-The same hook instance is registered throughout the current tree. Use distinct
-objective instances for distinct positions in the tree; recursive registration
-does not deduplicate references or detect cycles. Custom composite objectives
-can expose their child scopes by implementing ``_child_objectives()``.
+The same hook instance is registered throughout the current graph. Use
+distinct component instances for distinct graph positions. Custom structural
+components expose their child scopes through ``components()``.
 
 Parallel execution
 ------------------

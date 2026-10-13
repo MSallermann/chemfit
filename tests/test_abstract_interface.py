@@ -1,13 +1,10 @@
 """Direct ObjectiveComponent lifecycle tests (no schedulers)."""
 
-import pickle
-
 import pytest
 
 from chemfit.abstract_objective_function import (
     NO_OUTPUT,
     ObjectiveComponent,
-    PostEvalHookError,
     component,
     quantity,
 )
@@ -33,7 +30,7 @@ def test_hooks_run_in_registration_order():
 
     def post(label):
         def hook(c):
-            events.append((label, c.output, c.exception))
+            events.append((label, c.output))
 
         return hook
 
@@ -46,13 +43,13 @@ def test_hooks_run_in_registration_order():
     assert events == [
         ("pre-1", 3, True),
         ("pre-2", 3, True),
-        ("post-1", 9, None),
-        ("post-2", 9, None),
+        ("post-1", 9),
+        ("post-2", 9),
     ]
     assert ctx.meta == {"ran": True, "tag": "square"}
 
 
-def test_post_hook_errors_are_collected_and_pickleable():
+def test_post_hook_failure_replaces_the_outcome_and_stops_hooks():
     obj = Square()
     observed = []
 
@@ -68,18 +65,14 @@ def test_post_hook_errors_are_collected_and_pickleable():
     obj.register_eval_hook(post=fail("last"))
 
     ctx = EvaluateContext()
-    with pytest.raises(PostEvalHookError) as exc:
+    with pytest.raises(ValueError, match="first"):
         obj(2, ctx)
 
-    assert observed == ["first", "middle", "last"]
-    assert ctx.output == 4
-    assert ctx.exception is None
-    assert [str(e) for e in exc.value.exceptions] == ["first", "last"]
-    restored = pickle.loads(pickle.dumps(exc.value))  # noqa: S301
-    assert [str(e) for e in restored.exceptions] == ["first", "last"]
+    assert observed == ["first"]
+    assert isinstance(ctx.output, ValueError)
 
 
-def test_evaluation_error_takes_precedence_over_post_hook_errors():
+def test_post_hook_error_replaces_an_evaluation_error():
     error = ValueError("evaluation failed")
     observed = []
 
@@ -89,21 +82,22 @@ def test_evaluation_error_takes_precedence_over_post_hook_errors():
         raise error
 
     def bad_post(ctx):
-        observed.append(("bad", ctx.output is NO_OUTPUT, ctx.exception is error))
-        raise RuntimeError("post failed")
+        observed.append(("bad", ctx.output is error))
+        msg = "post failed"
+        raise RuntimeError(msg)
 
     def good_post(ctx):
-        observed.append(("good", ctx.output is NO_OUTPUT, ctx.exception is error))
+        observed.append(("good", ctx.output is error))
 
     failing.register_eval_hook(post=bad_post)
     failing.register_eval_hook(post=good_post)
     ctx = EvaluateContext()
 
-    with pytest.raises(ValueError, match="evaluation failed") as exc:
+    with pytest.raises(RuntimeError, match="post failed"):
         failing(3, ctx)
 
-    assert exc.value is error
-    assert observed == [("bad", True, True), ("good", True, True)]
+    assert observed == [("bad", True)]
+    assert isinstance(ctx.output, RuntimeError)
     assert ctx.meta["ran"] is True
 
 
@@ -113,16 +107,17 @@ def test_with_loss_preserves_type_errors():
         return {"value": value}
 
     def invalid_loss(_quantities):
-        raise TypeError("loss calculation failed")
+        msg = "loss calculation failed"
+        raise TypeError(msg)
 
     ctx = EvaluateContext()
     with pytest.raises(TypeError, match="loss calculation failed"):
         compute.with_loss(invalid_loss)(3, ctx)
 
-    assert isinstance(ctx.exception, TypeError)
+    assert isinstance(ctx.output, TypeError)
     assert len(ctx.pipeline) == 2
     assert ctx.pipeline[0].output == {"value": 3}
-    assert isinstance(ctx.pipeline[1].exception, TypeError)
+    assert isinstance(ctx.pipeline[1].output, TypeError)
 
 
 def test_bound_arguments_and_optional_loss_argument():
