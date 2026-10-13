@@ -216,9 +216,10 @@ def external_quantity(
         rather than constructor arguments because their registration order is
         part of the external evaluation workflow.
 
-        Static quantity-computer metadata is merged into ``ctx.meta`` before
-        objective metadata. Consequently, metadata added after ``with_loss()``
-        wins when both levels define the same key.
+        Metadata remains local to the component on which it was configured.
+        After ``with_loss()``, quantity-computer metadata is available on the
+        first pipeline-stage context and objective metadata is available on the
+        root context.
 
     """
     return ExternalQuantityComputer(
@@ -294,7 +295,7 @@ def ase_quantity(
                 quantity_processors=[extract_quantities],
             )
 
-        Metadata from the quantity and objective stages shares ``ctx.meta``::
+        Metadata remains attached to its quantity or objective scope::
 
             term = (
                 chemfit.ase_quantity(atoms)
@@ -307,9 +308,10 @@ def ase_quantity(
     Notes:
         During evaluation, the computer copies its cached base atoms, applies
         atoms modifiers, creates a calculator, runs the configured evaluator,
-        and then extracts quantities. Static metadata precedence is existing
-        context metadata, then quantity-computer metadata, then objective
-        metadata; later stages win on key collisions.
+        and then extracts quantities. Static metadata is merged into the
+        context belonging to the component on which ``with_meta()`` was called.
+        Quantity and objective metadata therefore occupy different contexts
+        after ``with_loss()``.
 
     """
     if not isinstance(atoms, (Path, str)) and index is not None:

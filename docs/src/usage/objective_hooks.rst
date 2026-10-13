@@ -9,8 +9,9 @@ its evaluation implementation. Register either a hook object with
 ``pre_eval(ctx)`` and/or ``post_eval(ctx)`` methods, or pass ordinary callables
 through the ``pre=`` and ``post=`` keyword arguments. No hook base class is
 required. Callbacks receive the evaluation context and should store their
-output there. Register them on the objective produced by
-``computer.with_loss(...)``, not on the quantity computer itself.
+output there. Hooks may be registered on a quantity computer, the objective
+produced by ``computer.with_loss(...)``, or any other component. The chosen
+component determines which evaluation scope and context the hook observes.
 
 Built-in hooks
 --------------
@@ -45,10 +46,11 @@ API applies to custom and composed objective functors.
 
 ``register_eval_hook`` returns the objective, allowing chained registrations.
 Register metadata-producing post-hooks before consumers such as a logger, so
-the consumer sees their output. Registering a hook again appends its callbacks;
-it does not replace an earlier registration. In particular, do not install
-multiple ``TimingHook`` instances on the same evaluation scope, even with
-different output keys: they use the same scratch attribute.
+the consumer sees their output. Registering the same callback again on the same
+component is a no-op; distinct callbacks are appended in registration order.
+In particular, do not install multiple distinct ``TimingHook`` instances on
+the same evaluation scope, even with different output keys: they use the same
+scratch attribute.
 
 Writing a custom hook
 ---------------------
@@ -112,9 +114,10 @@ Each objective call follows this order:
 1. Reset per-call context state and set ``ctx.input`` to the supplied value.
 2. Run pre-hooks in registration order.
 3. Unless a pre-hook returned a result, run ``_run``.
-4. Assign the result or exception to ``ctx.output``.
-5. Run post-hooks in registration order, not reverse order.
-6. Return the final value of ``ctx.output`` or raise it if it is an exception.
+4. Merge the component's static metadata into ``ctx.meta``.
+5. Assign the result or exception to ``ctx.output``.
+6. Run post-hooks in registration order, not reverse order.
+7. Return the final value of ``ctx.output`` or raise it if it is an exception.
 
 
 For a combined objective, each leaf's final value is

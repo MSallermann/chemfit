@@ -43,11 +43,11 @@ The top-level API expresses this workflow directly: use
 :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`.
 
 Underneath, these helpers operate on ChemFit's
-:class:`~chemfit.abstract_objective_function.QuantityComputer`,
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent`, and
+:class:`~chemfit.abstract_objective_function.ObjectiveComponent` and
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-abstractions. A quantity computer maps a parameter dictionary to intermediate
-quantities, and a loss maps those quantities to a scalar objective value.
+abstractions. ``QuantityComputer`` is the typing alias for an objective
+component that maps a parameter dictionary to intermediate quantities, and a
+loss maps those quantities to a scalar objective value.
 
 In practical workflows, the quantity computation may be performed by an
 ASE calculator, an external simulation pipeline, or custom Python code.
@@ -84,14 +84,14 @@ The quantity computer is defined via a simple Python function, mapping a :class:
 The :func:`~chemfit.abstract_objective_function.quantity` decorator turns this function into a
 :class:`~chemfit.abstract_objective_function.WrappedComponent` instance.
 
-The :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`
+The :meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`
 method combines a quantity computer with a loss function to form a complete objective.
 
 .. note::
 
     The wrapped :class:`~chemfit.abstract_objective_function.WrappedComponent` differs from the plain
     function in that it can optionally accept an evaluation context
-    (:class:`~chemfit.abstract_objective_function.EvaluateContext`).
+    (:class:`~chemfit.evaluate_context.EvaluateContext`).
 
     This context is used internally by ChemFit to enable parallel evaluation
     and to collect metadata during execution. In most cases, you do not need

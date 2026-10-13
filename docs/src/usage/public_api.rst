@@ -134,11 +134,10 @@ chain:
 
 Metadata attached before ``with_loss()`` belongs to the quantity computer and
 usually describes computation or provenance. Metadata attached afterward
-belongs to the objective term. Both are merged into the evaluation context's
-``ctx.meta`` dictionary. Quantity metadata is applied first, followed by
-objective metadata, so the objective value wins when both define the same key.
-Use direct ``ctx.meta`` writes instead for values computed during one
-evaluation.
+belongs to the objective term. These are separate evaluation scopes: quantity
+metadata is available on ``ctx.pipeline[0].meta``, while objective metadata is
+available on the root ``ctx.meta``. Use direct ``ctx.meta`` writes instead for
+values computed during one evaluation.
 
 Use ``bind`` to specialize a wrapped quantity or objective function:
 
@@ -186,11 +185,10 @@ corresponding callable.
 
 The main fluent families are:
 
-- Every :class:`~chemfit.abstract_objective_function.QuantityComputer` and
-  :class:`~chemfit.abstract_objective_function.ObjectiveComponent` provides
-  ``with_meta()`` for copy-on-write static metadata.
-- Every :class:`~chemfit.abstract_objective_function.QuantityComputer` has
-  :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`,
+- Every :class:`~chemfit.abstract_objective_function.ObjectiveComponent`
+  provides ``with_meta()`` for copy-on-write static metadata.
+- Every quantity computer supports
+  :meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`,
   which ends the quantity-building chain and returns an objective term.
 - :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
   provides ``with_weights()``, ``with_reduction()``, and
@@ -216,9 +214,8 @@ The main fluent families are:
   :meth:`~chemfit.external_computer.ExternalQuantityComputer.wait_for` adds
   completion files. See :ref:`external_computer`.
 - Wrapped Python quantities and objectives provide
-  :meth:`~chemfit.abstract_objective_function.WrappedComponent.bind` and
-  :meth:`~chemfit.abstract_objective_function.WrappedComponent.bind` for specializing
-  additional callable arguments.
+  :meth:`~chemfit.abstract_objective_function.WrappedComponent.bind` for
+  specializing additional callable arguments.
 
 Because the source object is unchanged, it can be used as a reusable base for
 multiple variants:
@@ -299,9 +296,10 @@ The convenience helpers are entry points, not a separate object model:
 All of :func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`,
 :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>`, and
 :func:`chemfit.external_quantity() <chemfit.api.external_quantity>` return a
-subclass of :class:`~chemfit.abstract_objective_function.QuantityComputer`,
-which provides the general evaluation semantics and
-:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`.
+subclass of :class:`~chemfit.abstract_objective_function.ObjectiveComponent`
+matching the ``QuantityComputer`` typing alias. The base component provides the
+general evaluation semantics and
+:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`.
 
 More specifically:
 

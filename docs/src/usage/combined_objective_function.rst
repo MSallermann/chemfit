@@ -106,7 +106,7 @@ What actually happens during evaluation
 Calling a combined objective does three things.
 
 First, it creates one nested
-:py:class:`~chemfit.abstract_objective_function.EvaluateContext` per term.
+:py:class:`~chemfit.evaluate_context.EvaluateContext` per term.
 
 Second, direct calls evaluate every term serially in its own child context.
 Prepared graph schedules use their configured backend for atomic work while

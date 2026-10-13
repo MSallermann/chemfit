@@ -228,7 +228,7 @@ parameters, and Nevergrad's other parameter types.
 
 The two dictionaries are matched by nested leaf path. In this example,
 ``model.kind`` uses the explicit ``Choice``, while the omitted numeric leaf
-``model.degree`` becomes a bounded :class:`nevergrad.p.Scalar`. The ``label``
+``model.degree`` becomes a bounded ``nevergrad.p.Scalar``. The ``label``
 leaf is held constant because that behavior is requested explicitly with
 ``Constant``.
 
@@ -250,7 +250,7 @@ FitterEvaluateContext
 
 During optimization, ChemFit uses
 :py:class:`~chemfit.fitter.FitterEvaluateContext`, which extends
-:py:class:`~chemfit.abstract_objective_function.EvaluateContext`
+:py:class:`~chemfit.evaluate_context.EvaluateContext`
 with optimization-specific fields:
 
 - ``n_evals``: number of evaluations
@@ -567,7 +567,7 @@ For example:
 .. important::
 
     Make sure to pass instances of :py:class:`~chemfit.fitter.FitterEvaluateContext` and **not** the base class
-    :py:class:`~chemfit.abstract_objective_function.EvaluateContext`!
+    :py:class:`~chemfit.evaluate_context.EvaluateContext`!
 
 .. warning::
 
