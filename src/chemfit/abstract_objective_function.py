@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, Protocol, TypeAlias, cast
+from typing import Any, Generic, Protocol, TypeAlias, cast, overload
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
 from typing_extensions import Concatenate, Self, TypeVar  # noqa: UP035
@@ -87,19 +87,38 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
         return new
 
+    @overload
+    def with_loss(
+        self: StructuralComponent[InputT_contra, OutputT_co],
+        loss_function: Callable[Concatenate[OutputT_co, ...], float],
+        /,
+        **kwargs: Any,
+    ) -> PipelineComponent[InputT_contra, float]: ...
+
+    @overload
     def with_loss(
         self,
         loss_function: Callable[Concatenate[OutputT_co, ...], float],
         /,
         **kwargs: Any,
-    ) -> OpaquePipeline[InputT_contra, float]:
-        """
-        Return a new opaque pipeline that applies a loss to this output.
+    ) -> OpaquePipeline[InputT_contra, float]: ...
 
-        The source component is retained as the first pipeline stage and is
-        not modified. When the source is a quantity computer, the returned
-        pipeline has the ``parameters -> float`` contract of an objective
-        term. Bound keyword arguments configure the loss function.
+    def with_loss(
+        self,
+        loss_function: Callable[Concatenate[OutputT_co, ...], float],
+        /,
+        **kwargs: Any,
+    ) -> OpaquePipeline[InputT_contra, float] | PipelineComponent[InputT_contra, float]:
+        """
+        Return a new pipeline that applies a loss to this component's output.
+
+        The source component is retained as the first stage and is not
+        modified. Structural components produce a structural
+        :class:`PipelineComponent`, preserving their graph-visible descendants.
+        Other components produce an :class:`OpaquePipeline` and remain one
+        schedulable unit with their loss. When the source is a quantity
+        computer, the returned pipeline has the ``parameters -> float``
+        contract of an objective term.
 
         Args:
             loss_function: Callable receiving this component's output followed
@@ -107,14 +126,15 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
             **kwargs: Keyword arguments bound to ``loss_function``.
 
         Returns:
-            A new opaque pipeline containing this component and the wrapped
-            loss function.
+            A new structural or opaque pipeline containing this component and
+            the wrapped loss function.
 
         """
-        return OpaquePipeline(
-            first=self,
-            second=WrappedComponent(loss_function).bind(**kwargs),
-        )
+        loss_component = WrappedComponent(loss_function).bind(**kwargs)
+        if isinstance(self, StructuralComponent):
+            return PipelineComponent(self, loss_component)
+
+        return OpaquePipeline(first=self, second=loss_component)
 
     def with_ctx_configurator(
         self,
@@ -145,7 +165,32 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         post: Callable[[EvaluateContext], None] | None = None,
         recursive: bool = False,
     ) -> Self:
-        """TODO."""
+        """
+        Register callbacks around this component's evaluation lifecycle.
+
+        Pass either a hook object implementing ``pre_eval`` and/or
+        ``post_eval``, or direct ``pre`` and ``post`` callbacks. With
+        ``recursive=True``, registration traverses current structural
+        descendants and modifies those component instances directly. A
+        descendant shared with another composition therefore has the hook in
+        that composition as well.
+
+        Args:
+            hook: Object providing ``pre_eval`` and/or ``post_eval`` methods.
+            pre: Callback invoked before component execution. A non-``None``
+                return value short-circuits the component body.
+            post: Callback invoked after the outcome is stored in the context.
+            recursive: Whether to register on graph-visible structural
+                descendants as well as this component.
+
+        Returns:
+            This component, allowing chained registration.
+
+        Raises:
+            TypeError: If the supplied forms conflict or provide no callable
+                hook methods.
+
+        """
         if hook is not None and (pre is not None or post is not None):
             msg = "pass either hook or pre/post callbacks, not both"
             raise TypeError(msg)

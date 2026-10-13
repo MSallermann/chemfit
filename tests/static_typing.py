@@ -9,6 +9,7 @@ if TYPE_CHECKING:
     from chemfit.abstract_objective_function import (
         EvaluateContext,
         OpaquePipeline,
+        PipelineComponent,
         WrappedComponent,
         objective,
         quantity,
@@ -62,6 +63,8 @@ if TYPE_CHECKING:
 
     combined = CombinedObjectiveFunction([wrapped_objective, term])
     assert_type(combined, CombinedObjectiveFunction[Parameters])
+    structural_term = combined.with_loss(lambda value: value)
+    assert_type(structural_term, PipelineComponent[Parameters, float])
 
     def context_objective(parameters: Parameters, *, ctx: EvaluateContext) -> float:
         ctx.meta["x"] = parameters["x"]

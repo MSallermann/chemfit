@@ -2,7 +2,7 @@ from uuid import UUID
 
 import pytest
 
-from chemfit.abstract_objective_function import component
+from chemfit.abstract_objective_function import PipelineComponent, component
 from chemfit.evaluate_context import EvaluateContext
 from chemfit.objective_hooks import TimingHook, UUIDHook
 
@@ -56,3 +56,30 @@ def test_timing_hook_records_success_and_failure(monkeypatch):
     assert success_ctx.meta["timing"] == {"elapsed_seconds": 1.25}
     assert failure_ctx.meta["runtime"] == {"elapsed_seconds": 0.5}
     assert isinstance(failure_ctx.output, ValueError)
+
+
+def test_recursive_registration_updates_shared_descendant_instances():
+    @component()
+    def shared(value):
+        return value + 1
+
+    @component()
+    def first_tail(value):
+        return 2 * value
+
+    @component()
+    def second_tail(value):
+        return value - 3
+
+    first_composition = PipelineComponent(shared, first_tail)
+    second_composition = PipelineComponent(shared, second_tail)
+
+    def mark_shared(ctx):
+        ctx.meta["registered_recursively"] = True
+
+    first_composition.register_eval_hook(pre=mark_shared, recursive=True)
+
+    ctx = EvaluateContext()
+    assert second_composition(5, ctx) == 3
+    assert ctx.meta == {}
+    assert ctx.incoming[0].meta["registered_recursively"] is True

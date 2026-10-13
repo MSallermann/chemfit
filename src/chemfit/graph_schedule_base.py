@@ -1,4 +1,5 @@
 import json
+from collections import deque
 from collections.abc import Iterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
@@ -103,11 +104,13 @@ class EvaluationState:
     """
     Track coordinator-side state for one traversal of a compiled call graph.
 
-    Every list is indexed by call-graph node ID. Keeping the state in parallel
-    arrays makes readiness checks cheap and allows one prepared graph to serve
-    many independent requests in a batch. Structural lifecycle methods run on
-    the coordinator and mutate this state directly; backend workers only
-    return atomic outcomes and serialized context result state.
+    Every list is indexed by call-graph node ID. An incremental ready queue is
+    seeded with zero-dependency nodes and receives a neighbor when its final
+    dependency completes. This avoids rescanning the graph while allowing one
+    prepared graph to serve many independent requests in a batch. Structural
+    lifecycle methods run on the coordinator and mutate this state directly;
+    backend workers only return atomic outcomes and serialized context result
+    state.
 
     Args:
         graph: Compiled objective graph evaluated by the schedule.
@@ -119,6 +122,7 @@ class EvaluationState:
     contexts: list[EvaluateContext | None]
     node_slots: list[NodeSlot]
     remaining_dependencies: list[int]
+    ready_nodes: deque[int]
 
     def __init__(self, graph: CallGraph, root_ctx: EvaluateContext):
         """
@@ -142,6 +146,11 @@ class EvaluationState:
         self.node_slots = [PENDING] * len(graph.nodes)
         self.graph = graph
         self.remaining_dependencies = [len(node.incoming) for node in graph.nodes]
+        self.ready_nodes = deque(
+            node_id
+            for node_id, remaining in enumerate(self.remaining_dependencies)
+            if remaining == 0
+        )
 
     def assemble_node_inputs(self, node_id: int) -> tuple[Any, ...]:
         """
@@ -210,8 +219,8 @@ class EvaluationState:
         """
         Mark a pending atomic node as submitted to a backend.
 
-        This transition occurs before backend submission so repeated readiness
-        scans cannot enqueue the same node twice.
+        This transition occurs before backend submission so later ready-queue
+        drains cannot submit the same node twice.
 
         Args:
             node_id: Identifier of the atomic node being submitted.
@@ -370,6 +379,9 @@ class EvaluationState:
             msg = f"Node {target} has received a dependency completion from {source}, but it has zero open dependencies."
             raise GraphScheduleError(msg)
 
+        if self.remaining_dependencies[target] == 0:
+            self.ready_nodes.append(target)
+
     def is_pending(self, node_id: int) -> bool:
         """
         Return whether a node still needs to produce an outcome.
@@ -398,23 +410,25 @@ class EvaluationState:
 
         return self.node_slots[node_id] is RUNNING
 
-    def runnable_nodes(self) -> Sequence[int]:
+    def pop_ready_node(self) -> int | None:
         """
-        Return pending nodes for which every execution dependency is complete.
+        Remove and return the next pending node whose dependencies are complete.
 
-        Readiness is based on execution edges, not on whether dependency
-        outcomes were successful. Failure and skip policy is applied later by
-        :meth:`~chemfit.abstract_objective_function.StructuralComponent.resolve_child_input`.
+        Completion and subtree skipping can leave stale queue entries for nodes
+        that have already reached a terminal state. Those entries are ignored.
+        Readiness remains based on execution edges rather than dependency
+        outcomes; structural input policy interprets failures and skips later.
 
         Returns:
-            Node IDs in stable call-graph order.
+            The next ready node ID, or ``None`` when the queue is drained.
 
         """
-        return [
-            node_id
-            for node_id, dep in enumerate(self.remaining_dependencies)
-            if dep == 0 and self.is_pending(node_id)
-        ]
+        while self.ready_nodes:
+            node_id = self.ready_nodes.popleft()
+            if self.remaining_dependencies[node_id] == 0 and self.is_pending(node_id):
+                return node_id
+
+        return None
 
     def write_dot_snapshot(
         self,
@@ -752,54 +766,18 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         run.state.complete(node_id, component_ctx.output)
 
-    def advance_host_nodes(self, run: EvaluationRun) -> None:
-        """
-        Execute runnable structural nodes until coordinator progress stops.
-
-        A start or finish completion can synchronously unlock another host
-        node, so one readiness pass is insufficient for nested structures. The
-        fixed-point loop stops only when remaining work is atomic, running, or
-        blocked on a dependency.
-
-        Args:
-            run: Evaluation run whose structural nodes should advance.
-
-        """
-
-        while True:
-            ready = [
-                node_id
-                for node_id in run.state.runnable_nodes()
-                if isinstance(
-                    self.graph.nodes[node_id],
-                    (StartNode, FinishNode),
-                )
-            ]
-
-            if not ready:
-                break
-
-            for node_id in ready:
-                if not run.state.is_pending(node_id):
-                    continue
-
-                node = self.graph.nodes[node_id]
-
-                if isinstance(node, StartNode):
-                    self.execute_start_node(node_id, run)
-                else:
-                    self.execute_finish_node(node_id, run)
-
     def collect_ready_tasks(
         self, runs: Sequence[EvaluationRun[InputT]]
     ) -> list[NodeTask]:
         """
-        Advance host work and collect every newly runnable atomic task.
+        Drain each ready queue, executing host nodes and collecting atomic work.
 
-        Literal skips and parent input-policy decisions are resolved on the
-        coordinator. Because skipping an atomic node can immediately unlock
-        more graph work, each run is drained to a fixed point before the method
-        returns tasks to the backend.
+        Structural nodes execute immediately on the coordinator. Atomic nodes
+        become backend tasks unless their parent's input policy skips them.
+        Every completion appends newly unlocked neighbors to the same queue, so
+        synchronous host progress and skips are drained without rescanning the
+        graph. Atomic tasks are marked running before collection and therefore
+        cannot be queued twice.
 
         Args:
             runs: Active evaluation runs in the current batch.
@@ -813,39 +791,37 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         for run in runs:
             while True:
-                # A skip can immediately unlock a structural finish node or
-                # another atomic child. Drain that synchronous progress before
-                # waiting for a backend completion.
-                self.advance_host_nodes(run)
-                skipped_any = False
-
-                for node_id in run.state.runnable_nodes():
-                    node = self.graph.nodes[node_id]
-                    if not isinstance(node, AtomicNode):
-                        continue
-
-                    task_input = self.resolve_node_input(node_id, run)
-                    if isinstance(task_input, Skipped):
-                        run.state.skip(node_id, task_input)
-                        skipped_any = True
-                        continue
-
-                    task_ctx = run.state.contexts[node_id]
-                    assert task_ctx is not None
-                    # Reserve the node before handing the task to a backend;
-                    # the next scan must not submit it again.
-                    run.state.mark_node_running(node_id)
-                    tasks.append(
-                        NodeTask(
-                            run_id=run.index,
-                            node_id=node_id,
-                            input=task_input,
-                            ctx=task_ctx,
-                        )
-                    )
-
-                if not skipped_any:
+                node_id = run.state.pop_ready_node()
+                if node_id is None:
                     break
+
+                node = self.graph.nodes[node_id]
+                if isinstance(node, StartNode):
+                    self.execute_start_node(node_id, run)
+                    continue
+
+                if isinstance(node, FinishNode):
+                    self.execute_finish_node(node_id, run)
+                    continue
+
+                assert isinstance(node, AtomicNode)
+                task_input = self.resolve_node_input(node_id, run)
+                if isinstance(task_input, Skipped):
+                    run.state.skip(node_id, task_input)
+                    continue
+
+                task_ctx = run.state.contexts[node_id]
+                assert task_ctx is not None
+                run.state.mark_node_running(node_id)
+                tasks.append(
+                    NodeTask(
+                        run_id=run.index,
+                        node_id=node_id,
+                        input=task_input,
+                        ctx=task_ctx,
+                    )
+                )
+
         return tasks
 
     def result_if_complete(self, run: EvaluationRun) -> EvaluationResult | None:
@@ -924,7 +900,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         """
 
-    def evaluate_many(  # noqa: PLR0912, PLR0915
+    def evaluate_many(  # noqa: PLR0912
         self, requests: Sequence[EvaluationRequest[InputT]]
     ) -> Iterator[EvaluationResult]:
         """
@@ -965,19 +941,12 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                 )
                 runs.append(EvaluationRun(index=idx, state=eval_state))
 
-            # Enter root structural scopes before submitting atomic work. A
-            # pre-hook may complete an entire request without using a backend.
-            for run in runs:
-                self.advance_host_nodes(run)
-
-                result = self.result_if_complete(run)
-                if result is not None:
-                    yield result
-
             tasks_in_flight = 0
             while not all(run.yielded for run in runs):
-                # Batch all work exposed by the latest host-side progress. The
-                # backend remains free to complete it in any order.
+                # Drain every run's incremental ready queue. Host-side
+                # structural work executes immediately; atomic work is batched
+                # for the backend, which remains free to complete it in any
+                # order.
                 tasks = self.collect_ready_tasks(runs)
 
                 if tasks:
@@ -1013,26 +982,15 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                     # parents inspect child contexts or run post-hooks.
                     run.state.complete(completion.node_id, completion.outcome)
 
-                    # One atomic result may close several nested scopes.
-                    self.advance_host_nodes(run)
-
                     result = self.result_if_complete(run)
                     if result is not None:
                         yield result
-                else:
-                    # A final host-only sweep distinguishes synchronous progress
-                    # from a malformed or cyclic graph with no possible work.
-                    completed = 0
-                    for run in runs:
-                        self.advance_host_nodes(run)
-
-                        result = self.result_if_complete(run)
-                        if result is not None:
-                            completed += 1
-                            yield result
-                    if completed == 0 and not all(run.yielded for run in runs):
-                        msg = "Graph evaluation stalled without runnable nodes."
-                        raise GraphScheduleError(msg)
+                elif not all(run.yielded for run in runs):
+                    # collect_ready_tasks() drained all host-side progress. With
+                    # no backend work left, an unfinished run is malformed or
+                    # cyclic rather than merely waiting for another queue pass.
+                    msg = "Graph evaluation stalled without runnable nodes."
+                    raise GraphScheduleError(msg)
         except BaseException as exception:
             try:
                 self.abort_batch(batch_state)

@@ -5,6 +5,7 @@ import pytest
 from chemfit.abstract_objective_function import (
     NO_OUTPUT,
     ObjectiveComponent,
+    OpaquePipeline,
     component,
     quantity,
 )
@@ -110,9 +111,12 @@ def test_with_loss_preserves_type_errors():
         msg = "loss calculation failed"
         raise TypeError(msg)
 
+    objective = compute.with_loss(invalid_loss)
+    assert isinstance(objective, OpaquePipeline)
+
     ctx = EvaluateContext()
     with pytest.raises(TypeError, match="loss calculation failed"):
-        compute.with_loss(invalid_loss)(3, ctx)
+        objective(3, ctx)
 
     assert isinstance(ctx.output, TypeError)
     assert len(ctx.pipeline) == 2

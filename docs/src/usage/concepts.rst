@@ -85,6 +85,9 @@ Calling ``with_loss()`` does not make the quantity computer itself become an
 objective. It returns a new pipeline containing the quantity computer followed
 by the loss. That complete pipeline has the ``parameters -> float`` contract,
 so it is an objective term; the original quantity computer remains unchanged.
+For an ordinary component the returned pipeline is opaque and forms one
+scheduler task. For a structural component it is a structural pipeline, so the
+existing child graph remains visible to schedulers.
 
 Use *component* when discussing behavior shared by every node, such as hooks,
 contexts, pipelines, and scheduling. Use *quantity computer* only for a

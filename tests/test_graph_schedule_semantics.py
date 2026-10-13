@@ -10,13 +10,15 @@ from chemfit.abstract_objective_function import (
     PARENT_INPUT,
     SKIPPED,
     EvaluateContext,
+    OpaquePipeline,
     PipelineComponent,
     Skipped,
     StructuralComponent,
     component,
     quantity,
 )
-from chemfit.callgraph import call_graph_to_dot, objective_to_call_graph
+from chemfit.api import join
+from chemfit.callgraph import AtomicNode, call_graph_to_dot, objective_to_call_graph
 from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
     skip_exception_handler,
@@ -110,6 +112,102 @@ def test_successful_nested_pipeline_and_join(scheduler):
     assert [ctx.output for ctx in graph_ctx.incoming] == [4, 7, 21, 20]
     assert [ctx.output for ctx in graph_ctx.incoming[2].incoming] == [7, 14]
     assert graph_ctx.output == 20
+
+
+def test_nested_pipeline_and_join_support_repeated_component_instances(scheduler):
+    @component()
+    def double(value):
+        return 2 * value
+
+    @component()
+    def add_one(value):
+        return value + 1
+
+    @component()
+    def total(values):
+        return sum(values)
+
+    repeated_join = join(double, double, add_one, add_one)
+    branch = PipelineComponent(repeated_join, total)
+    objective = join(branch, branch)
+
+    direct_ctx = EvaluateContext()
+    direct_result = objective(2, direct_ctx)
+    graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
+
+    assert direct_result == graph_result == (14, 14)
+    assert [child.output for child in graph_ctx.incoming] == [14, 14]
+
+    occurrence_contexts = []
+    for branch_ctx in graph_ctx.incoming:
+        repeated_join_ctx = branch_ctx.incoming[0]
+        assert [ctx.output for ctx in repeated_join_ctx.incoming] == [4, 4, 3, 3]
+        occurrence_contexts.extend(repeated_join_ctx.incoming)
+
+    assert len({id(ctx) for ctx in occurrence_contexts}) == 8
+
+
+def test_structural_with_loss_remains_graph_visible(scheduler):
+    @component()
+    def add_one(value):
+        return value + 1
+
+    @component()
+    def double(value):
+        return 2 * value
+
+    joined = join(add_one, double).with_meta(scope="joined")
+
+    def mark_post_hook(ctx):
+        ctx.meta["post_hook_ran"] = True
+
+    joined.register_eval_hook(post=mark_post_hook)
+
+    def loss(values, *, offset):
+        return sum(values) + offset
+
+    objective = joined.with_loss(loss, offset=1)
+    assert isinstance(objective, PipelineComponent)
+
+    graph = objective_to_call_graph(objective)
+    assert sum(isinstance(node, AtomicNode) for node in graph.nodes) == 3
+
+    direct_ctx = EvaluateContext()
+    direct_result = objective(2, direct_ctx)
+    graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
+
+    assert direct_result == graph_result == 8
+    assert [ctx.output for ctx in graph_ctx.incoming] == [(3, 4), 8]
+    assert [ctx.output for ctx in graph_ctx.incoming[0].incoming] == [3, 4]
+    assert graph_ctx.incoming[0].meta == {
+        "scope": "joined",
+        "post_hook_ran": True,
+    }
+
+
+def test_atomic_with_loss_remains_opaque(scheduler):
+    @component()
+    def add_one(value):
+        return value + 1
+
+    atomic_objective = add_one.with_loss(
+        lambda value, *, multiplier: value * multiplier,
+        multiplier=3,
+    )
+    assert isinstance(atomic_objective, OpaquePipeline)
+    atomic_graph = objective_to_call_graph(atomic_objective)
+    assert len(atomic_graph.nodes) == 1
+    assert isinstance(atomic_graph.nodes[0], AtomicNode)
+
+    atomic_direct_ctx = EvaluateContext()
+    atomic_direct_result = atomic_objective(2, atomic_direct_ctx)
+    atomic_graph_result, atomic_graph_ctx = evaluate_graph(
+        scheduler, atomic_objective, 2
+    )
+
+    assert atomic_direct_result == atomic_graph_result == 9
+    assert [ctx.output for ctx in atomic_direct_ctx.pipeline] == [3, 9]
+    assert [ctx.output for ctx in atomic_graph_ctx.pipeline] == [3, 9]
 
 
 def test_failed_atomic_stage_skips_downstream_stage(scheduler):
@@ -360,6 +458,58 @@ def test_literal_and_resolution_skips_reach_structural_reducer(scheduler):
     assert direct_result == graph_result == (None, "resolution failed", None)
     assert calls == []
     assert [child.output for child in ctx.incoming] == [NO_OUTPUT, NO_OUTPUT]
+
+
+def test_custom_input_policy_skips_subtree_and_unlocks_dependency_chain(scheduler):
+    @component()
+    def fail(value):
+        msg = f"cannot evaluate {value}"
+        raise ValueError(msg)
+
+    @component()
+    def must_not_run(_value):
+        msg = "skipped subtree executed"
+        raise AssertionError(msg)
+
+    @component()
+    def continue_after_skip(value):
+        return value + 10
+
+    skipped_branch = PipelineComponent(must_not_run, must_not_run)
+
+    class SkipFailedBranch(StructuralComponent):
+        def components(self):
+            return (fail, skipped_branch, continue_after_skip)
+
+        def component_dependencies(self):
+            return ((), (0,), (1,))
+
+        def component_inputs(self):
+            return ((PARENT_INPUT,), (0,), (PARENT_INPUT,))
+
+        def resolve_child_input(self, index, inputs, ctx):
+            if index == 1 and isinstance(inputs[0], ValueError):
+                ctx.meta["skipped_failed_branch"] = True
+                return Skipped(reason=inputs[0])
+            return super().resolve_child_input(index, inputs, ctx)
+
+        def combine_inputs(self):
+            return (2,)
+
+        def combine_outcomes(self, outcomes, _ctx):
+            return outcomes[0]
+
+    objective = SkipFailedBranch()
+    direct_ctx = EvaluateContext()
+    direct_result = objective(5, direct_ctx)
+    graph_result, graph_ctx = evaluate_graph(scheduler, objective, 5)
+
+    assert direct_result == graph_result == 15
+    assert direct_ctx.meta == graph_ctx.meta == {"skipped_failed_branch": True}
+    assert isinstance(graph_ctx.incoming[0].output, ValueError)
+    assert graph_ctx.incoming[1].output is NO_OUTPUT
+    assert graph_ctx.incoming[1].incoming == ()
+    assert graph_ctx.incoming[2].output == 15
 
 
 def test_finish_waits_for_children_not_selected_by_combine_inputs(scheduler):
