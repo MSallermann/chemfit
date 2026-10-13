@@ -16,6 +16,8 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     ObjectiveComponent,
     WrappedComponent,
+    PipelineComponent,
+    TupleJoinedComponent,
 )
 from chemfit.ase_objective_function import (
     ASEComputer,
@@ -43,6 +45,10 @@ from chemfit.scheduling import (
 )
 
 ParamsT = TypeVar("ParamsT", bound=Mapping[str, object], default=dict[str, Any])
+InputT = TypeVar("InputT")
+MiddleT = TypeVar("MiddleT")
+OutputT = TypeVar("OutputT")
+
 QuantityT = TypeVar(
     "QuantityT",
     bound=dict[str, Any],
@@ -133,6 +139,54 @@ def combine(
         reduction=reduction,
         exception_handler=exception_handler,
     )
+
+
+def pipeline(
+    first: ObjectiveComponent[InputT, MiddleT],
+    second: ObjectiveComponent[MiddleT, OutputT],
+) -> PipelineComponent[InputT, OutputT]:
+    """
+    Concatenate two components in a scheduler inspectable pipeline.
+
+    The second component receives the output of the fist component as its input.
+    Add more stages to the pipeline by using its ``then`` method.
+
+    Args:
+        first (ObjectiveComponent[InputT, MiddleT]): first component
+        second (ObjectiveComponent[MiddleT, OutputT]): second component
+
+    Returns:
+        PipelineComponent[InputT, OutputT]: The constructed pipeline object.
+
+    """
+    return PipelineComponent(first, second)
+
+
+def join(
+    *args: ObjectiveComponent[InputT, Any],
+) -> TupleJoinedComponent[InputT]:
+    """
+    Join components in a scheduler inspectable fan-out.
+
+    Every component receives the same input and a scheduler can run them in
+    parallel.
+    The output is a tuple of individual component outputs in corresponding order.
+
+    Args:
+        *args: Objective components or callables supplied as positional terms,
+               or one iterable of terms.
+
+    Returns:
+        TupleJoinedComponent[InputT]: The constructed pipeline object.
+
+    """
+
+    if len(args) == 1 and not callable(args[0]):
+        components = tuple(args[0])
+    else:
+        components = cast("tuple[ObjectiveComponent[InputT,Any], ...]", args)
+
+    return TupleJoinedComponent(components)
 
 
 def external_quantity(
