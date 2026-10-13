@@ -193,6 +193,7 @@ direct control over threads, processes, or MPI. The :ref:`common_workflows`,
    :caption: Understanding and advanced usage
 
    src/usage/concepts.rst
+   src/usage/advanced_concepts.rst
    src/usage/writing_quantity_computers.rst
    src/usage/objective_hooks.rst
    src/usage/mpi.rst

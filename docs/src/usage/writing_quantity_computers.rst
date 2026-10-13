@@ -79,15 +79,26 @@ Therefore, if you have anything to communicate with the outside world, there are
 
 Let's fix the ``GoldenRuleViolator``:
 
-.. code-block:: python
+.. testcode::
+
+    from chemfit import EvaluateContext, ObjectiveComponent
 
     class GoodCitizen(ObjectiveComponent):
-        # ...
         def _run(self, params, ctx):
             bad = params["x"]
             ctx.meta["bad"] = bad # <-- no problemo
-            # ...
             return {"mojo" : bad}
+
+    citizen = GoodCitizen()
+    ctx = EvaluateContext()
+    print(citizen({"x": 2.0}, ctx))
+    print(ctx.meta)
+
+.. testoutput::
+    :hide:
+
+    {'mojo': 2.0}
+    {'bad': 2.0}
 
 Now there is no problem. All we ever do is write to ``bad``, which is local to
 the current function evaluation, or to ``ctx.meta["bad"]``, which belongs to
@@ -144,6 +155,7 @@ If we forego the :py:func:`~chemfit.abstract_objective_function.quantity` approa
     class Computer(ObjectiveComponent):
 
         def __init__(self,f):
+            super().__init__()
             self.f = f
 
         def _run(self, params, ctx):
@@ -380,6 +392,10 @@ Summary
 Composing custom components
 ******************************************
 
+For the conceptual distinction between atomic nesting, opaque pipelines,
+structural pipelines, and joins, read :ref:`advanced_concepts` first. This
+section focuses on implementing a custom structure.
+
 Calling another component directly from ``_run()`` is valid, but that nested
 call is opaque to a graph scheduler. Use it only when the whole operation
 should remain one atomic task. If the nested computations should be scheduled
@@ -409,12 +425,13 @@ A structural component describes its immediate children and their data flow:
 For example, this component evaluates two quantity computations independently
 and returns both dictionaries:
 
-.. code-block:: python
+.. testcode::
 
     from chemfit.abstract_objective_function import (
         PARENT_INPUT,
         StructuralComponent,
     )
+    from chemfit import component
 
     class QuantityPair(StructuralComponent):
         def __init__(self, left, right):
@@ -432,6 +449,25 @@ and returns both dictionaries:
 
         def combine_outcomes(self, outcomes, ctx):
             return outcomes
+
+    @component()
+    def original(params):
+        return {"value": params["x"]}
+
+    @component()
+    def doubled(params):
+        return {"value": 2 * params["x"]}
+
+    pair = QuantityPair(original, doubled)
+    pair_ctx = EvaluateContext()
+    print(pair({"x": 3.0}, pair_ctx))
+    print([child.output for child in pair_ctx.incoming])
+
+.. testoutput::
+    :hide:
+
+    ({'value': 3.0}, {'value': 6.0})
+    [{'value': 3.0}, {'value': 6.0}]
 
 Both children receive the structural component's original input. Their empty
 dependency tuples allow a graph scheduler to run them concurrently. Direct
@@ -520,16 +556,30 @@ Configuring component contexts
 Use ``with_ctx_configurator()`` when a particular component needs context
 configuration at evaluation start:
 
-.. code-block:: python
+.. testcode::
+
+    @component(pass_ctx=True)
+    def configurable_computer(params, *, ctx):
+        return {"mode": ctx.config.mode, "x": params["x"]}
 
     def configure(ctx, *, label):
         ctx.meta["label"] = label
         ctx.config.mode = "diagnostic"
 
-    configured = computer.with_ctx_configurator(
+    configured = configurable_computer.with_ctx_configurator(
         configure,
         label="reference",
     )
+
+    configured_ctx = EvaluateContext()
+    print(configured({"x": 1.0}, configured_ctx))
+    print(configured_ctx.meta)
+
+.. testoutput::
+    :hide:
+
+    {'mode': 'diagnostic', 'x': 1.0}
+    {'label': 'reference'}
 
 The configurator runs after per-call state is reset and before pre-hooks. It
 should modify only the context it receives. Apply different configurators to

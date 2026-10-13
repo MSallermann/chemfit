@@ -86,7 +86,7 @@ Fluent configuration
 ``chemfit.combine(...)`` constructs the combined objective. Common semantic
 configuration can then be applied as a fluent chain:
 
-.. code-block:: python
+.. testcode::
 
    objective = (
        chemfit.combine(term1, term2)
@@ -94,6 +94,13 @@ configuration can then be applied as a fluent chain:
        .with_exception_handler(chemfit.nan_exception_handler)
        .with_reduction(chemfit.mean_reducer)
    )
+
+   print(objective({"x": 2.0}))
+
+.. testoutput::
+    :hide:
+
+    0.6
 
 Each method returns a configured copy and leaves its source object unchanged.
 Child objective and hook objects remain shared. ``with_exception_handler()``
@@ -176,7 +183,7 @@ A simple reducer receives the list of weighted term values and returns a scalar:
 The library already provides a few simple reducers in
 :py:mod:`chemfit.combined_objective_function`:
 
-.. code-block:: python
+.. testcode::
 
     from chemfit.combined_objective_function import (
         CombinedObjectiveFunction,
@@ -184,6 +191,9 @@ The library already provides a few simple reducers in
         mean_reducer,
         root_mean_reducer,
     )
+
+    def term3(params):
+        return 1.0
 
     objective = CombinedObjectiveFunction(
         [term1, term2, term3],
@@ -339,12 +349,19 @@ Three useful handlers are provided in
 The default handler simply re-raises the exception. It can also be selected
 explicitly in a fluent chain:
 
-.. code-block:: python
+.. testcode::
 
    objective = (
        chemfit.combine(term1, term2)
        .with_exception_handler(chemfit.raising_exception_handler)
    )
+
+   print(objective({"x": 2.0}))
+
+.. testoutput::
+    :hide:
+
+    2.0
 
 Returning ``math.nan`` marks the whole reduction as invalid in the usual way:
 
@@ -467,6 +484,7 @@ A combined objective can therefore configure its terms independently:
     print([term_ctx.meta["term_number"] for term_ctx in ctx.incoming])
 
 .. testoutput::
+    :hide:
 
     [0, 1]
 
@@ -483,16 +501,26 @@ Calling a combined objective directly evaluates its terms serially. To use a
 different backend, prepare the objective with a scheduler and evaluate through
 the returned schedule:
 
-.. code-block:: python
+.. testcode::
 
    from concurrent.futures import ThreadPoolExecutor
 
    from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 
+   parallel_objective = chemfit.combine(term1, term2)
+   parameters = {"x": 2.0}
+
    with ThreadPoolExecutor(max_workers=4) as executor:
        scheduler = ExecutorGraphScheduler(executor=executor)
-       with scheduler.prepare(objective) as schedule:
+       with scheduler.prepare(parallel_objective) as schedule:
            value = schedule(parameters)
+
+   print(value)
+
+.. testoutput::
+    :hide:
+
+    2.0
 
 In practice this means the same combined objective can be used
 
