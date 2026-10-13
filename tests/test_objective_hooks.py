@@ -42,7 +42,8 @@ def test_timing_hook_records_success_and_failure(monkeypatch):
 
     @component()
     def failing(_value):
-        raise ValueError("evaluation failed")
+        msg = "evaluation failed"
+        raise ValueError(msg)
 
     failing.register_eval_hook(hook=TimingHook(meta_key="runtime"))
     success_ctx = EvaluateContext()
@@ -54,4 +55,4 @@ def test_timing_hook_records_success_and_failure(monkeypatch):
 
     assert success_ctx.meta["timing"] == {"elapsed_seconds": 1.25}
     assert failure_ctx.meta["runtime"] == {"elapsed_seconds": 0.5}
-    assert isinstance(failure_ctx.exception, ValueError)
+    assert isinstance(failure_ctx.output, ValueError)

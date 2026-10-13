@@ -1,12 +1,16 @@
+import json
 from collections.abc import Iterator, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Generic, TypeVar, cast
+from typing import Any, Generic, TypeAlias, TypeVar, cast
 
 from chemfit.abstract_objective_function import (
+    SKIPPED,
     EvaluateContext,
     ObjectiveComponent,
+    Skipped,
     StructuralComponent,
 )
 from chemfit.callgraph import (
@@ -67,10 +71,9 @@ class _Running:
 RUNNING = _Running()
 
 
-NodeOutcome = OutputT_co | Exception
-
-# Nodes begin pending, may become running, and are finally replaced by outcomes.
-NodeSlot = NodeOutcome | _Pending | _Running
+NodeOutcome: TypeAlias = OutputT_co | Exception
+TerminalSlot: TypeAlias = NodeOutcome | Skipped
+NodeSlot: TypeAlias = TerminalSlot | _Pending | _Running
 
 
 class GraphScheduleError(RuntimeError):
@@ -105,36 +108,41 @@ class EvaluationState:
         self.graph = graph
         self.remaining_dependencies = [len(node.incoming) for node in graph.nodes]
 
-    def assemble_node_input(self, node_id: int) -> tuple[Any, ...] | NodeOutcome:
-        """Collect the inputs for this node_id."""
+    def assemble_node_inputs(self, node_id: int) -> tuple[Any, ...]:
+        """Collect raw input values without unpacking single-element tuples."""
         node = self.graph.nodes[node_id]
-        input_ids = node.inputs
+        inputs = []
 
-        node_input: list[NodeOutcome] = [None] * len(input_ids)
-
-        for idx, input_id in enumerate(input_ids):
-            if input_id is ROOT:
-                node_input[idx] = self.root_ctx.input
+        for source in node.inputs:
+            if source is ROOT:
+                inputs.append(self.root_ctx.input)
+            elif isinstance(source, Skipped):
+                inputs.append(source)
             else:
-                slot = self.node_slots[cast("int", input_id)]
+                assert isinstance(source, int)
+                slot = self.node_slots[source]
+
                 if slot is PENDING or slot is RUNNING:
-                    msg = (
-                        "Tried to construct input from PENDING or already RUNNING node"
-                    )
+                    msg = f"Input source {source} has not completed."
                     raise GraphScheduleError(msg)
-                node_input[idx] = cast("NodeOutcome", slot)
 
-        # FinishNodes always receive a tuple
-        if isinstance(node, FinishNode):
-            return tuple(node_input)
+                inputs.append(slot)
 
-        # Other nodes receive one-element tuples in unpacked form
-        return node_input[0] if len(node_input) == 1 else tuple(node_input)
+        return tuple(inputs)
+
+    def assemble_node_input(self, node_id: int) -> Any:
+        """Assemble an input using the ordinary component calling convention."""
+        inputs = self.assemble_node_inputs(node_id)
+
+        if isinstance(self.graph.nodes[node_id], FinishNode):
+            return inputs
+
+        return inputs[0] if len(inputs) == 1 else inputs
 
     def mark_node_running(self, node_id: int) -> None:
         self.node_slots[node_id] = RUNNING
 
-    def complete(self, node_id: int, outcome: NodeOutcome) -> None:
+    def complete(self, node_id: int, outcome: TerminalSlot) -> None:
         """
         Store the raw outcome of a pending node and propagate its completion to its dependencies.
 
@@ -159,42 +167,54 @@ class EvaluationState:
         for nid in node.outgoing:
             self.dependency_completed(node_id, nid)
 
-    def skip(self, node_id: int, exception: Exception) -> None:
+        # self.write_dot_snapshot(".", "test")
+
+    def skip(self, node_id: int, skipped: Skipped = SKIPPED) -> None:
         """Complete a node without executing its lifecycle."""
-        self.complete(node_id, exception)
+        self.complete(node_id, skipped)
 
-    def skip_subtree(self, node_id: int, exception: Exception) -> None:
-        """Skip a component and all its descendants without running any lifecycle methods."""
+    def skip_subtree(
+        self,
+        node_id: int,
+        skipped: Skipped = SKIPPED,
+    ) -> None:
+        """Skip an entire component scope without invoking its lifecycle."""
+        self.skip(node_id, skipped)
         node = self.graph.nodes[node_id]
-
-        self.skip(node_id, exception)
 
         if isinstance(node, StartNode):
             for child_id in node.contained_component_start_ids:
-                self.skip_subtree(child_id, exception)
+                self.skip_subtree(child_id, skipped)
 
-            self.skip(node.paired_end_node_id, exception)
+            self.skip(node.paired_end_node_id, skipped)
 
-    def abort_scope(self, node_id: int, exception: Exception) -> None:
-        """Abort a structural component whose begin lifecycle failed."""
+    def complete_scope_early(self, node_id: int, outcome: NodeOutcome) -> None:
+        """Finalize a structural scope that ended during its begin lifecycle."""
+
         node = self.graph.nodes[node_id]
         assert isinstance(node, StartNode)
 
-        self.complete(node_id, exception)
+        self.complete(node_id, outcome)
 
-        for child_id in node.contained_component_start_ids:
-            self.skip_subtree(child_id, exception)
+        reason = outcome if isinstance(outcome, Exception) else None
+        skipped = Skipped(reason=reason)
+
+        for nid in node.contained_component_start_ids:
+            self.skip_subtree(nid, skipped)
 
         ctx = self.contexts[node_id]
         assert ctx is not None
 
-        # End hooks still run, but the begin failure remains authoritative.
-        with suppress(Exception):
-            node.objective._end_evaluation(exception, ctx)  # noqa: SLF001
+        # End the lifecyle
+        try:
+            final_outcome = node.objective._end_evaluation(outcome, ctx)  # noqa: SLF001
+        except Exception as e:
+            final_outcome = e
 
-        self.complete(node.paired_end_node_id, exception)
+        # Set the outcome
+        self.complete(node.paired_end_node_id, final_outcome)
 
-    def outcome(self, node_id: int) -> NodeOutcome:
+    def outcome(self, node_id: int) -> TerminalSlot:
         """
         Return the raw outcome of a completed node.
 
@@ -260,6 +280,87 @@ class EvaluationState:
             if dep == 0 and self.is_pending(node_id)
         ]
 
+    def write_dot_snapshot(
+        self,
+        directory: str | Path = "graph_states",
+        prefix: str = "state",
+    ) -> Path:
+        """Write a numbered DOT snapshot of the current graph evaluation state."""
+
+        directory = Path(directory)
+        directory.mkdir(parents=True, exist_ok=True)
+
+        def describe_slot(slot: NodeSlot) -> tuple[str, str, str]:
+            if slot is PENDING:
+                return "PENDING", "-", "#eeeeee"
+            if slot is RUNNING:
+                return "RUNNING", "-", "#fff2b3"
+            if isinstance(slot, Skipped):
+                reason = "-" if slot.reason is None else repr(slot.reason)
+                return "SKIPPED", reason, "#cccccc"
+            if isinstance(slot, Exception):
+                return "FAILED", repr(slot), "#ffcccc"
+            return "COMPLETED", repr(slot), "#ccffcc"
+
+        lines = [
+            "digraph EvaluationState {",
+            "  rankdir=TB;",
+            '  node [shape=box, style="rounded,filled", fontname="monospace"];',
+            '  edge [color="#777777"];',
+        ]
+
+        for node_id, node in enumerate(self.graph.nodes):
+            slot = self.node_slots[node_id]
+            status, outcome, color = describe_slot(slot)
+
+            objective = node.objective
+            objective_name = getattr(
+                getattr(objective, "func", None),
+                "__name__",
+                type(objective).__name__,
+            )
+
+            if status == "PENDING" and self.remaining_dependencies[node_id] == 0:
+                status = "READY"
+
+            # Avoid enormous labels for large arrays or dictionaries.
+            if len(outcome) > 120:
+                outcome = outcome[:117] + "..."
+
+            label = (
+                f"{node_id}: {type(node).__name__}\n"
+                f"{objective_name}\n"
+                f"slot: {status}\n"
+                f"outcome: {outcome}\n"
+                f"remaining deps: {self.remaining_dependencies[node_id]}"
+            )
+
+            lines.append(
+                f'  n{node_id} [label={json.dumps(label)}, fillcolor="{color}"];'
+            )
+
+            lines.extend(f"  n{node_id} -> n{target};" for target in node.outgoing)
+
+        lines.append("}")
+        dot = "\n".join(lines) + "\n"
+
+        # Find the next available number.
+        existing = [
+            int(suffix)
+            for path in directory.glob(f"{prefix}_*.dot")
+            if (suffix := path.stem.removeprefix(f"{prefix}_")).isdigit()
+        ]
+        index = max(existing, default=-1) + 1
+
+        while True:
+            path = directory / f"{prefix}_{index:04d}.dot"
+            try:
+                with path.open("x", encoding="utf-8") as file:
+                    file.write(dot)
+                return path
+            except FileExistsError:
+                index += 1
+
 
 @dataclass
 class EvaluationRun(Generic[InputT]):
@@ -322,27 +423,45 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         super().__init__()
         self.graph = graph
 
+    def resolve_node_input(
+        self,
+        node_id: int,
+        run: EvaluationRun,
+    ) -> Any | Skipped:
+        """Resolve a root input or delegate a child's decision to its parent."""
+
+        node = self.graph.nodes[node_id]
+        inputs = run.state.assemble_node_inputs(node_id)
+
+        if node.parent is None:
+            return inputs[0] if len(inputs) == 1 else inputs
+
+        parent = self.graph.nodes[node.parent]
+        assert isinstance(parent, StartNode)
+        assert isinstance(parent.objective, StructuralComponent)
+        assert node.index is not None
+
+        parent_ctx = run.state.contexts[node.parent]
+        assert parent_ctx is not None
+
+        try:
+            return parent.objective.resolve_child_input(
+                node.index,
+                inputs,
+                parent_ctx,
+            )
+        except Exception as exception:
+            return Skipped(reason=exception)
+
     def execute_start_node(self, node_id: int, run: EvaluationRun) -> None:
         node = cast("StartNode", self.graph.nodes[node_id])
         component = node.objective
         assert isinstance(component, StructuralComponent)
 
-        # Check if we skip this node
-        exception: Exception | None = None
-        for source in node.inputs:
-            if source is ROOT:
-                continue
-
-            outcome = run.state.outcome(cast("int", source))
-            if isinstance(outcome, Exception):
-                exception = outcome
-                break
-
-        if exception is not None:
-            run.state.skip_subtree(node_id, exception)
+        component_input = self.resolve_node_input(node_id, run)
+        if isinstance(component_input, Skipped):
+            run.state.skip_subtree(node_id, component_input)
             return
-
-        component_input = run.state.assemble_node_input(node_id)
         component_ctx = run.state.contexts[node_id]
 
         # a start node and its end node need to share the same ctx
@@ -352,9 +471,14 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         try:
             # start lifecycle
-            component._begin_evaluation(component_input, component_ctx)  # noqa: SLF001
+            pre_eval_result = component._begin_evaluation(  # noqa: SLF001
+                component_input, component_ctx
+            )
         except Exception as e:
-            run.state.abort_scope(node_id, e)
+            pre_eval_result = e
+
+        if pre_eval_result is not None:
+            run.state.complete_scope_early(node_id, pre_eval_result)
             return
 
         # create component contexts
@@ -379,12 +503,12 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         except Exception as e:
             outcome = e
 
-        try:
+        # _end_evaluation() stores the finalized outcome in ctx.output,
+        # including post-hook replacements and failures.
+        with suppress(Exception):
             component._end_evaluation(outcome, component_ctx)  # noqa: SLF001
-        except Exception as e:
-            outcome = e
 
-        run.state.complete(node_id, outcome)
+        run.state.complete(node_id, component_ctx.output)
 
     def advance_host_nodes(self, run: EvaluationRun) -> None:
         """Execute all currently runnable host nodes."""
@@ -419,27 +543,23 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         tasks: list[NodeTask] = []
 
         for run in runs:
-            runnable_nodes = run.state.runnable_nodes()
+            while True:
+                # A skip can immediately unlock a structural finish node or
+                # another atomic child. Drain that synchronous progress before
+                # waiting for a backend completion.
+                self.advance_host_nodes(run)
+                skipped_any = False
 
-            for node_id in runnable_nodes:
-                node = self.graph.nodes[node_id]
-
-                if isinstance(node, AtomicNode):
-                    exception: Exception | None = None
-                    for source in node.inputs:
-                        if source is ROOT:
-                            continue
-
-                        outcome = run.state.outcome(cast("int", source))
-                        if isinstance(outcome, Exception):
-                            exception = outcome
-                            break
-
-                    if exception is not None:
-                        run.state.skip(node_id, exception)
+                for node_id in run.state.runnable_nodes():
+                    node = self.graph.nodes[node_id]
+                    if not isinstance(node, AtomicNode):
                         continue
 
-                    task_input = run.state.assemble_node_input(node_id)
+                    task_input = self.resolve_node_input(node_id, run)
+                    if isinstance(task_input, Skipped):
+                        run.state.skip(node_id, task_input)
+                        skipped_any = True
+                        continue
 
                     task_ctx = run.state.contexts[node_id]
                     assert task_ctx is not None
@@ -452,6 +572,9 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                             ctx=task_ctx,
                         )
                     )
+
+                if not skipped_any:
+                    break
         return tasks
 
     def result_if_complete(self, run: EvaluationRun) -> EvaluationResult | None:
@@ -524,6 +647,14 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                 if tasks:
                     self.submit_tasks(tasks, batch_state)
                     tasks_in_flight += len(tasks)
+
+                for run in runs:
+                    result = self.result_if_complete(run)
+                    if result is not None:
+                        yield result
+
+                if all(run.yielded for run in runs):
+                    break
 
                 # Wait for exactly one completion.
                 if tasks_in_flight:

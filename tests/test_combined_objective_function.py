@@ -18,11 +18,12 @@ def constant(value):
 
 
 def broken(_params):
-    raise RuntimeError("broken term")
+    msg = "broken term"
+    raise RuntimeError(msg)
 
 
 def test_empty_join_is_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="at least one component"):
         CombinedObjectiveFunction([])
 
 
@@ -30,7 +31,7 @@ def test_empty_join_is_rejected():
     "weights", [[1], [1, -1], [1, float("nan")], [1, float("inf")]]
 )
 def test_invalid_weights(weights):
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="weights"):
         CombinedObjectiveFunction([constant(1), constant(2)], weights=weights)
 
 
@@ -41,7 +42,6 @@ def test_weighted_join_and_contexts():
     assert cob({"x": 1}, ctx) == 23
     assert ctx.input == {"x": 1}
     assert ctx.output == 23
-    assert ctx.exception is None
     assert [c.output for c in ctx.incoming] == [2, 3]
     assert all(c.outgoing == (ctx,) for c in ctx.incoming)
     assert ctx.meta["skipped_indices"] == []
@@ -89,8 +89,8 @@ def test_default_exception_handler_raises():
     with pytest.raises(RuntimeError, match="broken term"):
         cob({}, ctx)
 
-    assert isinstance(ctx.exception, RuntimeError)
-    assert isinstance(ctx.incoming[1].exception, RuntimeError)
+    assert isinstance(ctx.output, RuntimeError)
+    assert isinstance(ctx.incoming[1].output, RuntimeError)
 
 
 @pytest.mark.parametrize(
@@ -112,7 +112,7 @@ def test_exception_replacement(handler, expected, skipped):
     else:
         assert result == expected
     assert ctx.meta["skipped_indices"] == skipped
-    assert isinstance(ctx.incoming[1].exception, RuntimeError)
+    assert isinstance(ctx.incoming[1].output, RuntimeError)
 
 
 def test_nested_join():

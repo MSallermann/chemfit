@@ -7,11 +7,16 @@ from loky import ProcessPoolExecutor
 
 from chemfit.abstract_objective_function import (
     NO_OUTPUT,
+    PARENT_INPUT,
+    SKIPPED,
     EvaluateContext,
     PipelineComponent,
+    Skipped,
+    StructuralComponent,
     component,
     quantity,
 )
+from chemfit.callgraph import call_graph_to_dot, objective_to_call_graph
 from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
     skip_exception_handler,
@@ -109,12 +114,14 @@ def test_successful_nested_pipeline_and_join(scheduler):
 
 def test_failed_atomic_stage_skips_downstream_stage(scheduler):
     @component()
-    def fail(x):
-        raise ValueError("atomic failure")
+    def fail(_x):
+        msg = "atomic failure"
+        raise ValueError(msg)
 
     @component()
-    def must_not_run(x):
-        raise AssertionError("downstream stage should have been skipped")
+    def must_not_run(_x):
+        msg = "downstream stage should have been skipped"
+        raise AssertionError(msg)
 
     objective = PipelineComponent(fail, must_not_run)
     ctx = EvaluateContext()
@@ -125,16 +132,16 @@ def test_failed_atomic_stage_skips_downstream_stage(scheduler):
     ):
         schedule(3, ctx)
 
-    assert isinstance(ctx.incoming[0].exception, ValueError)
-    assert str(ctx.incoming[0].exception) == "atomic failure"
+    assert isinstance(ctx.incoming[0].output, ValueError)
+    assert str(ctx.incoming[0].output) == "atomic failure"
     assert ctx.incoming[1].output is NO_OUTPUT
-    assert ctx.incoming[1].exception is None
 
 
 def test_join_recovers_from_one_failed_term_and_runs_sibling(scheduler):
     @component()
-    def fail(x):
-        raise ValueError("term failure")
+    def fail(_x):
+        msg = "term failure"
+        raise ValueError(msg)
 
     @component()
     def succeed(x):
@@ -147,10 +154,9 @@ def test_join_recovers_from_one_failed_term_and_runs_sibling(scheduler):
     result, ctx = evaluate_graph(scheduler, objective, 4)
 
     assert result == 8
-    assert isinstance(ctx.incoming[0].exception, ValueError)
-    assert str(ctx.incoming[0].exception) == "term failure"
+    assert isinstance(ctx.incoming[0].output, ValueError)
+    assert str(ctx.incoming[0].output) == "term failure"
     assert ctx.incoming[1].output == 8
-    assert ctx.incoming[1].exception is None
 
 
 def test_failed_structural_begin_aborts_only_its_own_scope(scheduler):
@@ -158,26 +164,28 @@ def test_failed_structural_begin_aborts_only_its_own_scope(scheduler):
     calls = []
 
     @component()
-    def first_child(x):
-        raise AssertionError("first child should have been skipped")
+    def first_child(_x):
+        msg = "first child should have been skipped"
+        raise AssertionError(msg)
 
     @component()
-    def second_child(x):
-        raise AssertionError("second child should have been skipped")
+    def second_child(_x):
+        msg = "second child should have been skipped"
+        raise AssertionError(msg)
 
-    class FailingStartPipeline(PipelineComponent):
-        def _begin_evaluation(self, value, ctx):
-            super()._begin_evaluation(value, ctx)
-            raise RuntimeError("begin failure")
+    failed_branch = PipelineComponent(first_child, second_child)
 
-    failed_branch = FailingStartPipeline(first_child, second_child)
+    def fail_pre_hook(_ctx):
+        calls.append("begin hook")
+        msg = "begin failure"
+        raise RuntimeError(msg)
+
     failed_branch.register_eval_hook(
-        pre=lambda ctx: calls.append("begin hook"),
-        post=lambda ctx: calls.append("end hook"),
+        pre=fail_pre_hook, post=lambda _ctx: calls.append("end hook")
     )
 
     @component()
-    def healthy_sibling(x):
+    def healthy_sibling(_x):
         return 5
 
     objective = CombinedObjectiveFunction(
@@ -188,11 +196,10 @@ def test_failed_structural_begin_aborts_only_its_own_scope(scheduler):
 
     assert result == 5
     assert calls == ["begin hook", "end hook"]
-    assert isinstance(ctx.incoming[0].exception, RuntimeError)
-    assert str(ctx.incoming[0].exception) == "begin failure"
+    assert isinstance(ctx.incoming[0].output, RuntimeError)
+    assert str(ctx.incoming[0].output) == "begin failure"
     assert ctx.incoming[0].incoming == ()  # No child evaluations started.
     assert ctx.incoming[1].output == 5
-    assert ctx.incoming[1].exception is None
 
 
 def test_failed_input_skips_entire_nested_structural_component(scheduler):
@@ -200,21 +207,24 @@ def test_failed_input_skips_entire_nested_structural_component(scheduler):
     calls = []
 
     @component()
-    def fail(x):
-        raise ValueError("upstream failure")
+    def fail(_x):
+        msg = "upstream failure"
+        raise ValueError(msg)
 
     @component()
-    def inner_first(x):
-        raise AssertionError("inner first should have been skipped")
+    def inner_first(_x):
+        msg = "inner first should have been skipped"
+        raise AssertionError(msg)
 
     @component()
-    def inner_second(x):
-        raise AssertionError("inner second should have been skipped")
+    def inner_second(_x):
+        msg = "inner second should have been skipped"
+        raise AssertionError(msg)
 
     inner = PipelineComponent(inner_first, inner_second)
     inner.register_eval_hook(
-        pre=lambda ctx: calls.append("inner pre"),
-        post=lambda ctx: calls.append("inner post"),
+        pre=lambda _ctx: calls.append("inner pre"),
+        post=lambda _ctx: calls.append("inner post"),
     )
     objective = PipelineComponent(fail, inner)
     ctx = EvaluateContext()
@@ -225,9 +235,8 @@ def test_failed_input_skips_entire_nested_structural_component(scheduler):
     ):
         schedule(2, ctx)
 
-    assert isinstance(ctx.incoming[0].exception, ValueError)
+    assert isinstance(ctx.incoming[0].output, ValueError)
     assert ctx.incoming[1].output is NO_OUTPUT
-    assert ctx.incoming[1].exception is None
     assert ctx.incoming[1].incoming == ()
     assert calls == []
 
@@ -245,14 +254,15 @@ def test_structural_end_failure_is_reported_without_aborting_siblings(scheduler)
 
     failed_branch = PipelineComponent(first, second)
 
-    def fail_on_end(ctx):
+    def fail_on_end(_ctx):
         calls.append("failed branch post")
-        raise RuntimeError("end failure")
+        msg = "end failure"
+        raise RuntimeError(msg)
 
     failed_branch.register_eval_hook(post=fail_on_end)
 
     @component()
-    def healthy_sibling(x):
+    def healthy_sibling(_x):
         return 7
 
     objective = CombinedObjectiveFunction(
@@ -264,11 +274,125 @@ def test_structural_end_failure_is_reported_without_aborting_siblings(scheduler)
     assert result == 7
     assert calls == ["failed branch post"]
     assert [child.output for child in ctx.incoming[0].incoming] == [3, 6]
-    # A failed post-hook does not rewrite the successful evaluation context.
-    assert ctx.incoming[0].output == 6
-    assert ctx.incoming[0].exception is None
+    # A failed post-hook becomes the finalized outcome.
+    assert isinstance(ctx.incoming[0].output, RuntimeError)
+    assert str(ctx.incoming[0].output) == "end failure"
     assert ctx.incoming[1].output == 7
-    assert ctx.incoming[1].exception is None
+
+
+def test_pre_hook_short_circuit_and_post_hook_transform_match_direct_call(scheduler):
+    @component()
+    def must_not_run(value):
+        msg = f"child unexpectedly received {value}"
+        raise AssertionError(msg)
+
+    objective = PipelineComponent(must_not_run, must_not_run)
+    objective.register_eval_hook(pre=lambda _ctx: 4)
+    objective.register_eval_hook(post=lambda ctx: setattr(ctx, "output", 9))
+
+    direct_ctx = EvaluateContext()
+    graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
+
+    assert objective(2, direct_ctx) == graph_result == 9
+    assert direct_ctx.incoming == graph_ctx.incoming == ()
+    assert graph_ctx.output == 9
+
+
+def test_atomic_post_hook_recovery_is_used_by_downstream_component(scheduler):
+    @component()
+    def first(value):
+        msg = f"failed with {value}"
+        raise ValueError(msg)
+
+    first.register_eval_hook(post=lambda ctx: setattr(ctx, "output", 3 * ctx.input))
+
+    @component()
+    def second(value):
+        return value + 1
+
+    objective = PipelineComponent(first, second)
+    direct_result = objective(2)
+    graph_result, ctx = evaluate_graph(scheduler, objective, 2)
+
+    assert direct_result == graph_result == 7
+    assert [child.output for child in ctx.incoming] == [6, 7]
+
+
+def test_literal_and_resolution_skips_reach_structural_reducer(scheduler):
+    calls = []
+
+    @component()
+    def must_not_run(value):
+        calls.append(value)
+        return value
+
+    class SkipPolicy(StructuralComponent):
+        def components(self):
+            return (must_not_run, must_not_run)
+
+        def component_dependencies(self):
+            return ((), ())
+
+        def component_inputs(self):
+            return ((SKIPPED,), (PARENT_INPUT,))
+
+        def resolve_child_input(self, index, inputs, ctx):
+            if index == 1:
+                msg = "resolution failed"
+                raise ValueError(msg)
+            return super().resolve_child_input(index, inputs, ctx)
+
+        def combine_inputs(self):
+            return (0, 1, SKIPPED)
+
+        def combine_outcomes(self, outcomes, _ctx):
+            assert all(isinstance(outcome, Skipped) for outcome in outcomes)
+            return tuple(
+                None if outcome.reason is None else str(outcome.reason)
+                for outcome in outcomes
+            )
+
+    objective = SkipPolicy()
+    assert "Skipped" in call_graph_to_dot(objective_to_call_graph(objective))
+    direct_result = objective(3)
+    graph_result, ctx = evaluate_graph(scheduler, objective, 3)
+
+    assert direct_result == graph_result == (None, "resolution failed", None)
+    assert calls == []
+    assert [child.output for child in ctx.incoming] == [NO_OUTPUT, NO_OUTPUT]
+
+
+def test_finish_waits_for_children_not_selected_by_combine_inputs(scheduler):
+    @component()
+    def selected(value):
+        return value + 1
+
+    @component()
+    def unselected(value):
+        return value + 2
+
+    class SelectFirst(StructuralComponent):
+        def components(self):
+            return (selected, unselected)
+
+        def component_dependencies(self):
+            return ((), ())
+
+        def component_inputs(self):
+            # The data reference must create an ordering edge even though it
+            # is intentionally omitted from component_dependencies().
+            return ((PARENT_INPUT,), (0,))
+
+        def combine_inputs(self):
+            return (0,)
+
+        def combine_outcomes(self, outcomes, _ctx):
+            return outcomes[0]
+
+    result, ctx = evaluate_graph(scheduler, SelectFirst(), 3)
+
+    assert result == 4
+    assert [child.output for child in ctx.incoming] == [4, 6]
 
 
 def test_batch_mixed_success_and_failure_keeps_request_indices(scheduler):
@@ -277,7 +401,8 @@ def test_batch_mixed_success_and_failure_keeps_request_indices(scheduler):
     @component()
     def possibly_fail(x):
         if x < 0:
-            raise ValueError(f"bad input: {x}")
+            msg = f"bad input: {x}"
+            raise ValueError(msg)
         return 2 * x
 
     @component()
@@ -312,9 +437,8 @@ def test_batch_mixed_success_and_failure_keeps_request_indices(scheduler):
 
     for index in (1, 3):
         ctx = contexts[index]
-        assert isinstance(ctx.incoming[0].exception, ValueError)
+        assert isinstance(ctx.incoming[0].output, ValueError)
         assert ctx.incoming[1].output is NO_OUTPUT
-        assert ctx.incoming[1].exception is None
 
 
 def test_batch_recovered_failures_are_isolated_per_request(scheduler):
@@ -323,7 +447,8 @@ def test_batch_recovered_failures_are_isolated_per_request(scheduler):
     @component()
     def sometimes_fail(x):
         if x % 2 == 0:
-            raise ValueError(f"failed: {x}")
+            msg = f"failed: {x}"
+            raise ValueError(msg)
         return x
 
     @component()
@@ -359,10 +484,8 @@ def test_batch_recovered_failures_are_isolated_per_request(scheduler):
     for index, (value, ctx) in enumerate(zip(inputs, contexts, strict=True)):
         assert ctx.output == {0: 3, 1: 4, 2: 9, 3: 8}[index]
         assert ctx.incoming[1].output == 2 * value
-        assert ctx.incoming[1].exception is None
         if value % 2 == 0:
-            assert isinstance(ctx.incoming[0].exception, ValueError)
-            assert str(ctx.incoming[0].exception) == f"failed: {value}"
+            assert isinstance(ctx.incoming[0].output, ValueError)
+            assert str(ctx.incoming[0].output) == f"failed: {value}"
         else:
             assert ctx.incoming[0].output == value
-            assert ctx.incoming[0].exception is None

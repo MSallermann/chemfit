@@ -193,9 +193,10 @@ The main fluent families are:
   :meth:`~chemfit.abstract_objective_function.QuantityComputer.with_loss`,
   which ends the quantity-building chain and returns an objective term.
 - :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-  provides ``with_weights()``, ``with_reduction()``, ``with_aggregator()``, and
-  ``with_exception_handler()``. These return configured copies; reducer and
-  aggregator calls replace one another. See :ref:`combined_objective_functions`.
+  provides ``with_weights()``, ``with_reduction()``, and
+  ``with_exception_handler()``. These return configured copies. Reducers may
+  optionally accept ``ctx`` for access to nested outcomes; see
+  :ref:`combined_objective_functions`.
 - :class:`~chemfit.ase_objective_function.ASEComputer` provides
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_setup`,
   :meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_modifier`,
@@ -248,9 +249,9 @@ without context injection.
 
 The returned
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` also
-supports reducers, aggregators, exception handlers, child-context
-configuration, and fluent reconfiguration. Those semantics live in
-:ref:`combined_objective_functions` rather than being repeated here.
+supports reducers, exception handlers, nested-context inspection, and fluent
+reconfiguration. Those semantics live in :ref:`combined_objective_functions`
+rather than being repeated here.
 
 Batch evaluation and term execution
 -----------------------------------

@@ -1,3 +1,4 @@
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -5,6 +6,7 @@ from typing import Any
 from chemfit.abstract_objective_function import (
     ObjectiveComponent,
     ParentInput_,
+    Skipped,
     StructuralComponent,
 )
 
@@ -22,14 +24,11 @@ class GraphNode:
     outgoing: tuple[int, ...] = ()
     incoming: tuple[int, ...] = ()
 
-    # Input source, ROOT for the root parameters of
-    # of the evaluation
-    # or a node id for the output of a component
-    # if the tuple contains more than one element
-    # a tuple of inputs is passed
-    # If it contains exactly one element that element
-    # is passed without the surrounding tuple
-    inputs: tuple[int | Root_, ...] = ()
+    # Inputs are the root value, completed node outcomes, or literal skips.
+    inputs: tuple[int | Root_ | Skipped, ...] = ()
+
+    parent: int | None = None
+    index: int | None = None
 
     def __repr__(self) -> str:
         return f"{type(self)}: id={self.id}, obj={type(self.objective)}"
@@ -66,24 +65,33 @@ def objective_to_call_graph(
         """Record that ``source`` must execute before ``target``."""
 
         a, b = nodes[source], nodes[target]
+        if target in a.outgoing:
+            return
         nodes[source].outgoing = (*a.outgoing, target)
         nodes[target].incoming = (*b.incoming, source)
 
-    def add_input(source: int | Root_, target: int) -> None:
-        """
-        ``source``'s output is an input to ``target``.
-
-        Only call this after calling ``connect(source,target)``
-        """
+    def add_input(source: int | Root_ | Skipped, target: int) -> None:
+        """Add a data source and its execution dependency, when applicable."""
 
         tgt_node = nodes[target]
 
-        if not isinstance(source, Root_):
-            src_node = nodes[source]
-            assert target in src_node.outgoing
-            assert source in tgt_node.incoming
+        if isinstance(source, int):
+            connect(source, target)
 
         nodes[target].inputs = (*tgt_node.inputs, source)
+
+    def graph_source(
+        source: int | ParentInput_ | Skipped,
+        start_id: int,
+        component_end_ids: list[int],
+    ) -> int | Skipped:
+        """Translate a structural input source into a graph input source."""
+
+        if isinstance(source, ParentInput_):
+            return start_id
+        if isinstance(source, Skipped):
+            return source
+        return component_end_ids[source]
 
     def add(
         component: ObjectiveComponent[Any, Any],
@@ -139,18 +147,23 @@ def objective_to_call_graph(
         ####################################
 
         # 1. The contained components depend on the start node
-        for comp_start_id in component_start_ids:
+        for idx, comp_start_id in enumerate(component_start_ids):
             connect(start_id, comp_start_id)
+            nodes[comp_start_id].parent = start_id
+            nodes[comp_start_id].index = idx
 
-        # 2. the end node depends on the contained components
-        # and receives their input
-        combine_inputs = component.combine_inputs()
-        for i in combine_inputs:
-            source: int = (
-                start_id if isinstance(i, ParentInput_) else component_end_ids[i]
-            )
-            connect(source, end_id)
-            add_input(source, end_id)
+        # 2. The finish node waits for the scope to begin and for every
+        # immediate child, even when the reducer selects only a subset of
+        # their outcomes.
+        connect(start_id, end_id)
+
+        # The finish node waits for every immediate child, even when the
+        # reducer selects only a subset of their outcomes.
+        for component_end_id in component_end_ids:
+            connect(component_end_id, end_id)
+
+        for source in component.combine_inputs():
+            add_input(graph_source(source, start_id, component_end_ids), end_id)
 
         # 3. hook up incoming/outgoing for the contained components
         # ... query component dependencies from the containing structural component
@@ -164,10 +177,10 @@ def objective_to_call_graph(
                 connect(component_end_ids[d], comp_start_id)
 
             for i in component_inputs[idx]:
-                source: int = (
-                    start_id if isinstance(i, ParentInput_) else component_end_ids[i]
+                add_input(
+                    graph_source(i, start_id, component_end_ids),
+                    comp_start_id,
                 )
-                add_input(source, comp_start_id)
 
         # return the start and end id of the structural component
         return start_id, end_id
@@ -178,14 +191,14 @@ def objective_to_call_graph(
     return CallGraph(nodes=tuple(nodes), root_id=start_id, result_id=end_id)
 
 
-def call_graph_to_dot(
+def call_graph_to_dot(  # noqa: PLR0912
     graph: CallGraph,
     dot_output_path: Path | str | None = None,
     svg_output_path: Path | str | None = None,
     path_to_dot_exec: Path = Path("dot"),
 ) -> str:
     """Generate a Graphviz DOT representation of a CallGraph."""
-    import subprocess
+    import subprocess  # noqa: PLC0415
 
     lines = [
         "digraph CallGraph {",
@@ -207,7 +220,7 @@ def call_graph_to_dot(
         if node.id in (graph.root_id, graph.result_id):
             attributes.append("penwidth=2")
 
-        lines.append(f'    n{node.id} [{", ".join(attributes)}];')
+        lines.append(f"    n{node.id} [{', '.join(attributes)}];")
 
     # Execution dependencies
     for node in graph.nodes:
@@ -217,22 +230,27 @@ def call_graph_to_dot(
     # Dataflow
     for node in graph.nodes:
         for index, source in enumerate(node.inputs):
-            source_id = "ROOT" if isinstance(source, Root_) else f"n{source}"
+            if isinstance(source, Root_):
+                source_id = "ROOT"
+            elif isinstance(source, Skipped):
+                source_id = f"skipped_{node.id}_{index}"
+                reason = "" if source.reason is None else f"\\n{source.reason!r}"
+                lines.append(
+                    f"    {source_id} "
+                    f"[shape=ellipse, label={json.dumps('Skipped' + reason)}];"
+                )
+            else:
+                source_id = f"n{source}"
 
             attributes = ["style=dashed", "color=blue"]
 
             if len(node.inputs) > 1:
                 attributes.append(f'label="{index}"')
 
-            lines.append(
-                f"    {source_id} -> n{node.id} "
-                f'[{", ".join(attributes)}];'  # noqa: ISC001
-            )
+            lines.append(f"    {source_id} -> n{node.id} [{', '.join(attributes)}];")
 
     # Final output
-    lines.append(
-        f"    n{graph.result_id} -> RESULT " "[style=dashed, color=blue];" # noqa: ISC001
-    )
+    lines.append(f"    n{graph.result_id} -> RESULT [style=dashed, color=blue];")
 
     lines.append("}")
     res = "\n".join(lines)
@@ -246,7 +264,7 @@ def call_graph_to_dot(
                 "Have to set `dot_output_path` if `svg_output_path` is set."  # noqa: EM101
             )
 
-        subprocess.run(
+        subprocess.run(  # noqa: S603
             [
                 path_to_dot_exec,
                 "-Tsvg",

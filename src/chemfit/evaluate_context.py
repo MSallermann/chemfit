@@ -27,10 +27,9 @@ class EvaluateContext:
         This makes evaluation easier to reason about and
         compatible with concurrent execution.
 
-        The context may also own a single batch of child contexts representing
-        nested sub-evaluations. Such child contexts can be created explicitly
-        with ``spawn_children()`` or managed with the ``child_contexts()``
-        context manager.
+        Structural evaluations link their component contexts through
+        ``incoming`` and ``outgoing``. Opaque pipelines record their ordered
+        stage contexts in ``pipeline``.
 
         Args:
             config:
@@ -55,11 +54,6 @@ class EvaluateContext:
                 Child-local evaluation configuration for this context.
             shared:
                 Shared state or resources reused across related contexts.
-            children (tuple[EvaluateContext, ...]): Child contexts in creation
-                order. The tuple cannot be used to modify the topology.
-            parents (tuple[EvaluateContext, ...]): Parent contexts. Current
-                evaluation structures are trees, but this tuple permits future
-                contexts to have multiple parents.
 
         """
 
@@ -70,14 +64,13 @@ class EvaluateContext:
         Return a dictionary summarizing the evaluation state.
 
         Args:
-            recursive: If ``True``, include recursive summaries of child
-                contexts in creation order under ``"children"``. If ``False``,
-                summarize only this context.
+            recursive: If ``True``, recursively summarize incoming and opaque
+                pipeline contexts. If ``False``, summarize only this context.
 
         Returns:
-            dict[str, Any]: A dictionary containing the fields
-            ``quantities``, ``parameters``, ``loss``, and ``meta``. Recursive
-            summaries additionally contain ``children``.
+            Dictionary containing ``input``, ``output``, and ``meta``.
+            Recursive summaries may additionally contain ``incoming`` and
+            ``pipeline``.
 
         """
         summary = {
@@ -108,7 +101,6 @@ class EvaluateContext:
         self.pipeline: list[EvaluateContext] = []
         self._incoming: list[EvaluateContext] = []
         self._outgoing: list[EvaluateContext] = []
-        self.exception: BaseException | None = None
 
     def _reset_evaluation_state(self) -> None:
         """Clear per-call results while preserving configuration and shared state."""
@@ -118,7 +110,6 @@ class EvaluateContext:
         self.temp = SimpleNamespace()
         self.meta = {}
         self.pipeline = []
-        self.exception = None
 
     def spawn_ctx(self) -> EvaluateContext:
         return EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
@@ -195,7 +186,6 @@ class EvaluateContext:
             "input": self.input,
             "output": self.output,
             "meta": self.meta,
-            "exception": self.exception,
             "pipeline": [p.to_result_state() for p in self.pipeline],
         }
 
@@ -208,7 +198,7 @@ class EvaluateContext:
                 State previously produced by ``to_result_state()``.
 
         Side Effects:
-            Updates input, output, exception, and metadata on this context and
+            Updates input, output, and metadata on this context and
             restores result state on opaque-pipeline descendants.
 
         """
@@ -216,7 +206,6 @@ class EvaluateContext:
         self.input = state["input"]
         self.output = state["output"]
         self.meta = state["meta"]
-        self.exception = state["exception"]
         pipeline_states = state["pipeline"]
 
         if len(self.pipeline) != len(pipeline_states):

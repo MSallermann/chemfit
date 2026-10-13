@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from typing import Any, Generic, Protocol, TypeAlias, cast
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
@@ -13,7 +14,7 @@ from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext, NoOutput
 class PreEvaluationHook(Protocol):
     """Callback that runs before an objective evaluation."""
 
-    def pre_eval(self, ctx: EvaluateContext) -> None:
+    def pre_eval(self, ctx: EvaluateContext) -> None | Any:
         """Run before the objective evaluation."""
         ...
 
@@ -24,29 +25,6 @@ class PostEvaluationHook(Protocol):
     def post_eval(self, ctx: EvaluateContext) -> None:
         """Run after the objective evaluation."""
         ...
-
-
-class PostEvalHookError(RuntimeError):
-    """
-    Report failures raised by one or more post-evaluation hooks.
-
-    Attributes:
-        exceptions: Exceptions raised by the post-evaluation hooks, in
-            hook registration order.
-
-    """
-
-    def __init__(self, exceptions: list[Exception]) -> None:
-        """Initialize."""
-        self.exceptions = tuple(exceptions)
-        msg = f"{len(exceptions)} post-evaluation hook(s) failed:\n"
-        for e in self.exceptions:
-            msg += f"{e}\n"
-
-        super().__init__(msg)
-
-    def __reduce__(self):
-        return type(self), (list(self.exceptions),)
 
 
 EvaluationHook = PreEvaluationHook | PostEvaluationHook
@@ -60,7 +38,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
     def __init__(self) -> None:
         """Initialize a generic objective component."""
 
-        self.pre_eval_hooks: list[Callable[[EvaluateContext], None]] = []
+        self.pre_eval_hooks: list[Callable[[EvaluateContext], None | OutputT_co]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
         self._ctx_configurator: (
             Callable[Concatenate[EvaluateContext, ...], None] | None
@@ -134,7 +112,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         self,
         *,
         hook: EvaluationHook | None = None,
-        pre: Callable[[EvaluateContext], None] | None = None,
+        pre: Callable[[EvaluateContext], None | OutputT_co] | None = None,
         post: Callable[[EvaluateContext], None] | None = None,
         recursive: bool = False,
     ) -> Self:
@@ -180,31 +158,36 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
         return self
 
-    def _invoke_post_eval_hooks(
-        self, ctx: EvaluateContext, evaluation_failed: bool
-    ) -> None:
+    def _invoke_post_eval_hooks(self, ctx: EvaluateContext) -> None:
         """Invoke the post evaluation hooks."""
-        post_hook_exceptions = []
+
         for cb in self.post_eval_hooks:
             try:
                 cb(ctx)
             except Exception as e:  # noqa: PERF203
-                post_hook_exceptions.append(e)
-
-        if not evaluation_failed and post_hook_exceptions:
-            raise PostEvalHookError(post_hook_exceptions)
+                ctx.output = e
+                raise
 
     def _begin_evaluation(
         self,
         input_: InputT_contra,
         /,
         ctx: EvaluateContext,
-    ) -> None:
+    ) -> None | OutputT_co:
         ctx._reset_evaluation_state()  # noqa: SLF001
         self._apply_ctx_configurator(ctx)
         ctx.input = input_
+
+        result: None | OutputT_co = None
         for hook in self.pre_eval_hooks:
-            hook(ctx)
+            r = hook(ctx)
+            if r is not None:
+                if result is not None:
+                    msg = "More than one pre-eval hooks returned a value."
+                    raise ValueError(msg)
+                result = r
+
+        return result
 
     def _run(
         self,
@@ -216,25 +199,19 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
     def _end_evaluation(
         self,
-        outcome: OutputT_co | NoOutput | BaseException,
+        outcome: OutputT_co | NoOutput | Exception,
         /,
         ctx: EvaluateContext,
-    ) -> None:
+    ) -> OutputT_co:
         ctx.meta.update(self.static_meta_data)
 
-        if isinstance(outcome, BaseException):
-            ctx.output = NO_OUTPUT
-            ctx.exception = outcome
-            evaluation_failed = True
-        else:
-            ctx.output = outcome
-            ctx.exception = None
-            evaluation_failed = False
+        ctx.output = outcome
+        self._invoke_post_eval_hooks(ctx)
 
-        self._invoke_post_eval_hooks(
-            ctx,
-            evaluation_failed=evaluation_failed,
-        )
+        if isinstance(ctx.output, Exception):
+            raise ctx.output
+
+        return cast("OutputT_co", ctx.output)
 
     def __call__(
         self, input_: InputT_contra, /, ctx: EvaluateContext | None = None
@@ -243,15 +220,15 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
             ctx = self._create_context()
 
         try:
-            self._begin_evaluation(input_, ctx=ctx)
-            result = self._run(input_, ctx)
-        except BaseException as e:
-            self._end_evaluation(e, ctx)
-            raise
-        else:
-            self._end_evaluation(result, ctx)
+            pre_eval_result = self._begin_evaluation(input_, ctx=ctx)
+            if pre_eval_result is None:
+                result = self._run(input_, ctx)
+            else:
+                result = pre_eval_result
+        except Exception as e:
+            result = e
 
-        return result
+        return self._end_evaluation(result, ctx)
 
 
 MiddleT = TypeVar("MiddleT")
@@ -400,23 +377,56 @@ def component(
 ComponentExpr = ObjectiveComponent[InputT_contra, OutputT_co]
 
 
-class ParentInput_: ...  # noqa: N801
+class ParentInput_:  # noqa: N801
+    """Sentinel referring to the input of the enclosing structural component."""
 
 
 PARENT_INPUT = ParentInput_()
 
-InputSource: TypeAlias = int | ParentInput_
+
+@dataclass(frozen=True)
+class Skipped:
+    """
+    Represent an evaluation that was not executed.
+
+    Args:
+        reason: Optional exception responsible for skipping the evaluation.
+            None indicates that the evaluation was skipped without an error.
+
+    """
+
+    reason: Exception | None = None
+
+
+SKIPPED = Skipped()
+
+InputSource: TypeAlias = int | ParentInput_ | Skipped
 
 
 class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
+    """
+    Base class for objective components composed of other components.
+
+    Structural components declare their children, their dependencies, and
+    the sources of their inputs. They also control whether individual
+    children execute and how their outcomes are combined.
+
+    Child outcomes may be successful values, exceptions, or Skipped
+    instances. A skipped child does not execute its evaluation lifecycle.
+
+    The reference implementation in _run() evaluates children sequentially
+    in topological order. Graph schedulers may evaluate independent children
+    concurrently, but must preserve the same evaluation semantics.
+    """
+
     def components(
         self,
     ) -> Sequence[ComponentExpr[Any, Any]]:
         """
         Return the immediate child components in topological order.
 
-        Dependencies must always precede their consumers. The returned order
-        also determines the indices used by the other structural methods.
+        Dependencies must precede their consumers. The returned order
+        determines the indices used by the other structural methods.
         """
         raise NotImplementedError
 
@@ -427,30 +437,85 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         Return the dependencies of each child component.
 
         Each entry contains the indices of the children that must complete
-        before the corresponding child can execute. An empty tuple indicates
-        that the child has no dependencies and may execute immediately.
+        before the corresponding child can be considered for execution.
 
-        The scheduler uses this information to determine execution order
-        and which components can run concurrently.
+        An empty tuple indicates that the child has no dependencies and
+        may execute immediately.
+
+        Dependencies determine execution order and concurrency. They do
+        not determine whether a child should be skipped.
         """
         raise NotImplementedError
 
     def component_inputs(self) -> tuple[tuple[InputSource, ...], ...]:
         """
-        Declare the input sources for each component.
+        Declare the input sources for each child component.
 
-        Each outer tuple entry corresponds to a component in components().
+        Each outer tuple corresponds to a child in components().
 
-        PARENT_INPUT means the input received by this structural component.
-        An integer refers to the
+        Input sources may be:
+
+        - PARENT_INPUT: The input of this structural component.
+        - int: The outcome of the child at that index.
+        - Skipped: An explicitly skipped input.
+
+        Referenced child outcomes must be available before the consuming
+        child is evaluated.
         """
         raise NotImplementedError
 
+    def resolve_child_input(
+        self,
+        index: int,  # noqa: ARG002
+        inputs: tuple[Any, ...],
+        ctx: EvaluateContext,  # noqa: ARG002
+    ) -> Any | Skipped:
+        """
+        Resolve the input of a child or decide to skip its evaluation.
+
+        Called after the child's declared dependencies have completed
+        and its input sources have been assembled.
+
+        Args:
+            index: Index of the child in components().
+            inputs: Values obtained from component_inputs(). These may
+                include successful results, exceptions, or Skipped instances.
+            ctx: Evaluation context of the enclosing structural component.
+
+        Returns:
+            The input to pass to the child, or a Skipped instance to
+            prevent its evaluation.
+
+        Notes:
+            By default, a child is skipped if any input is an exception or
+            Skipped instance. Existing skip reasons are propagated, and
+            exceptions are preserved as skip reasons.
+
+            Subclasses may override this method to implement different
+            execution policies, including conditional execution or recovery
+            from failed dependencies.
+
+        """
+        for value in inputs:
+            if isinstance(value, Skipped):
+                return value
+
+            if isinstance(value, Exception):
+                return Skipped(reason=value)
+
+        # Preserve the usual convention that a single input is unpacked,
+        # while multiple inputs are passed as a tuple.
+        return inputs[0] if len(inputs) == 1 else inputs
+
     def combine_inputs(self) -> tuple[InputSource, ...]:
         """
-        Input sources passed to combine_outcomes().
+        Declare the input sources passed to combine_outcomes().
 
-        Default simply passes all of them.
+        By default, all immediate child outcomes are passed in component
+        order.
+
+        Subclasses may select a subset of child outcomes, the parent
+        input, or explicitly skipped values.
         """
         return tuple(range(len(self.components())))
 
@@ -460,75 +525,121 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         ctx: EvaluateContext,
     ) -> OutputT_co:
         """
-        Combine child outcomes into the structural component's result.
+        Combine the selected outcomes into the structural component's result.
 
-        Called after the required child evaluations have completed.
-        Outcomes may contain exceptions, allowing implementations to
-        handle individual child failures.
+        Called after the required child evaluations have completed or
+        been skipped.
 
         Args:
-            outcomes: Child outcomes in the order of child_components().
+            outcomes: Values selected by combine_inputs(). These may
+                contain successful results, exceptions, or Skipped instances.
             ctx: Evaluation context of this structural component.
 
         Returns:
             The combined result.
 
         Raises:
-            Exception: If the child outcomes cannot produce a valid result.
+            Exception: If the available outcomes cannot produce a valid
+                result.
+
+        Notes:
+            The structural component is responsible for interpreting skipped
+            outcomes. Skipping does not necessarily indicate a failure.
 
         """
         raise NotImplementedError
 
-    def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
+    def _run(
+        self,
+        input_: InputT_contra,
+        /,
+        ctx: EvaluateContext,
+    ) -> OutputT_co:
+        """
+        Evaluate the structural component using reference call semantics.
+
+        Children are considered sequentially in topological order.
+        Independent children may be evaluated concurrently by graph
+        schedulers implementing the same structural interface.
+
+        Each child either produces a value, raises an exception, or is
+        skipped. Exceptions from child evaluation or input resolution
+        are recorded as child outcomes.
+
+        Skipped children do not invoke their evaluation lifecycle and
+        retain their initial context state.
+        """
         components = self.components()
         input_specs = self.component_inputs()
 
+        # Create child contexts before evaluating any children.
+        # This preserves the context structure even for skipped children.
         child_ctxs = [ctx.spawn_ctx() for _ in components]
+
         for child_ctx in child_ctxs:
             ctx.add_incoming(child_ctx)
 
-        # Children are in topological order, so all dependencies
-        # of a child have completed before it is evaluated.
+        # Store one outcome per child, including skipped evaluations.
         outcomes: list[Any] = [NO_OUTPUT] * len(components)
 
+        def resolve_source(source: InputSource) -> Any:
+            """Resolve an input source against completed child outcomes."""
+            if source is PARENT_INPUT:
+                return input_
+
+            if isinstance(source, Skipped):
+                return source
+
+            return outcomes[cast("int", source)]
+
+        # Children are in topological order, so all declared input
+        # sources must already be available when a child is considered.
         for idx, (comp, child_ctx, sources) in enumerate(
             zip(components, child_ctxs, input_specs, strict=True)
         ):
-            try:
-                # Construct the input using completed dependency outcomes.
-                inputs = [
-                    input_ if source is PARENT_INPUT else outcomes[cast("int", source)]
-                    for source in sources
-                ]
-                for value in inputs:
-                    if isinstance(value, Exception):
-                        raise value
-                child_input = inputs[0] if len(inputs) == 1 else tuple(inputs)
-                outcomes[idx] = comp(child_input, child_ctx)
+            inputs = tuple(resolve_source(source) for source in sources)
 
-            except Exception as e:  # noqa: PERF203
+            try:
+                child_input = self.resolve_child_input(idx, inputs, ctx)
+            except Exception as e:
+                child_input = Skipped(reason=e)
+
+            if isinstance(child_input, Skipped):
+                outcomes[idx] = child_input
+                continue
+
+            try:
+                outcomes[idx] = comp(child_input, child_ctx)
+            except Exception as e:
                 outcomes[idx] = e
 
-        combine_sources = self.combine_inputs()
+        # Only pass the sources explicitly selected by combine_inputs().
+        # Skipped outcomes retain their optional reasons.
         combine_inputs = tuple(
-            input_ if source is PARENT_INPUT else outcomes[cast("int", source)]
-            for source in combine_sources
+            resolve_source(source) for source in self.combine_inputs()
         )
+
         return self.combine_outcomes(combine_inputs, ctx)
 
 
 class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
-    def __init__(self, components: tuple[ObjectiveComponent[InputT_contra, Any], ...]):
+    """Base class for independently evaluated child components."""
+
+    def __init__(
+        self,
+        components: tuple[ObjectiveComponent[InputT_contra, Any], ...],
+    ) -> None:
         """Initialize a nonempty collection of independent components."""
         super().__init__()
 
-        self._components = components
-
-        if not self._components:
+        if not components:
             msg = "Need at least one component to construct a joined Component"
             raise ValueError(msg)
 
-    def n_components(self):
+        self._components = components
+
+    def n_components(self) -> int:
+        """Return the number of child components."""
         return len(self._components)
 
     def components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
@@ -536,40 +647,53 @@ class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
         return self._components
 
     def component_dependencies(self) -> tuple[tuple[int, ...], ...]:
-        """All components are independent."""
+        """All children are independent and may execute concurrently."""
         return tuple(() for _ in self._components)
 
-    def component_inputs(
-        self,
-    ) -> Any:
-        """All components receive the parent input."""
-        return tuple((PARENT_INPUT,) for _ in self.components())
+    def component_inputs(self) -> tuple[tuple[InputSource, ...], ...]:
+        """Every child receives the parent component's input."""
+        return tuple((PARENT_INPUT,) for _ in self._components)
 
     def combine_outcomes(
         self,
-        outcomes: Sequence[Any | Exception | NoOutput],
+        outcomes: tuple[Any, ...],
         ctx: EvaluateContext,
     ) -> OutputT_co:
-        """Simply return the tuple of outcomes."""
+        """
+        Combine the independently evaluated child outcomes.
+
+        Outcomes may contain successful values, exceptions, or Skipped
+        instances. Subclasses define how these are combined.
+        """
         raise NotImplementedError
 
 
 class TupleJoinedComponent(JoinedComponent[InputT_contra, tuple[Any, ...]]):
+    """Evaluate independent components and collect their outcomes in a tuple."""
+
     def combine_outcomes(
         self,
-        outcomes: Sequence[Any],
+        outcomes: tuple[Any, ...],
         ctx: EvaluateContext,  # noqa: ARG002
     ) -> tuple[Any, ...]:
-        return tuple(outcomes)
+        """
+        Return the child outcomes in their declared order.
+
+        Exceptions and skipped evaluations are preserved as entries
+        rather than raised or discarded.
+        """
+        return outcomes
 
 
 class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
+    """Evaluate components sequentially, passing each result to the next."""
+
     def __init__(
         self,
         first: ObjectiveComponent[InputT_contra, MiddleT],
         second: ObjectiveComponent[MiddleT, OutputT_co],
     ) -> None:
-        """Create a structural sequence of two components."""
+        """Initialize a pipeline containing two components."""
         super().__init__()
         self._components: list[ObjectiveComponent[Any, Any]] = [first, second]
 
@@ -577,33 +701,60 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
         self,
         next_component: ObjectiveComponent[OutputT_co, NextT],
     ) -> PipelineComponent[InputT_contra, NextT]:
+        """Return a copy of the pipeline with an additional final component."""
         new = self.copy()
         new._components = [*self._components, next_component]  # noqa: SLF001
-        return cast("PipelineComponent[InputT_contra,NextT]", new)
+        return cast("PipelineComponent[InputT_contra, NextT]", new)
 
-    def components(self):
+    def components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+        """Return the components in execution order."""
         return self._components
 
-    def component_dependencies(self):
+    def component_dependencies(self) -> tuple[tuple[int, ...], ...]:
+        """Each component depends on its immediate predecessor."""
         return tuple((i - 1,) if i else () for i in range(len(self._components)))
 
-    def component_inputs(self):
+    def component_inputs(self) -> tuple[tuple[InputSource, ...], ...]:
+        """
+        Pass the parent input to the first component.
+
+        Subsequent components receive their predecessor's outcome.
+        """
         return (
             (PARENT_INPUT,),
             *((i - 1,) for i in range(1, len(self._components))),
         )
 
     def combine_inputs(self) -> tuple[InputSource, ...]:
+        """Only the final component's outcome determines the pipeline result."""
         return (len(self._components) - 1,)
 
     def combine_outcomes(
         self,
-        outcomes: tuple[Any | Exception | NoOutput, ...],
+        outcomes: tuple[Any, ...],
         ctx: EvaluateContext,  # noqa: ARG002
-    ):
-        outcome = outcomes[-1]
+    ) -> OutputT_co:
+        """
+        Return the final component's outcome.
+
+        If the final component was skipped because of an upstream
+        exception, re-raise that original exception.
+
+        An intentional skip without an exception cannot produce
+        a pipeline result and therefore raises RuntimeError.
+        """
+        outcome = outcomes[0]
+
+        if isinstance(outcome, Skipped):
+            if outcome.reason is not None:
+                raise outcome.reason
+
+            msg = "Pipeline did not produce a result: final component was skipped."
+            raise RuntimeError(msg)
+
         if isinstance(outcome, Exception):
             raise outcome
+
         return cast("OutputT_co", outcome)
 
 

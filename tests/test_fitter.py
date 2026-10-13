@@ -60,7 +60,8 @@ def test_internal_schedule_is_reprepared_and_closed_per_session():
 
     fitter.init()
     second = fitter._schedule  # noqa: SLF001
-    assert second is not None and second is not first
+    assert second is not None
+    assert second is not first
     fitter.evaluate({"x": 2.0})
     fitter.finish()
     assert second.closed
@@ -69,7 +70,8 @@ def test_internal_schedule_is_reprepared_and_closed_per_session():
 def test_borrowed_schedule_remains_open_after_objective_failure():
     @component()
     def failing(_parameters):
-        raise ValueError("bad objective")
+        msg = "bad objective"
+        raise ValueError(msg)
 
     with SerialGraphScheduler().prepare(failing) as schedule:
         fitter = Fitter(schedule, initial_params={"x": 1.0})
@@ -92,7 +94,7 @@ def test_callbacks_run_on_intervals_and_the_final_partial_step():
     assert calls == [2, 3]
 
 
-@pytest.mark.parametrize("value", (math.nan, math.inf, "not-a-number"))
+@pytest.mark.parametrize("value", [math.nan, math.inf, "not-a-number"])
 def test_non_finite_or_non_numeric_results_use_the_penalty(value):
     fitter = Fitter(lambda _parameters: value, initial_params={"x": 1.0})
     fitter.init()
@@ -102,7 +104,8 @@ def test_non_finite_or_non_numeric_results_use_the_penalty(value):
 
 def test_swallowed_exception_uses_the_penalty_and_counts_the_evaluation():
     def failing(_parameters):
-        raise ValueError("bad parameters")
+        msg = "bad parameters"
+        raise ValueError(msg)
 
     fitter = Fitter(
         failing,
@@ -133,11 +136,11 @@ def test_nevergrad_accepts_partial_explicit_parameterization():
 
 @pytest.mark.parametrize(
     ("action", "message"),
-    (
+    [
         (lambda fitter: fitter.init(batch_size=0), "batch_size"),
         (lambda fitter: fitter.evaluate({"x": 1.0}), "init"),
         (lambda fitter: fitter.step(), "init"),
-    ),
+    ],
 )
 def test_session_validation(action, message):
     fitter = Fitter(square, initial_params={"x": 1.0})
