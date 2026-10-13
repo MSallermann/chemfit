@@ -80,7 +80,7 @@ The remainder of this page documents that object's complete framework API.
 The terms do not need to be plain functions. Generic callables are accepted and
 wrapped internally. In practice many terms are instances of
 :py:class:`~chemfit.abstract_objective_function.ObjectiveComponent`, for example
-objectives constructed from quantity computers.
+objective terms returned by ``quantity_computer.with_loss(...)``.
 
 Fluent configuration
 --------------------
@@ -123,6 +123,20 @@ preserving the same context and reduction semantics.
 
 Third, it filters skipped terms and applies the configured reduction. The final
 result is stored in ``ctx.output``.
+
+The compiled call graph therefore fans out from the combined objective's begin
+phase and joins again for weighting and reduction. Each term shown below may
+be an opaque ``quantity.with_loss(...)`` pipeline, so its internal quantity and
+loss stages remain one atomic scheduler task:
+
+.. figure:: ../images/combined_objective_callgraph.svg
+   :alt: Call graph of a combined objective with three independent fitting terms
+   :width: 100%
+   :align: center
+
+   A representative combined objective. A graph scheduler may evaluate the
+   three atomic fitting terms concurrently before the finish phase reduces
+   their losses.
 
 If you pass an explicit context, the child evaluations are directly available
 through ``ctx.incoming``. That makes combined objectives useful not just for

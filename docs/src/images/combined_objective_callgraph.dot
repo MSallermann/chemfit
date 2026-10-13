@@ -1,0 +1,29 @@
+digraph CombinedObjective {
+    graph [
+        rankdir=LR,
+        bgcolor="#ffffff",
+        fontname="Helvetica",
+        nodesep=0.4,
+        ranksep=0.55,
+        pad=0.15
+    ];
+    node [shape=box, style="rounded,filled", fontname="Helvetica", margin="0.16,0.10"];
+    edge [fontname="Helvetica", color="#64748b", arrowsize=0.75];
+
+    parameters [shape=ellipse, fillcolor="#f8fafc", label="parameters"];
+    begin [fillcolor="#f1f5f9", label="Combined objective\nbegin"];
+    energy [fillcolor="#dbeafe", label="Atomic term\ndimer energy + loss"];
+    forces [fillcolor="#dbeafe", label="Atomic term\nforce matching + loss"];
+    density [fillcolor="#dbeafe", label="Atomic term\nliquid density + loss"];
+    finish [fillcolor="#f1f5f9", label="Weight and reduce\nfinish"];
+    result [shape=ellipse, fillcolor="#f8fafc", label="total loss"];
+
+    parameters -> begin;
+    begin -> energy;
+    begin -> forces;
+    begin -> density;
+    energy -> finish;
+    forces -> finish;
+    density -> finish;
+    finish -> result;
+}

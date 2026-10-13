@@ -364,8 +364,8 @@ The initialization lock is omitted during pickling and recreated when the
 computer is unpickled. This lets executor and MPI backends initialize geometry
 locally in each process.
 
-Turning a computer into an objective
-------------------------------------
+Creating an objective term
+--------------------------
 
 Like every component, an ``ASEComputer`` becomes an objective through
 :py:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`:

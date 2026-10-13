@@ -45,11 +45,13 @@ Compute, attach a loss, combine, fit
        batch_size=4,
    )
 
-``chemfit.quantity()`` produces a
-:class:`~chemfit.abstract_objective_function.WrappedComponent`, and ``with_loss()``
-turns each configured simulation into an
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent`. Here the two
-terms compare the same model with reference energies at different distances.
+``chemfit.quantity()`` wraps ``simulate`` as a
+:class:`~chemfit.abstract_objective_function.WrappedComponent`. It is already
+an :class:`~chemfit.abstract_objective_function.ObjectiveComponent`; its
+``parameters -> quantities`` contract gives it the role of a quantity
+computer. ``with_loss()`` returns a new ``parameters -> float`` pipeline, which
+has the role of an objective term. Here the two terms compare the same model
+with reference energies at different distances.
 ``chemfit.combine()`` joins them into a
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
@@ -117,8 +119,9 @@ scalar loss. Set ``pass_ctx=True`` when it needs the evaluation context:
 The decorators do not infer context use from the callable signature.
 ``pass_ctx=False`` is the default, in which case the wrapped callable receives
 only its parameter mapping plus arguments configured with ``bind``. The
-returned :class:`~chemfit.abstract_objective_function.WrappedComponent` participates in
-the full objective lifecycle described in :ref:`concepts`.
+returned :class:`~chemfit.abstract_objective_function.WrappedComponent`
+participates in the component evaluation lifecycle described in
+:ref:`concepts`.
 
 Fluent configuration and chaining
 ---------------------------------
@@ -353,7 +356,9 @@ directory and parsing lifecycle.
 Going deeper
 ------------
 
-The convenience helpers are entry points, not a separate object model:
+The convenience helpers are entry points, not a separate object model. See
+:ref:`component_vocabulary` for the precise distinction between a component,
+quantity computer, loss function, objective term, and combined objective.
 
 All of :func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`,
 :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>`, and

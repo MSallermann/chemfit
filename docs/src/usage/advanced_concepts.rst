@@ -4,10 +4,11 @@
 Advanced concepts
 #################
 
-The :ref:`concepts` page introduces quantity computers, objectives, and
-evaluation contexts. This page goes one level deeper: it explains the common
-component protocol, the difference between atomic and structural composition,
-and the two different kinds of pipeline used by ChemFit.
+The :ref:`component_vocabulary` section defines components, quantity
+computers, loss functions, and objectives. This page goes one level deeper: it
+explains the common component protocol, the difference between atomic and
+structural composition, and the two different kinds of pipeline used by
+ChemFit.
 
 These distinctions matter when an objective is executed by a graph scheduler.
 Ordinary Python nesting and graph-visible composition can calculate the same
@@ -16,8 +17,8 @@ topologies.
 
 -------------------------
 
-The general objective component
-===============================
+The general component abstraction
+=================================
 
 :class:`~chemfit.abstract_objective_function.ObjectiveComponent` is the
 general abstraction behind quantities, losses, objective terms, pipelines,
@@ -30,7 +31,8 @@ The input and output do not have to be parameter mappings and scalar losses.
 For example, a component may map parameters to quantities, quantities to a
 loss, or one intermediate representation to another. ``QuantityComputer`` is
 a typing alias for the first of those cases; it is not a separate runtime base
-class.
+class. Similarly, only components with a ``parameters -> float`` contract are
+objectives in the optimizer-facing sense.
 
 The :func:`chemfit.component()
 <chemfit.abstract_objective_function.component>` decorator turns an ordinary
@@ -114,6 +116,18 @@ A **structural component** publishes its immediate children and their data
 flow. The graph scheduler expands that description recursively and schedules
 the atomic leaves. The structural component's begin and finish phases preserve
 its own hooks, metadata, context, and result-combination policy.
+
+The scheduling boundary is the important difference. An opaque pipeline is
+submitted as one atomic node, whereas a structural pipeline exposes its
+stages between the parent's begin and finish phases:
+
+.. figure:: ../images/opaque_vs_structural.svg
+   :alt: Comparison of scheduler call graphs for opaque and structural pipelines
+   :width: 100%
+   :align: center
+
+   The same simulation-to-loss data flow represented by one opaque task
+   (left) and by graph-visible structural stages (right).
 
 This means that merely calling a component from another component's ``_run()``
 does not add a node to the scheduler's graph:
@@ -375,6 +389,87 @@ phase. Importantly, the failure is first captured as that child's outcome, so
 independent siblings can still complete. Alternative handlers may replace a
 failure with ``NaN`` or omit the failed term. The indices of omitted terms are
 recorded in the combined context's ``meta["skipped_indices"]``.
+
+-------------------------
+
+Composing pipelines and joins
+=============================
+
+Structural components can be nested. A useful fitting pattern is to run one
+expensive simulation, pass its quantities to several independent loss
+components, and then reduce those losses. This avoids repeating the simulation
+for every observable while keeping the loss branches visible to the scheduler:
+
+.. figure:: ../images/pipeline_join_callgraph.svg
+   :alt: Call graph of a structural pipeline containing a join
+   :width: 100%
+   :align: center
+
+   A pipeline containing a join. The shared simulation runs once; the energy
+   and force losses can then be evaluated independently.
+
+The general :func:`chemfit.join() <chemfit.api.join>` form returns the branch
+outcomes as a tuple, so a later pipeline stage decides how to interpret them:
+
+.. testcode::
+
+    @chemfit.component()
+    def simulate_pair(params):
+        epsilon = params["epsilon"]
+        return {"energy": -2.0 * epsilon, "forces": [epsilon, 0.0]}
+
+    @chemfit.objective()
+    def energy_loss(quantities):
+        return (quantities["energy"] - (-1.5)) ** 2
+
+    @chemfit.objective()
+    def force_loss(quantities):
+        reference = [0.8, 0.0]
+        return sum(
+            (predicted - expected) ** 2
+            for predicted, expected in zip(quantities["forces"], reference)
+        )
+
+    @chemfit.component()
+    def sum_losses(losses):
+        return sum(losses)
+
+    joined_losses = chemfit.join(energy_loss, force_loss)
+    joined_objective = chemfit.pipeline(
+        simulate_pair,
+        joined_losses,
+    ).then(sum_losses)
+
+    print(round(joined_objective({"epsilon": 1.0}), 2))
+
+.. testoutput::
+    :hide:
+
+    0.29
+
+Because :func:`chemfit.combine() <chemfit.api.combine>` is the specialized join
+for scalar objective terms, it can occupy the same pipeline position and apply
+weights, exception handling, and reduction directly:
+
+.. testcode::
+
+    combined_losses = chemfit.combine(
+        energy_loss,
+        force_loss,
+        weights=[1.0, 1.0],
+    )
+    combined_objective = chemfit.pipeline(simulate_pair, combined_losses)
+
+    print(round(combined_objective({"epsilon": 1.0}), 2))
+
+.. testoutput::
+    :hide:
+
+    0.29
+
+Use ``pipeline(simulation, combine(...))`` when the branches are scalar fitting
+terms with one final loss. Use ``pipeline(simulation, join(...)).then(...)``
+when the branch outputs are non-scalar or require a custom downstream stage.
 
 -------------------------
 

@@ -45,9 +45,11 @@ The top-level API expresses this workflow directly: use
 Underneath, these helpers operate on ChemFit's
 :class:`~chemfit.abstract_objective_function.ObjectiveComponent` and
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-abstractions. ``QuantityComputer`` is the typing alias for an objective
-component that maps a parameter dictionary to intermediate quantities, and a
-loss maps those quantities to a scalar objective value.
+abstractions. ``ObjectiveComponent`` is the general runtime base for every
+stage, not only complete scalar objectives. A quantity computer is a component
+that maps parameters to intermediate quantities; attaching a loss returns a
+new component that maps parameters to a scalar objective value. See
+:ref:`component_vocabulary` for the complete terminology.
 
 In practical workflows, the quantity computation may be performed by an
 ASE calculator, an external simulation pipeline, or custom Python code.
@@ -85,7 +87,8 @@ The :func:`~chemfit.abstract_objective_function.quantity` decorator turns this f
 :class:`~chemfit.abstract_objective_function.WrappedComponent` instance.
 
 The :meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`
-method combines a quantity computer with a loss function to form a complete objective.
+method returns an objective term that runs the quantity computer and then
+applies the loss function. The original quantity computer is unchanged.
 
 .. note::
 
