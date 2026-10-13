@@ -18,6 +18,8 @@ from chemfit.api import (
     evaluate_many,
     external_quantity,
     fit_nevergrad,
+    join,
+    pipeline,
 )
 from chemfit.combined_objective_function import (
     CombinedObjectiveFunction,
@@ -73,10 +75,12 @@ __all__ = [
     "evaluate_many",
     "external_quantity",
     "fit_nevergrad",
+    "join",
     "log_progress",
     "mean_reducer",
     "nan_exception_handler",
     "objective",
+    "pipeline",
     "quantity",
     "raising_exception_handler",
     "root_mean_reducer",
