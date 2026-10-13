@@ -34,7 +34,7 @@ InputT = TypeVar("InputT")
 
 class BatchState(SimpleNamespace):
     """
-    Hold backend-owned state for one :meth:`evaluate_many` invocation.
+    Hold backend-owned state for one graph-evaluation batch.
 
     The graph driver deliberately treats this object as opaque. Concrete
     schedules may attach queues, futures, request handles, or other temporary
@@ -148,9 +148,10 @@ class EvaluationState:
         Resolve a node's declared data sources to a tuple of raw values.
 
         Root references resolve to the request input, literal
-        :class:`Skipped` sources remain literal, and node references resolve to
-        completed slots. No policy is applied here: exceptions and skipped
-        values remain data for the containing structural component to inspect.
+        :class:`~chemfit.abstract_objective_function.Skipped` sources remain
+        literal, and node references resolve to completed slots. No policy is
+        applied here: exceptions and skipped values remain data for the
+        containing structural component to inspect.
 
         Args:
             node_id: Node whose input sources should be resolved.
@@ -403,7 +404,7 @@ class EvaluationState:
 
         Readiness is based on execution edges, not on whether dependency
         outcomes were successful. Failure and skip policy is applied later by
-        :meth:`StructuralComponent.resolve_child_input`.
+        :meth:`~chemfit.abstract_objective_function.StructuralComponent.resolve_child_input`.
 
         Returns:
             Node IDs in stable call-graph order.
@@ -626,9 +627,10 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         The graph root receives the caller's input directly. Every child node
         delegates to its structural parent, which may combine source values,
-        recover from failed dependencies, or return :class:`Skipped`. An
-        exception raised by that policy is converted to a skip reason because
-        input resolution happens before the child's lifecycle begins.
+        recover from failed dependencies, or return
+        :class:`~chemfit.abstract_objective_function.Skipped`. An exception
+        raised by that policy is converted to a skip reason because input
+        resolution happens before the child's lifecycle begins.
 
         Args:
             node_id: Start or atomic node whose input should be resolved.
@@ -673,7 +675,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         lifecycle.
 
         Args:
-            node_id: Runnable :class:`StartNode` identifier.
+            node_id: Runnable :class:`~chemfit.callgraph.StartNode` identifier.
             run: Evaluation run being advanced.
 
         """
@@ -725,7 +727,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         failures are stored as ordinary graph outcomes.
 
         Args:
-            node_id: Runnable :class:`FinishNode` identifier.
+            node_id: Runnable :class:`~chemfit.callgraph.FinishNode` identifier.
             run: Evaluation run being advanced.
 
         """

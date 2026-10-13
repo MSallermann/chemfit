@@ -27,7 +27,7 @@ class GraphNode:
     ``incoming`` and ``outgoing`` are execution-order edges. ``inputs`` is a
     separate ordered list of data sources consumed by the node. An integer
     input therefore normally also creates an execution edge, while a literal
-    :class:`Skipped` input does not.
+    :class:`~chemfit.abstract_objective_function.Skipped` input does not.
 
     ``parent`` and ``index`` identify the immediate structural component that
     owns this node. They are set on child start nodes so the scheduler can call
@@ -66,7 +66,8 @@ class StartNode(GraphNode):
 
     The scheduler resolves the component input, runs its begin lifecycle, and
     creates immediate child contexts at this node. A separate
-    :class:`FinishNode` later reduces child outcomes and runs the end lifecycle.
+    :class:`~chemfit.callgraph.FinishNode` later reduces child outcomes and runs
+    the end lifecycle.
     """
 
     paired_end_node_id: int = -1
@@ -113,7 +114,7 @@ def objective_to_call_graph(
     """
     Compile an objective hierarchy into execution and dataflow relationships.
 
-    Atomic components become a single :class:`AtomicNode`. Structural
+    Atomic components become a single :class:`~chemfit.callgraph.AtomicNode`. Structural
     components become a start/finish pair surrounding recursively compiled
     children. Splitting their lifecycle allows independent children to run in
     parallel while ensuring the structural reducer and post-hooks execute only

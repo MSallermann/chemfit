@@ -98,7 +98,7 @@ Calculator factories
 
 The calculator factory receives the current parameters, the per-evaluation
 atoms copy, and the current
-:py:class:`~chemfit.abstract_objective_function.EvaluateContext`. It returns a
+:py:class:`~chemfit.evaluate_context.EvaluateContext`. It returns a
 fresh configured calculator:
 
 .. code-block:: python
@@ -292,7 +292,7 @@ processors can replace values produced by earlier processors.
 Atoms factories, setup, and modifiers
 -------------------------------------
 
-An atoms factory takes no arguments and returns one :py:class:`ase.Atoms`
+An atoms factory takes no arguments and returns one ``ase.Atoms``
 object. :py:class:`~chemfit.ase_objective_function.PathAtomsFactory` reads a
 single structure using ASE:
 

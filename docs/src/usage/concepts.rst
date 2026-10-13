@@ -15,8 +15,8 @@ Most workflows begin with top-level helpers such as
 :func:`chemfit.combine() <chemfit.api.combine>`, and
 :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`.
 Those helpers operate on the objects described here: ``quantity()`` creates a
-:class:`~chemfit.abstract_objective_function.QuantityComputer`, ``combine()``
-returns a
+:class:`~chemfit.abstract_objective_function.WrappedComponent` that satisfies
+the ``QuantityComputer`` typing alias, ``combine()`` returns a
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`, and
 ``fit_nevergrad()`` drives them through :class:`~chemfit.fitter.Fitter` and a prepared
 :class:`~chemfit.scheduling.Scheduler`. This page explains that underlying
@@ -31,8 +31,10 @@ In ChemFit, an objective function is built from small, composable pieces.
 
 The basic building blocks are:
 
-- A :class:`~chemfit.abstract_objective_function.QuantityComputer`,
-  which computes intermediate quantities from a parameter dictionary.
+- A quantity computer—an
+  :class:`~chemfit.abstract_objective_function.ObjectiveComponent` matching the
+  ``QuantityComputer`` typing alias—which computes intermediate quantities
+  from a parameter dictionary.
 - A loss function, which maps these quantities to a scalar value.
 
 These two are combined into an :class:`~chemfit.abstract_objective_function.ObjectiveComponent`.
@@ -91,15 +93,16 @@ definition; see :ref:`parallel_execution`.
 Evaluation contexts
 ====================
 
-ChemFit uses an :class:`~chemfit.abstract_objective_function.EvaluateContext`
+ChemFit uses an :class:`~chemfit.evaluate_context.EvaluateContext`
 to store all per-evaluation state.
 
 A context is created for each evaluation and passed through the computation.
 
-It stores the component input, output or exception, metadata, and the context
-links created by structural compositions. A quantity component's ``output``
-is its quantities dictionary; a complete objective's ``output`` is its scalar
-loss.
+It stores the component input, finalized output, metadata, and the context
+links created by structural compositions. A failed component stores its
+exception in ``ctx.output``; there is no separate exception field. A quantity
+component's successful output is its quantities dictionary, while a complete
+objective's successful output is its scalar loss.
 
 Each evaluation has its own context, which avoids shared mutable state and
 makes parallel execution safe.
@@ -156,10 +159,11 @@ Conceptually:
                      ├── combined-objective context
     term 2 context ──┘
 
-Each incoming context stores its component's input, output, exception, and
-metadata. Pipelines additionally expose their ordered stage contexts through
-``pipeline``. This makes nested results inspectable without flattening or
-copying metadata into the root context.
+Each incoming context stores its component's input, finalized output, and
+metadata. A failed component's output is the exception object. Pipelines
+additionally expose their ordered stage contexts through ``pipeline``. This
+makes nested results inspectable without flattening or copying metadata into
+the root context.
 
 -------------------------
 
@@ -180,7 +184,6 @@ Metadata stays on the context whose component produced it. Inspect
 
 Static metadata belongs to a reusable computation or objective definition. Add
 it fluently with
-:py:meth:`~chemfit.abstract_objective_function.QuantityComputer.with_meta` or
 :py:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_meta`:
 
 .. code-block:: python
@@ -193,15 +196,13 @@ it fluently with
        .with_meta(observable="density")
    )
 
-``with_meta()`` returns a shallow configured copy, which makes it safe to branch
-from one base definition. Quantity-computer metadata generally describes the
-computation or its provenance, while objective metadata describes the fitting
-term. Both are merged into the evaluation's ``ctx.meta`` dictionary.
-
-Metadata precedence follows the evaluation lifecycle: existing context
-metadata is present first, quantity-computer metadata is applied next, and
-objective metadata is applied last. Objective metadata therefore wins if the
-computer and objective use the same key.
+``with_meta()`` returns a shallow configured copy, which makes it safe to
+branch from one base definition. Metadata belongs to the component on which it
+was configured and is merged into that component's context after ``_run()``
+and before post-hooks. Thus quantity-computer metadata in this example is
+stored on ``ctx.pipeline[0].meta`` and the metadata added after ``with_loss()``
+is stored on the root ``ctx.meta``. The scopes are not flattened, so identical
+keys at the two levels do not overwrite one another.
 
 Values discovered during a particular evaluation are dynamic metadata and
 should be written directly to ``ctx.meta`` by the evaluating callable or a
@@ -234,7 +235,7 @@ intended for advanced use cases and custom objective implementations.
 Parallel evaluations require separate contexts
 ===============================================
 
-An :class:`~chemfit.abstract_objective_function.EvaluateContext` stores
+An :class:`~chemfit.evaluate_context.EvaluateContext` stores
 the state of exactly one evaluation.
 
 This means that if the same objective function is evaluated for multiple

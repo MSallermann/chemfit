@@ -45,7 +45,7 @@ for a component mapping parameter dictionaries to quantity dictionaries.
 
 The ``_run`` method should accept exactly two arguments: a parameter
 mapping (commonly ``dict[str, Any]``) and an
-:py:class:`~chemfit.abstract_objective_function.EvaluateContext`.
+:py:class:`~chemfit.evaluate_context.EvaluateContext`.
 It should return the dictionary of quantities.
 
 This is probably a point at which we should familiarize ourselves with the...
@@ -162,7 +162,7 @@ If we forego the :py:func:`~chemfit.abstract_objective_function.quantity` approa
 Using the evaluation context
 ******************************************
 
-The :class:`~chemfit.abstract_objective_function.EvaluateContext`
+The :class:`~chemfit.evaluate_context.EvaluateContext`
 provides a structured way to exchange information during evaluation
 without relying on shared state.
 
@@ -194,7 +194,7 @@ Each evaluation has its own ``meta`` dictionary, so there are no race
 conditions.
 
 For descriptive metadata that is fixed when the computer is configured, use
-``with_meta()`` instead of writing it inside ``_compute()``:
+``with_meta()`` instead of writing it inside ``_run()``:
 
 .. code-block:: python
 
@@ -202,10 +202,10 @@ For descriptive metadata that is fixed when the computer is configured, use
     liquid = base.with_meta(dataset="liquid", phase="condensed")
     gas = base.with_meta(dataset="gas", phase="vapor")
 
-The method returns a shallow copy, so ``base`` is unchanged. This static
-metadata is merged into ``ctx.meta`` before ``_compute()`` runs. If the
-computer is turned into an objective with ``with_loss()``, objective metadata
-can be added afterward as well:
+The method returns a shallow copy, so ``base`` is unchanged. Static metadata is
+merged into that component's ``ctx.meta`` during finalization, after ``_run()``
+and before its post-hooks. If the computer is turned into an objective with
+``with_loss()``, objective metadata can be added afterward as well:
 
 .. code-block:: python
 
@@ -215,9 +215,11 @@ can be added afterward as well:
         .with_meta(observable="density")
     )
 
-Quantity metadata is applied first and objective metadata afterward; objective
-metadata wins if both define the same key. Continue to write values calculated
-during an evaluation directly to ``ctx.meta``.
+The quantity and the resulting objective are distinct evaluation scopes.
+Quantity metadata is therefore available on ``ctx.pipeline[0].meta`` after the
+objective runs, while metadata added after ``with_loss()`` is available on the
+root ``ctx.meta``. Continue to write values calculated during an evaluation to
+the context of the component that produced them.
 
 Typical static annotations include:
 
@@ -227,7 +229,7 @@ Typical static annotations include:
 
 **Important:**
     Quantities that are part of the computation should be returned from
-    ``_compute``, not written to ``ctx.meta``.
+    ``_run()``, not written to ``ctx.meta``.
 
 **Rule of thumb:**
     If something is needed for the loss or further computation, return it.
@@ -268,14 +270,14 @@ different per-evaluation modes. Different calls may:
     scratch_dir = getattr(ctx.config, "scratch_dir", "/tmp")
     diagnostics = getattr(ctx.config, "diagnostics", False)
 
-Static requirements such as CPU or GPU counts belong in the objective or
-computer's ``resources`` mapping. Resource annotations describe requirements;
-the built-in serial, executor, and MPI schedulers currently do not perform
-resource-aware placement.
+The built-in serial, executor, and MPI schedulers do not provide a standardized
+CPU/GPU resource-requirement mapping or resource-aware placement. Provision
+the selected backend appropriately and keep any application-specific resource
+description in your own configuration or metadata.
 
 **Rule of thumb:**
     Use ``ctx.config`` to *influence how the computation is carried out*,
-    but never modify it inside ``_compute``.
+    but never modify it inside ``_run()``.
 
 ====================
 ctx.shared
@@ -489,9 +491,11 @@ join may recover from a failed or intentionally skipped term.
 Context relationships
 =====================
 
-A structural evaluation creates one context for each immediate child before
-ordinary child execution starts. The structural context exposes them through
-``ctx.incoming``; each child context points back through ``outgoing``.
+A structural evaluation creates one context for each immediate child after its
+begin lifecycle succeeds and before ordinary child execution starts. The
+structural context exposes them through ``ctx.incoming``; each child context
+points back through ``outgoing``. A structural pre-hook that short-circuits or
+fails creates no child contexts.
 Nested structural components form a context graph matching the component graph.
 
 Each spawned context receives:

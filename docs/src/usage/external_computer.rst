@@ -38,7 +38,7 @@ full pipeline API documented below.
 Before we can start we should define how our external command can be called.
 For maximum flexibility, the command is provided as a function that accepts
 the parameter dictionary, temporary working directory, and current
-:py:class:`~chemfit.abstract_objective_function.EvaluateContext`. Each
+:py:class:`~chemfit.evaluate_context.EvaluateContext`. Each
 evaluation runs in its own isolated working directory.
 
 All files created by the external command should be written relative to this
@@ -356,7 +356,7 @@ To inspect failures, enable evaluation-level dump files:
 
 A dump records the final exception, current execution step, commands executed
 so far, and the other temporary context state. When the final exception is a
-:py:class:`subprocess.CalledProcessError`, its command, return code, standard
+``subprocess.CalledProcessError``, its command, return code, standard
 output, and standard error are included when available. Hook, output-waiting,
 and parser failures therefore produce diagnostics as well as command failures.
 
@@ -366,8 +366,7 @@ Parsing output from a failed command
 Some external programs return a non-zero exit status after writing usable
 output files. Set ``try_parsing_after_exception=True`` to let the computer
 continue waiting for its configured output files and run the output parsers
-after :py:func:`subprocess.run` raises
-:py:class:`subprocess.CalledProcessError`:
+after ``subprocess.run`` raises ``subprocess.CalledProcessError``:
 
 .. code-block:: python
 

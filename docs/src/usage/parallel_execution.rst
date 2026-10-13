@@ -36,7 +36,7 @@ are shared by all leaf terms from all candidates in the batch.
 
 With no custom execution backend, an effective ``execution_workers`` value of
 one uses an internally managed serial schedule. Larger values use an internally
-managed :class:`concurrent.futures.ThreadPoolExecutor`-backed schedule.
+managed ``concurrent.futures.ThreadPoolExecutor``-backed schedule.
 
 For an objective graph with ``L`` available work nodes, a batch of ``B``
 candidates may expose up to ``B * L`` tasks. Allowing all of those nodes
@@ -86,7 +86,7 @@ executor or scheduler and returns their populated contexts in input order:
    losses = [ctx.output for ctx in contexts]
 
 The function creates one
-:class:`~chemfit.abstract_objective_function.EvaluateContext` per parameter
+:class:`~chemfit.evaluate_context.EvaluateContext` per parameter
 mapping. It restores input order even when evaluations finish out of order and
 re-raises an exception from a failed evaluation.
 
@@ -148,7 +148,7 @@ exits. Exactly one of ``executor`` and ``executor_factory`` is required.
 Threads and processes
 ~~~~~~~~~~~~~~~~~~~~~
 
-:class:`concurrent.futures.ThreadPoolExecutor` has low overhead and works well
+``concurrent.futures.ThreadPoolExecutor`` has low overhead and works well
 for external programs and native libraries that release the GIL. CPU-bound
 Python code normally needs a process executor for actual parallelism. Process
 execution adds serialization overhead, and objectives, hooks, parameters, and

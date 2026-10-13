@@ -628,7 +628,7 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
 
         except Exception as e:
             msg = (
-                "Exception in `_compute` of ExternalQuantityComputer.\n"
+                "Exception in `_run` of ExternalQuantityComputer.\n"
                 f"  ctx.temp = {ctx.temp}"
             )
 
