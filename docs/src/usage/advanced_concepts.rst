@@ -178,9 +178,10 @@ the output of one stage to the next, but the scheduler sees them differently.
      - :class:`~chemfit.abstract_objective_function.OpaquePipeline`
      - :class:`~chemfit.abstract_objective_function.PipelineComponent`
    * - Construction
-     - Produced by ``component.with_loss(...)``; extend with ``then(...)``
-     - Construct with ``chemfit.pipeline(first, second)``; extend with
+     - Produced by ``atomic_component.with_loss(...)``; extend with
        ``then(...)``
+     - Construct with ``chemfit.pipeline(first, second)`` or by calling
+       ``with_loss(...)`` on a structural component; extend with ``then(...)``
    * - Scheduler view
      - One atomic work item
      - One graph-visible node per stage, with structural start and finish nodes
@@ -201,8 +202,9 @@ Opaque pipelines
 ----------------
 
 :meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`
-constructs an opaque pipeline containing the quantity component and a wrapped
-loss component:
+constructs an opaque pipeline when the receiver is an ordinary, non-structural
+component. The pipeline contains the quantity component and a wrapped loss
+component:
 
 .. testcode::
 
@@ -222,17 +224,13 @@ to the quantity computation that produced its input.
 
 .. important::
 
-    ``with_loss()`` makes the *complete returned pipeline* opaque. If it is
-    called on a structural component, that component's descendants are inside
-    the new atomic boundary and are no longer expanded by a graph scheduler.
-    To keep an existing structure graph-visible, wrap the loss as a component
-    and connect it with a structural pipeline instead:
+    ``with_loss()`` preserves an existing structural boundary. When called on
+    a :class:`~chemfit.abstract_objective_function.StructuralComponent`, it
+    returns a :class:`~chemfit.abstract_objective_function.PipelineComponent`
+    connecting that structure to the wrapped loss. The scheduler can still
+    expand the original descendants:
 
     .. testcode::
-
-        @chemfit.component()
-        def loss_stage(quantities, target):
-            return (quantities["prediction"] - target) ** 2
 
         @chemfit.component()
         def pass_quantities(quantities):
@@ -242,10 +240,7 @@ to the quantity computation that produced its input.
             simulate,
             pass_quantities,
         )
-        visible_term = chemfit.pipeline(
-            simulation_graph,
-            loss_stage.bind(target=2.0),
-        )
+        visible_term = simulation_graph.with_loss(loss, target=2.0)
 
         print(visible_term({"x": 3.0}))
 
@@ -253,6 +248,10 @@ to the quantity computation that produced its input.
         :hide:
 
         49.0
+
+    Calling ``with_loss()`` on the atomic ``simulate`` component still returns
+    an :class:`~chemfit.abstract_objective_function.OpaquePipeline`, keeping
+    the quantity calculation and its usually cheap loss in one backend task.
 
 Opaque does not mean unobservable. Each stage receives its own context, in
 execution order, and the outer context records those contexts in

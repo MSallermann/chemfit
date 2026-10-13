@@ -249,9 +249,15 @@ objectives run; they do not introduce another objective or hook scope. Register
 hooks on the combined objective and, for MPI, construct the same hooked
 objective on every rank.
 
-The same hook instance is registered throughout the current graph. Use
-distinct component instances for distinct graph positions. Custom structural
-components expose their child scopes through ``components()``.
+Recursive registration modifies the descendant component instances directly;
+it does not create composition-local registrations. If the same descendant
+instance is also used in another pipeline or join, the recursively registered
+hook is therefore active there as well. This is intentional: compositions
+share their components by reference. Construct the compositions with distinct
+component copies when their hook configuration must be isolated.
+
+The same hook instance is registered throughout the traversed graph. Custom
+structural components expose their child scopes through ``components()``.
 
 Parallel execution
 ------------------

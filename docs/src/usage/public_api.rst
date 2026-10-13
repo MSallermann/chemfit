@@ -55,6 +55,11 @@ with reference energies at different distances.
 ``chemfit.combine()`` joins them into a
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`.
 
+The pipeline returned by ``with_loss()`` is opaque for an ordinary component,
+keeping the quantity and loss in one scheduler task. Calling it on a structural
+component instead returns a structural pipeline and preserves that component's
+graph-visible children; see :ref:`advanced_concepts`.
+
 :py:func:`chemfit.api.fit_nevergrad` returns a
 :class:`~chemfit.api.FitResult`. ``result.recommendation`` is Nevergrad's
 recommended parameter mapping. ``best_parameters`` and ``best_loss`` identify
