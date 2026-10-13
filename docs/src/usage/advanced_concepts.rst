@@ -165,7 +165,8 @@ the output of one stage to the next, but the scheduler sees them differently.
      - :class:`~chemfit.abstract_objective_function.PipelineComponent`
    * - Construction
      - Produced by ``component.with_loss(...)``; extend with ``then(...)``
-     - Construct with two components; extend with ``then(...)``
+     - Construct with ``chemfit.pipeline(first, second)``; extend with
+       ``then(...)``
    * - Scheduler view
      - One atomic work item
      - One graph-visible node per stage, with structural start and finish nodes
@@ -223,11 +224,11 @@ to the quantity computation that produced its input.
         def pass_quantities(quantities):
             return quantities
 
-        simulation_graph = chemfit.PipelineComponent(
+        simulation_graph = chemfit.pipeline(
             simulate,
             pass_quantities,
         )
-        visible_term = chemfit.PipelineComponent(
+        visible_term = chemfit.pipeline(
             simulation_graph,
             loss_stage.bind(target=2.0),
         )
@@ -277,8 +278,9 @@ records and re-raises the same failure through its own end lifecycle.
 Structural pipelines
 --------------------
 
-:class:`~chemfit.abstract_objective_function.PipelineComponent` declares the
-same left-to-right data flow structurally:
+:func:`chemfit.pipeline() <chemfit.api.pipeline>` constructs a
+:class:`~chemfit.abstract_objective_function.PipelineComponent` that declares
+the same left-to-right data flow structurally:
 
 .. testcode::
 
@@ -290,8 +292,7 @@ same left-to-right data flow structurally:
     def add_one(value):
         return value + 1
 
-    pipeline = chemfit.PipelineComponent(double, add_one)
-    pipeline = pipeline.then(double)
+    pipeline = chemfit.pipeline(double, add_one).then(double)
 
     print(pipeline(3))
 
@@ -329,6 +330,31 @@ A join describes a fan-out/fan-in shape:
 implementation for that shape. Every child receives the original parent input,
 and the children have no dependencies on one another. Direct evaluation visits
 them sequentially; a graph scheduler may run them concurrently.
+
+:func:`chemfit.join() <chemfit.api.join>` constructs the general built-in join
+and returns its child outcomes as a tuple:
+
+.. testcode::
+
+    @chemfit.component()
+    def square(value):
+        return value**2
+
+    @chemfit.component()
+    def cube(value):
+        return value**3
+
+    joined = chemfit.join(square, cube)
+    joined_ctx = chemfit.EvaluateContext()
+
+    print(joined(3, joined_ctx))
+    print([child.output for child in joined_ctx.incoming])
+
+.. testoutput::
+    :hide:
+
+    (9, 27)
+    [9, 27]
 
 ``JoinedComponent`` leaves ``combine_outcomes()`` to subclasses. The built-in
 :class:`~chemfit.abstract_objective_function.TupleJoinedComponent` returns the
@@ -471,11 +497,12 @@ Use the smallest abstraction that expresses the scheduling boundary you need:
 - Call nested components directly, or use an
   :class:`~chemfit.abstract_objective_function.OpaquePipeline`, when the nested
   work must stay inside one atomic scheduler task.
-- Use :class:`~chemfit.abstract_objective_function.PipelineComponent` for an
-  ordered sequence whose stages should remain graph-visible.
-- Use :class:`~chemfit.abstract_objective_function.JoinedComponent` or
+- Use :func:`chemfit.pipeline() <chemfit.api.pipeline>` for an ordered sequence
+  whose stages should remain graph-visible.
+- Use :func:`chemfit.join() <chemfit.api.join>` for independent fan-out that
+  returns every outcome, or
   :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` for
-  independent fan-out followed by reduction.
+  independent scalar terms followed by configurable reduction.
 - Implement :class:`~chemfit.abstract_objective_function.StructuralComponent`
   directly for a custom directed acyclic graph, conditional execution, or a
   specialized recovery policy.

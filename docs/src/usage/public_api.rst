@@ -246,6 +246,40 @@ multiple variants:
 Composition
 -----------
 
+:func:`chemfit.pipeline() <chemfit.api.pipeline>` and
+:func:`chemfit.join() <chemfit.api.join>` expose general structural
+composition. A pipeline passes each result to the next stage. A join gives the
+same parent input to independent children and returns their outcomes in order:
+
+.. testcode::
+
+   @chemfit.component()
+   def twice(value):
+       return 2 * value
+
+   @chemfit.component()
+   def increment(value):
+       return value + 1
+
+   stages = chemfit.pipeline(twice, increment).then(twice)
+   branches = chemfit.join(twice, increment)
+   iterable_branches = chemfit.join((twice, increment))
+
+   print(stages(3))
+   print(branches(3))
+   assert iterable_branches(3) == (6, 4)
+
+.. testoutput::
+    :hide:
+
+    14
+    (6, 4)
+
+Both helpers require ``ObjectiveComponent`` instances, such as values produced
+by ``component()``, ``quantity()``, or ``objective()``. ``join()`` accepts the
+components positionally or as one iterable. See :ref:`advanced_concepts` for
+their dependency, failure, skip, context, and scheduler semantics.
+
 :py:func:`chemfit.api.combine` accepts objective terms as separate positional
 arguments or as one iterable:
 

@@ -132,7 +132,10 @@ call. At least one callback is required. The ``hook=`` form is mutually
 exclusive with ``pre=`` and ``post=``; use either a hook object or direct
 callbacks in a given registration. ``recursive=True`` applies the supplied
 pre- and post-callbacks to the current descendant objectives in exactly the
-same way as it does for a hook object.
+same way as it does for a hook object. Recursion follows graph-visible
+:class:`~chemfit.abstract_objective_function.StructuralComponent` children; it
+does not enter the stages of an
+:class:`~chemfit.abstract_objective_function.OpaquePipeline`.
 
 Lifecycle and errors
 --------------------

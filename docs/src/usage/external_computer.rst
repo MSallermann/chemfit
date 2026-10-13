@@ -29,7 +29,8 @@ Consider an external script with a command-line interface, which does the follow
 
 .. note::
 
-    The full script can be found in the unit tests at `<https://github.com/MSallermann/chemfit/tests/input/square_function.py>`_.
+    The full script can be found in the unit tests at
+    `<https://github.com/MSallermann/chemfit/blob/main/tests/input/square_function.py>`_.
 
 In this example we use ``chemfit.external_quantity(...)`` to determine the
 pre-factor :math:`A`. The returned ``ExternalQuantityComputer`` exposes the

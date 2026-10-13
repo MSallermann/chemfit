@@ -15,9 +15,9 @@ from ase import Atoms
 from chemfit.abstract_objective_function import (
     EvaluateContext,
     ObjectiveComponent,
-    WrappedComponent,
     PipelineComponent,
     TupleJoinedComponent,
+    WrappedComponent,
 )
 from chemfit.ase_objective_function import (
     ASEComputer,
@@ -146,45 +146,63 @@ def pipeline(
     second: ObjectiveComponent[MiddleT, OutputT],
 ) -> PipelineComponent[InputT, OutputT]:
     """
-    Concatenate two components in a scheduler inspectable pipeline.
+    Concatenate two components in a scheduler-inspectable pipeline.
 
-    The second component receives the output of the fist component as its input.
-    Add more stages to the pipeline by using its ``then`` method.
+    The second component receives the output of the first component as its
+    input. Add more stages to the pipeline with its ``then()`` method.
 
     Args:
-        first (ObjectiveComponent[InputT, MiddleT]): first component
-        second (ObjectiveComponent[MiddleT, OutputT]): second component
+        first: First component.
+        second: Second component, which receives the first component's output.
 
     Returns:
-        PipelineComponent[InputT, OutputT]: The constructed pipeline object.
+        The constructed structural pipeline.
 
     """
     return PipelineComponent(first, second)
 
 
+@overload
+def join(
+    args: Iterable[ObjectiveComponent[InputT, Any]],
+    /,
+) -> TupleJoinedComponent[InputT]: ...
+
+
+@overload
 def join(
     *args: ObjectiveComponent[InputT, Any],
+) -> TupleJoinedComponent[InputT]: ...
+
+
+def join(
+    *args: (
+        ObjectiveComponent[InputT, Any] | Iterable[ObjectiveComponent[InputT, Any]]
+    ),
 ) -> TupleJoinedComponent[InputT]:
     """
-    Join components in a scheduler inspectable fan-out.
+    Join components in a scheduler-inspectable fan-out.
 
     Every component receives the same input and a scheduler can run them in
-    parallel.
-    The output is a tuple of individual component outputs in corresponding order.
+    parallel. Components may be supplied positionally or as one iterable. The
+    output is a tuple of individual outcomes in declaration order.
 
     Args:
-        *args: Objective components or callables supplied as positional terms,
-               or one iterable of terms.
+        *args: Objective components supplied positionally, or one iterable of
+            objective components.
 
     Returns:
-        TupleJoinedComponent[InputT]: The constructed pipeline object.
+        The constructed structural join.
+
+    Raises:
+        ValueError: If no components are supplied.
 
     """
 
     if len(args) == 1 and not callable(args[0]):
         components = tuple(args[0])
     else:
-        components = cast("tuple[ObjectiveComponent[InputT,Any], ...]", args)
+        components = cast("tuple[ObjectiveComponent[InputT, Any], ...]", args)
 
     return TupleJoinedComponent(components)
 

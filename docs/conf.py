@@ -7,7 +7,7 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "ChemFit"
-copyright = "2025, Moritz Sallermann"
+copyright = "2025–2026, Moritz Sallermann"
 author = "Moritz Sallermann"
 
 # -- General configuration ---------------------------------------------------

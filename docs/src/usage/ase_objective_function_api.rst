@@ -79,7 +79,7 @@ An ASE computer contains:
 
 The context-aware callbacks use these contracts:
 
-.. code-block:: python
+.. code-block:: text
 
    calculator(parameters, atoms, ctx) -> Calculator
    atoms_modifier(parameters, atoms, ctx) -> None
@@ -89,7 +89,7 @@ The context-aware callbacks use these contracts:
 An atoms setup callback is structural and runs only when the cached base
 geometry is initialized:
 
-.. code-block:: python
+.. code-block:: text
 
    atoms_setup(atoms) -> None
 

@@ -44,8 +44,12 @@ Then you can build the documentation by invoking the following from the reposito
 .. code-block:: bash
 
     sphinx-apidoc -o ./docs/src/api ./src/chemfit -f --remove-old --separate
-    sphinx-build -M html ./docs ./docs/build
+    sphinx-build -W -b doctest ./docs ./docs/build/doctest
+    sphinx-build -W -b html ./docs ./docs/build/html
 
-Use ``sphinx-autobuild -M html ./docs ./docs/build`` instead when you want a
-live-reloading development server. The repository's ``build_docs.sh`` script
-starts that workflow after regenerating the API pages.
+The doctest build executes the documentation's testable examples, including
+examples whose output is hidden in the rendered pages. Run it before the HTML
+build so stale examples fail quickly. Use
+``sphinx-autobuild -M html ./docs ./docs/build`` instead of the final command
+when you want a live-reloading development server. The repository's
+``build_docs.sh`` script runs the doctests before starting that workflow.
