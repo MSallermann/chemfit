@@ -16,8 +16,10 @@ configurations, or several physical properties at once.
 
 .. important::
 
-   A combined objective is immutable after construction. Its objective terms
-   and configuration must not be changed in place.
+   Treat a combined objective's term structure and semantic configuration as
+   immutable after construction. Its objective terms and reduction settings
+   must not be changed in place. Evaluation-hook registration remains the
+   intentional mutable instrumentation API.
 
    To add, remove, replace, or reorder terms, construct a fresh combined
    objective with :func:`chemfit.combine() <chemfit.api.combine>`. To change

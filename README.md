@@ -20,6 +20,7 @@ ChemFit can be used to:
 - build [external simulation workflows](https://chemfit.readthedocs.io/en/latest/src/usage/external_computer.html) that generate input, run programs, post-process output, and extract quantities;
 - evaluate independent calculations concurrently using [threads, processes, or custom schedulers](https://chemfit.readthedocs.io/en/latest/src/usage/parallel_execution.html), or distribute them using [MPI](https://chemfit.readthedocs.io/en/latest/src/usage/mpi.html);
 - build [combined and nested objectives](https://chemfit.readthedocs.io/en/latest/src/usage/combined_objective_function.html) with weighting, custom reductions, and failure handling;
+- compose graph-visible [pipelines and joins](https://chemfit.readthedocs.io/en/latest/src/usage/advanced_concepts.html) or keep tightly coupled stages opaque;
 - use Nevergrad, SciPy, or a custom optimization loop.
 
 # Installation
@@ -182,7 +183,7 @@ mpiexec -n 4 python fit.py
 Install the MPI dependencies with:
 
 ```bash
-pip install chemfit[mpi]
+pip install "chemfit[mpi]"
 ```
 
 See the [MPI documentation](https://chemfit.readthedocs.io/en/latest/src/usage/mpi.html) for setup and execution details.
@@ -221,7 +222,7 @@ It is a fitting-specific library that can be used independently of a larger work
 
 # Documentation
 
-The [full ChemFit documentation](https://chemfit.readthedocs.io) covers the high-level API as well as ASE integration, external programs, combined objectives, fitting, parallel execution, MPI, hooks, and custom quantity computers.
+The [full ChemFit documentation](https://chemfit.readthedocs.io) covers the high-level API as well as structural and opaque composition, ASE integration, external programs, combined objectives, fitting, parallel execution, MPI, hooks, and custom quantity computers.
 
 # Citation
 

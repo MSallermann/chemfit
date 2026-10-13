@@ -144,7 +144,7 @@ If the quantity computer is a wrapped python function, it's easy to bind externa
     If ``pass_ctx=True``, all required arguments except ``params`` and the
     injected keyword argument ``ctx`` must be bound.
 
-    If ``pass_ctx==False``, all arguments except ``params`` have to be bound.
+    If ``pass_ctx=False``, all arguments except ``params`` have to be bound.
 
 If we forego the :py:func:`~chemfit.abstract_objective_function.quantity` approach and we need external parameters, they should be accepted in the constructor.
 
@@ -301,30 +301,64 @@ explicitly constructed with the same namespace.
 
 This is useful for:
 
-- caching expensive results
-- sharing resources between evaluations
-- coordinating work across parallel tasks
+- reusing read-only data across related local or threaded evaluations
+- supplying serializable worker-input data to process or MPI evaluations
+- backend-specific shared state when the application controls its lifecycle
+  and synchronization
 
-However, this is also the most dangerous field.
+It is not a backend-independent distributed cache or shared-memory facility.
 
 **Important:**
     During local or threaded execution, related contexts use the same object,
-    so access may be concurrent and must be thread-safe. Process executors
-    serialize worker-input state instead; mutations made in a worker are not
-    returned to the driver.
+    so mutable access may be concurrent and requires synchronization supplied
+    by the application. Process and MPI schedulers serialize worker-input
+    state instead; the namespace must be serializable and mutations made in a
+    worker are not returned to the driver.
 
-Example (initialize a cache before concurrent evaluation):
+The portable use of ``ctx.shared`` is therefore limited to read-only,
+serializable input. Even then, data needed to prepare an individual evaluation
+is usually clearer in a pre-evaluation hook. The hook can inspect ``ctx.input``
+and place transient setup data in ``ctx.temp`` for ``_run()`` to consume:
 
-.. code-block:: python
+.. testcode::
 
-    cache = ctx.shared.cache
+    from chemfit import EvaluateContext, ObjectiveComponent
 
-    key = tuple(sorted(params.items()))
-    if key in cache:
-        return cache[key]
+    class ReferenceEnergyHook:
+        def __init__(self, reference_energies):
+            self.reference_energies = reference_energies
 
-    result = expensive_computation(...)
-    cache[key] = result
+        def pre_eval(self, ctx):
+            species = ctx.input["species"]
+            ctx.temp.reference_energy = self.reference_energies[species]
+
+    class ReferenceShift(ObjectiveComponent):
+        def _run(self, params, ctx):
+            return params["energy"] - ctx.temp.reference_energy
+
+    shift = ReferenceShift().register_eval_hook(
+        hook=ReferenceEnergyHook({"H2": -1.17})
+    )
+
+    result = shift(
+        {"species": "H2", "energy": -1.0},
+        EvaluateContext(),
+    )
+    print(round(result, 2))
+
+.. testoutput::
+    :hide:
+
+    0.17
+
+A mutable cache in ``ctx.shared`` is safe only when its storage and locking
+match the selected backend. For example, a ``threading.Lock`` works for a
+thread-only application but is not serializable; an ordinary dictionary is
+copied rather than shared by process and MPI workers. Use an external cache or
+another backend-specific service when results must be shared across workers.
+Cache lookup belongs in a pre-evaluation hook, which can return a cached value
+to short-circuit ``_run()``; a post-evaluation hook can store a newly computed
+result. See :ref:`objective_hooks` for the hook lifecycle.
 
 **Rule of thumb:**
     Only use ``ctx.shared`` if you know exactly what you are doing.
@@ -532,7 +566,9 @@ begin lifecycle succeeds and before ordinary child execution starts. The
 structural context exposes them through ``ctx.incoming``; each child context
 points back through ``outgoing``. A structural pre-hook that short-circuits or
 fails creates no child contexts.
-Nested structural components form a context graph matching the component graph.
+Nested structural components form a context hierarchy matching the component's
+structural nesting. Sibling dependency edges are declared by the component and
+are not represented as additional context links.
 
 Each spawned context receives:
 
