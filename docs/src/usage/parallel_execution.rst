@@ -11,7 +11,8 @@ ChemFit can overlap work at two related levels:
 Graph schedulers handle both levels with the same pool of execution slots. A
 batch of candidates is expanded into its runnable atomic components, and the
 backend executes those components serially, through an executor, or on MPI
-worker ranks.
+worker ranks. See :ref:`advanced_concepts` for how structural components are
+expanded and why opaque pipelines remain one atomic task.
 
 One-shot fitting
 ----------------
@@ -72,18 +73,28 @@ Evaluating a parameter batch
 :py:func:`chemfit.api.evaluate_many` evaluates parameter mappings through an
 executor or scheduler and returns their populated contexts in input order:
 
-.. code-block:: python
+.. testcode::
 
    from concurrent.futures import ThreadPoolExecutor
 
-   from chemfit import evaluate_many
+   from chemfit import evaluate_many, objective
+
+   @objective()
+   def square(params):
+       return params["x"] ** 2
 
    parameters = [{"x": 1.0}, {"x": 2.0}, {"x": 3.0}]
 
    with ThreadPoolExecutor(max_workers=4) as executor:
-       contexts = evaluate_many(objective, parameters, executor=executor)
+       contexts = evaluate_many(square, parameters, executor=executor)
 
    losses = [ctx.output for ctx in contexts]
+   print(losses)
+
+.. testoutput::
+    :hide:
+
+    [1.0, 4.0, 9.0]
 
 The function creates one
 :class:`~chemfit.evaluate_context.EvaluateContext` per parameter
@@ -98,7 +109,7 @@ when individual results should be consumed as they complete. A scheduler is
 backend configuration; :meth:`~chemfit.scheduling.Scheduler.prepare` binds it
 to one objective and returns a prepared schedule.
 
-.. code-block:: python
+.. testcode::
 
    from concurrent.futures import ThreadPoolExecutor
 
@@ -113,10 +124,16 @@ to one objective and returns a prepared schedule.
 
    with ThreadPoolExecutor(max_workers=4) as executor:
        scheduler = ExecutorGraphScheduler(executor=executor)
-       with scheduler.prepare(objective) as schedule:
+       with scheduler.prepare(square) as schedule:
            completed = list(schedule.evaluate_many(requests))
 
    completed.sort(key=lambda result: result.index)
+   print([result.value for result in completed])
+
+.. testoutput::
+    :hide:
+
+    [1.0, 4.0, 9.0]
 
 ``evaluate_many`` yields
 :class:`~chemfit.scheduling.EvaluationResult` objects in completion order.

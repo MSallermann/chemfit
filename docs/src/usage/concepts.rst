@@ -141,15 +141,16 @@ The context can be used to record additional information during evaluation:
 
 ---------------------------
 
-Context graphs
-==============
+Context relationships
+=====================
 
-Structural components create a context graph mirroring their data flow.
+Structural components create context relationships mirroring their nested
+evaluation scopes.
 
 - The top-level evaluation uses the context supplied by the caller.
 - Each nested component receives its own context.
-- ``incoming`` and ``outgoing`` expose dependency links without allowing the
-  topology to be mutated through those properties.
+- ``incoming`` and ``outgoing`` expose parent/child containment links without
+  allowing the topology to be mutated through those properties.
 
 Conceptually:
 
@@ -160,10 +161,11 @@ Conceptually:
     term 2 context ──┘
 
 Each incoming context stores its component's input, finalized output, and
-metadata. A failed component's output is the exception object. Pipelines
-additionally expose their ordered stage contexts through ``pipeline``. This
-makes nested results inspectable without flattening or copying metadata into
-the root context.
+metadata. A failed component's output is the exception object. Opaque
+pipelines expose their ordered stage contexts through ``pipeline``; structural
+pipelines expose their stages as ``incoming`` children. This makes nested
+results inspectable without flattening or copying metadata into the root
+context.
 
 -------------------------
 
@@ -274,3 +276,7 @@ ChemFit is built around a few key ideas:
 
 These principles make ChemFit flexible, extensible, and well-suited for
 large-scale fitting problems.
+
+Continue with :ref:`advanced_concepts` for the distinction between atomic and
+structural components, opaque and graph-visible pipelines, joins, data-flow
+declarations, and skip semantics.

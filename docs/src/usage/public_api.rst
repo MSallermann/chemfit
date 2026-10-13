@@ -94,7 +94,9 @@ Direct objectives and contexts
 Use :func:`chemfit.abstract_objective_function.objective` for a function that already returns a
 scalar loss. Set ``pass_ctx=True`` when it needs the evaluation context:
 
-.. code-block:: python
+.. testcode::
+
+   import chemfit
 
    @chemfit.objective(pass_ctx=True)
    def square(params, *, ctx):
@@ -103,6 +105,14 @@ scalar loss. Set ``pass_ctx=True`` when it needs the evaluation context:
 
    ctx = chemfit.EvaluateContext()
    loss = square({"x": 2.0}, ctx)
+   print(loss)
+   print(ctx.meta)
+
+.. testoutput::
+    :hide:
+
+    4.0
+    {'kind': 'square'}
 
 The decorators do not infer context use from the callable signature.
 ``pass_ctx=False`` is the default, in which case the wrapped callable receives
@@ -141,7 +151,7 @@ values computed during one evaluation.
 
 Use ``bind`` to specialize a wrapped quantity or objective function:
 
-.. code-block:: python
+.. testcode::
 
    @chemfit.quantity()
    def scaled(params, *, scale):
@@ -151,16 +161,23 @@ Use ``bind`` to specialize a wrapped quantity or objective function:
 
 Use keyword arguments to ``with_loss`` to bind loss configuration:
 
-.. code-block:: python
+.. testcode::
 
    def squared_error(quantities, *, target):
        return (quantities["value"] - target) ** 2
 
    term = doubled.with_loss(squared_error, target=4.0)
+   print(term({"x": 2.0}))
 
-A loss function must accept either ``loss(quantities)`` or
-``loss(quantities, parameters)`` after its configuration arguments are bound.
-If both forms are valid, ChemFit calls the loss with ``quantities`` only.
+.. testoutput::
+    :hide:
+
+    0.0
+
+A loss function receives the quantity component's output followed by any
+arguments configured through ``with_loss()``. ChemFit does not inject the
+original parameter mapping into the loss automatically. Include information
+needed by the loss in the returned quantities or bind it explicitly.
 
 The same style configures integrations without a large constructor call. For
 example, an external-program term can be assembled as one pipeline:
@@ -256,16 +273,27 @@ Batch evaluation and term execution
 The convenience function :py:func:`chemfit.api.evaluate_many` evaluates a
 parameter batch through either an executor or a scheduler:
 
-.. code-block:: python
+.. testcode::
 
    from concurrent.futures import ThreadPoolExecutor
 
+   @chemfit.objective()
+   def batch_objective(params):
+       return params["x"] ** 2
+
    with ThreadPoolExecutor(max_workers=4) as executor:
        contexts = chemfit.evaluate_many(
-           objective,
+           batch_objective,
            [{"x": 1.0}, {"x": 2.0}],
            executor=executor,
        )
+
+   print([ctx.output for ctx in contexts])
+
+.. testoutput::
+    :hide:
+
+    [1.0, 4.0]
 
 It returns populated contexts in parameter-input order. The executor is owned
 by the caller. Underneath, it prepares the objective with a

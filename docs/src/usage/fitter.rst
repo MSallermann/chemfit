@@ -410,7 +410,9 @@ A complete custom-loop example
 The optimizer only needs to propose parameter dictionaries and accept their
 losses. For example, this small optimizer searches a predefined set of points:
 
-.. code-block:: python
+.. testcode::
+
+    from chemfit.fitter import Fitter
 
     class CandidateSearch:
         def __init__(self, candidates):
@@ -434,7 +436,12 @@ losses. For example, this small optimizer searches a predefined set of points:
     fitter = Fitter(objective, initial_params={"x": 0.0})
     optimizer = CandidateSearch([{"x": 0.0}, {"x": 2.0}, {"x": 4.0}])
 
-    fitter.register_callback(print_progress, n_steps=1)
+    callback_steps = []
+
+    def record_progress(step, contexts):
+        callback_steps.append(step)
+
+    fitter.register_callback(record_progress, n_steps=1)
     fitter.init()
 
     for _ in range(3):
@@ -444,6 +451,14 @@ losses. For example, this small optimizer searches a predefined set of points:
         fitter.step()
 
     opt_params = fitter.finish(optimizer.recommendation())
+    print(opt_params)
+    print(callback_steps)
+
+.. testoutput::
+    :hide:
+
+    {'x': 2.0}
+    [1, 2, 3]
 
 Calling ``fitter.evaluate`` applies the same objective wrapping, invalid-value
 handling and context bookkeeping as the built-in SciPy and Nevergrad fitting

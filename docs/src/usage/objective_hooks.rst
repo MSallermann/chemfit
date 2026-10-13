@@ -22,7 +22,7 @@ each evaluation. ``TimingHook`` records elapsed wall-clock time in
 objective raises. Both accept a ``meta_key`` argument to customize their output
 key.
 
-.. code-block:: python
+.. testcode::
 
     import chemfit
     from chemfit.objective_hooks import TimingHook, UUIDHook
@@ -37,8 +37,16 @@ key.
 
     ctx = chemfit.EvaluateContext()
     loss = objective({"x": 2.0}, ctx)
-    print(ctx.meta["evaluation_id"])
-    print(ctx.meta["timing"]["elapsed_seconds"])
+    print(loss)
+    print(isinstance(ctx.meta["evaluation_id"], str))
+    print(ctx.meta["timing"]["elapsed_seconds"] >= 0.0)
+
+.. testoutput::
+    :hide:
+
+    4.0
+    True
+    True
 
 ``chemfit.objective()`` returns a wrapped
 :class:`~chemfit.abstract_objective_function.ObjectiveComponent`; the same hook
@@ -59,7 +67,7 @@ Use ``ctx.temp`` for temporary per-call state and ``ctx.meta`` for results that
 should be included in collected metadata. The following symmetric hook records
 whether evaluation succeeded:
 
-.. code-block:: python
+.. testcode::
 
     class StatusHook:
         def pre_eval(self, ctx):
@@ -70,7 +78,17 @@ whether evaluation succeeded:
                 "failed" if isinstance(ctx.output, Exception) else "completed"
             )
 
-    objective.register_eval_hook(StatusHook())
+    objective.register_eval_hook(hook=StatusHook())
+
+    ctx = chemfit.EvaluateContext()
+    print(objective({"x": 3.0}, ctx))
+    print(ctx.meta["status"])
+
+.. testoutput::
+    :hide:
+
+    9.0
+    completed
 
 For a one-sided hook, simply omit the other method. Keep hook instance
 attributes for configuration, not mutable per-evaluation state.
@@ -84,7 +102,7 @@ Registering functions directly
 For callbacks that do not need a configuration object, pass functions
 directly with ``pre=`` and ``post=``:
 
-.. code-block:: python
+.. testcode::
 
     def mark_running(ctx):
         ctx.meta["status"] = "running"
@@ -98,6 +116,16 @@ directly with ``pre=`` and ``post=``:
         pre=mark_running,
         post=record_outcome,
     )
+
+    ctx = chemfit.EvaluateContext()
+    print(objective({"x": 4.0}, ctx))
+    print(ctx.meta["status"])
+
+.. testoutput::
+    :hide:
+
+    16.0
+    completed
 
 Either keyword may be supplied on its own, or both may be registered in one
 call. At least one callback is required. The ``hook=`` form is mutually
@@ -143,7 +171,7 @@ Nested objectives
 By default, registration affects only the given objective. To instrument a
 combined objective and its nested terms, register after building the call graph:
 
-.. code-block:: python
+.. testcode::
 
     import chemfit
     from chemfit.objective_hooks import TimingHook
@@ -152,9 +180,16 @@ combined objective and its nested terms, register after building the call graph:
     combined = chemfit.combine(inner, lambda params: params["x"] + 1)
     combined.register_eval_hook(hook=TimingHook(), recursive=True)
 
-    ctx = EvaluateContext()
-    combined({"x": 2.0}, ctx)
+    ctx = chemfit.EvaluateContext()
+    print(combined({"x": 2.0}, ctx))
     child_timing = ctx.incoming[0].meta["timing"]
+    print("elapsed_seconds" in child_timing)
+
+.. testoutput::
+    :hide:
+
+    7.0
+    True
 
 Each term runs with its own child context. Child contexts are available through
 ``ctx.incoming``. Further descendants are available through each child's
