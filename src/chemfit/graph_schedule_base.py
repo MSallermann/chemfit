@@ -725,7 +725,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         # structural result has no child contexts, matching direct evaluation.
         for child_node_id in node.contained_component_start_ids:
             child_ctx = component_ctx.spawn_ctx()
-            component_ctx.add_incoming(child_ctx)
+            component_ctx.children.append(child_ctx)
             run.state.contexts[child_node_id] = child_ctx
 
         run.state.complete(node_id, component_input)

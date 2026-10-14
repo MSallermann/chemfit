@@ -141,13 +141,13 @@ does not add a node to the scheduler's graph:
 
         def _run(self, input_, ctx):
             # Valid, but the scheduler sees HiddenComposition as one atomic node.
-            ctx.pipeline = [ctx.spawn_ctx()]
-            return self.child(input_, ctx.pipeline[0])
+            ctx.children = [ctx.spawn_ctx()]
+            return self.child(input_, ctx.children[0])
 
     hidden = HiddenComposition(normalize)
     hidden_ctx = chemfit.EvaluateContext()
     print(hidden([1.0, -2.0], hidden_ctx))
-    print(len(hidden_ctx.pipeline))
+    print(len(hidden_ctx.children))
 
 .. testoutput::
     :hide:
@@ -189,8 +189,8 @@ the output of one stage to the next, but the scheduler sees them differently.
      - Passed directly between stages in the same atomic call
      - Passed as the outcome of one scheduled node to the next
    * - Stage contexts
-     - Stored in ``ctx.pipeline``
-     - Stored as immediate children in ``ctx.incoming``
+     - Stored in ``ctx.children``
+     - Stored in ``ctx.children``
    * - Failure propagation
      - A raised stage exception immediately prevents later calls
      - Later stages are marked skipped by the default input policy
@@ -255,15 +255,15 @@ to the quantity computation that produced its input.
 
 Opaque does not mean unobservable. Each stage receives its own context, in
 execution order, and the outer context records those contexts in
-``ctx.pipeline``:
+``ctx.children``:
 
 .. testcode::
 
     ctx = chemfit.EvaluateContext()
     value = term({"x": 3.0}, ctx)
 
-    quantity_ctx = ctx.pipeline[0]
-    loss_ctx = ctx.pipeline[1]
+    quantity_ctx = ctx.children[0]
+    loss_ctx = ctx.children[1]
 
     assert quantity_ctx.output == {"prediction": 9.0}
     assert loss_ctx.output == value
@@ -279,10 +279,11 @@ execution order, and the outer context records those contexts in
     {'prediction': 9.0}
     49.0
 
-The stage contexts are intentionally not structural children: they are not
-listed in ``ctx.incoming``, and recursive hook registration does not descend
-through an opaque pipeline. Register a hook or metadata on a stage before
-constructing the pipeline when it belongs to that stage.
+The stage contexts are ordinary evaluation children even though the stages are
+not separate scheduler nodes. Recursive hook registration still does not
+descend through an opaque pipeline because hook traversal follows the
+component structure, not the runtime context tree. Register a hook or metadata
+on a stage before constructing the pipeline when it belongs to that stage.
 
 If a stage raises, its context records the exception and the normal Python call
 chain stops before the next stage. The outer opaque-pipeline context then
@@ -361,7 +362,7 @@ and returns its child outcomes as a tuple:
     joined_ctx = chemfit.EvaluateContext()
 
     print(joined(3, joined_ctx))
-    print([child.output for child in joined_ctx.incoming])
+    print([child.output for child in joined_ctx.children])
 
 .. testoutput::
     :hide:
@@ -541,30 +542,25 @@ is covered in :ref:`writing_quantity_computers`.
 
 -------------------------
 
-Context topology
-================
+Context hierarchy
+=================
 
-The context structure records evaluation scopes, but it uses different links
-for the two composition models:
+The context tree records evaluation scopes identically for both composition
+models:
 
 .. code-block:: text
 
-    structural join                       opaque pipeline
+    structural join                 opaque pipeline
 
-    child_ctx_0 --+                       outer_ctx
-                  +--> parent_ctx             |
-    child_ctx_1 --+                       pipeline = [stage_ctx_0, stage_ctx_1]
+    parent_ctx                      outer_ctx
+    ├── child_ctx_0                 ├── stage_ctx_0
+    └── child_ctx_1                 └── stage_ctx_1
 
-For a structural component, ``parent_ctx.incoming`` contains one context per
-immediate child in component order. Each child points back to the parent
-through ``outgoing``. These links express containment by the structural scope;
-they do not reproduce every dependency edge between siblings. Nested
-structural components create nested context relationships recursively.
-
-For an opaque pipeline, ``outer_ctx.pipeline`` contains the ordered stage
-contexts. Those stages are deliberately absent from ``incoming`` because they
-are not graph-visible children. ``ctx.to_summary(recursive=True)`` follows both
-kinds of relationship.
+In both cases, ``ctx.children`` contains one context per immediate invocation
+in declaration order. Nested compositions create nested context trees
+recursively. Contexts have no parent or reverse-dependency links, and sibling
+dataflow dependencies are represented only by the compiled call graph.
+``ctx.to_summary(recursive=True)`` follows the ``children`` hierarchy.
 
 Child contexts are created only after the structural parent's begin lifecycle
 succeeds. If a parent pre-hook returns a result or raises, it has no child
@@ -575,7 +571,7 @@ runs. A child that executes and fails instead stores the exception in its
 
 Each child gets a deep copy of its parent's ``config``, a fresh ``meta`` and
 ``temp``, and the same ``shared`` namespace for local execution. Worker-backed
-schedulers transport result-bearing output, metadata, and opaque pipeline
+schedulers transport result-bearing input, output, metadata, and nested child
 state back to the coordinator; temporary state and worker mutations to
 ``shared`` are not result channels.
 

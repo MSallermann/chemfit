@@ -172,9 +172,9 @@ execution adds serialization overhead, and objectives, hooks, parameters, and
 worker input context state must be serializable.
 
 Executor and MPI schedules return result-bearing context state to the driver:
-input, output, pipeline state, and metadata. ``ctx.temp`` is scratch state and
-``ctx.shared`` is not transported back. Store results that must survive worker
-execution in ``ctx.meta`` or ``ctx.output``.
+input, output, nested child state, and metadata. ``ctx.temp`` is scratch state
+and ``ctx.shared`` is not transported back. Store results that must survive
+worker execution in ``ctx.meta`` or ``ctx.output``.
 
 Fitter batching and execution
 -----------------------------

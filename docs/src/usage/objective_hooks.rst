@@ -208,9 +208,9 @@ If a post-hook raises, its exception replaces ``ctx.output`` and becomes the
 final failure; later post-hooks do not run. This is also how a post-hook can
 replace an earlier evaluation failure.
 
-Contexts can be reused: input, output, metadata, scratch data, pipeline state,
-and incoming links are reset at call entry, while ``config`` and ``shared``
-are preserved. Use a separate context for every concurrent evaluation.
+Contexts can be reused: input, output, metadata, scratch data, and the child
+hierarchy are reset at call entry, while ``config`` and ``shared`` are
+preserved. Use a separate context for every concurrent evaluation.
 
 Nested objectives
 -----------------
@@ -229,7 +229,7 @@ combined objective and its nested terms, register after building the call graph:
 
     ctx = chemfit.EvaluateContext()
     print(combined({"x": 2.0}, ctx))
-    child_timing = ctx.incoming[0].meta["timing"]
+    child_timing = ctx.children[0].meta["timing"]
     print("elapsed_seconds" in child_timing)
 
 .. testoutput::
@@ -239,8 +239,8 @@ combined objective and its nested terms, register after building the call graph:
     True
 
 Each term runs with its own child context. Child contexts are available through
-``ctx.incoming``. Further descendants are available through each child's
-``incoming`` property.
+``ctx.children``. Further descendants are available through each child's
+``children`` list.
 Parent timing includes nested work; child timing measures the individual term.
 
 Recursive registration follows distinct child evaluation scopes through

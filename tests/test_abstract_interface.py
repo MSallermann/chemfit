@@ -119,9 +119,9 @@ def test_with_loss_preserves_type_errors():
         objective(3, ctx)
 
     assert isinstance(ctx.output, TypeError)
-    assert len(ctx.pipeline) == 2
-    assert ctx.pipeline[0].output == {"value": 3}
-    assert isinstance(ctx.pipeline[1].output, TypeError)
+    assert len(ctx.children) == 2
+    assert ctx.children[0].output == {"value": 3}
+    assert isinstance(ctx.children[1].output, TypeError)
 
 
 def test_bound_arguments_and_optional_loss_argument():
@@ -136,5 +136,5 @@ def test_bound_arguments_and_optional_loss_argument():
     ctx = EvaluateContext()
 
     assert obj(3, ctx) == 6
-    assert [stage.output for stage in ctx.pipeline] == [{"value": 6}, 6]
+    assert [stage.output for stage in ctx.children] == [{"value": 6}, 6]
     assert compute.bind(factor=3).with_loss(loss, offset=4)(3) == 13

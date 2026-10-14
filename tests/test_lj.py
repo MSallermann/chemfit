@@ -65,7 +65,7 @@ def test_lj():
 
     ctx = EvaluateContext()
     ob(opt_params, ctx)
-    terms_meta_data = ctx.to_summary(recursive=True)["incoming"]
+    terms_meta_data = ctx.to_summary(recursive=True)["children"]
 
     assert ob.n_components() == len(terms_meta_data)
     assert np.isclose(opt_params["epsilon"], eps)

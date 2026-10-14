@@ -42,8 +42,7 @@ def test_weighted_join_and_contexts():
     assert cob({"x": 1}, ctx) == 23
     assert ctx.input == {"x": 1}
     assert ctx.output == 23
-    assert [c.output for c in ctx.incoming] == [2, 3]
-    assert all(c.outgoing == (ctx,) for c in ctx.incoming)
+    assert [c.output for c in ctx.children] == [2, 3]
     assert ctx.meta["skipped_indices"] == []
 
 
@@ -52,7 +51,7 @@ def test_custom_reduction_with_and_without_context():
     mean = source.with_reduction(mean_reducer)
 
     def inspect_context(terms, *, ctx):
-        assert [c.output for c in ctx.incoming] == [2, 4]
+        assert [c.output for c in ctx.children] == [2, 4]
         ctx.meta["inspected"] = True
         return max(terms)
 
@@ -90,7 +89,7 @@ def test_default_exception_handler_raises():
         cob({}, ctx)
 
     assert isinstance(ctx.output, RuntimeError)
-    assert isinstance(ctx.incoming[1].output, RuntimeError)
+    assert isinstance(ctx.children[1].output, RuntimeError)
 
 
 @pytest.mark.parametrize(
@@ -112,7 +111,7 @@ def test_exception_replacement(handler, expected, skipped):
     else:
         assert result == expected
     assert ctx.meta["skipped_indices"] == skipped
-    assert isinstance(ctx.incoming[1].output, RuntimeError)
+    assert isinstance(ctx.children[1].output, RuntimeError)
 
 
 def test_nested_join():
@@ -121,8 +120,8 @@ def test_nested_join():
     ctx = EvaluateContext()
 
     assert outer({}, ctx) == 10
-    assert [c.output for c in ctx.incoming] == [3, 4]
-    assert [c.output for c in ctx.incoming[0].incoming] == [1, 2]
+    assert [c.output for c in ctx.children] == [3, 4]
+    assert [c.output for c in ctx.children[0].children] == [1, 2]
 
 
 def test_opaque_pipeline_is_internal_to_a_join_term():
@@ -135,11 +134,11 @@ def test_opaque_pipeline_is_internal_to_a_join_term():
     ctx = EvaluateContext()
 
     assert cob({}, ctx) == 7
-    first, second = ctx.incoming[0].pipeline
+    first, second = ctx.children[0].children
     assert first.output == {"scale": 3}
     assert second.input == {"scale": 3}
     assert second.output == 6
-    assert first not in ctx.incoming  # Pipeline stages aren't DAG nodes.
+    assert first not in ctx.children  # Stages belong to the term's hierarchy.
 
 
 def test_recursive_hooks_stop_at_opaque_components():
@@ -154,5 +153,5 @@ def test_recursive_hooks_stop_at_opaque_components():
 
     ctx = EvaluateContext()
     assert cob({}, ctx) == 3
-    assert seen == [ctx, *ctx.incoming]
-    assert not any(stage in seen for stage in ctx.incoming[0].pipeline)
+    assert seen == [ctx, *ctx.children]
+    assert not any(stage in seen for stage in ctx.children[0].children)

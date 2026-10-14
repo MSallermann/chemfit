@@ -263,7 +263,7 @@ term containing the computer, metadata can be added to that new term as well:
     )
 
 The quantity and the resulting objective are distinct evaluation scopes.
-Quantity metadata is therefore available on ``ctx.pipeline[0].meta`` after the
+Quantity metadata is therefore available on ``ctx.children[0].meta`` after the
 objective runs, while metadata added after ``with_loss()`` is available on the
 root ``ctx.meta``. Continue to write values calculated during an evaluation to
 the context of the component that produced them.
@@ -434,7 +434,7 @@ deep copy, while process and MPI workers receive serializable copies.
             ctx,
         )
     )
-    print(ctx.incoming[0].shared is ctx.incoming[1].shared)
+    print(ctx.children[0].shared is ctx.children[1].shared)
 
 .. testoutput::
     :hide:
@@ -586,7 +586,7 @@ and returns both dictionaries:
     pair = QuantityPair(original, doubled)
     pair_ctx = EvaluateContext()
     print(pair({"x": 3.0}, pair_ctx))
-    print([child.output for child in pair_ctx.incoming])
+    print([child.output for child in pair_ctx.children])
 
 .. testoutput::
     :hide:
@@ -648,18 +648,17 @@ child has completed or been skipped.
 pipeline re-raises the reason attached to its skipped final stage, while a
 join may recover from a failed or intentionally skipped term.
 
-=====================
-Context relationships
-=====================
+=================
+Context hierarchy
+=================
 
 A structural evaluation creates one context for each immediate child after its
 begin lifecycle succeeds and before ordinary child execution starts. The
-structural context exposes them through ``ctx.incoming``; each child context
-points back through ``outgoing``. A structural pre-hook that short-circuits or
-fails creates no child contexts.
+structural context exposes them through ``ctx.children`` in declaration order.
+A structural pre-hook that short-circuits or fails creates no child contexts.
 Nested structural components form a context hierarchy matching the component's
 structural nesting. Sibling dependency edges are declared by the component and
-are not represented as additional context links.
+are represented by the call graph rather than the context tree.
 
 Each spawned context receives:
 
@@ -672,7 +671,7 @@ runs. Completed and failed children store their finalized value or exception
 in ``ctx.output``. There is no separate exception field.
 
 Use ``ctx.to_summary(recursive=True)`` for a serializable nested summary.
-Executor and MPI backends return input, output, pipeline, and metadata state
+Executor and MPI backends return input, output, children, and metadata state
 from atomic workers; ``temp`` and mutations to process-local ``shared`` state
 are not transported back.
 

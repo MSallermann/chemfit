@@ -153,7 +153,7 @@ chain:
 Metadata attached before ``with_loss()`` belongs to the quantity computer and
 usually describes computation or provenance. Metadata attached afterward
 belongs to the objective term. These are separate evaluation scopes: quantity
-metadata is available on ``ctx.pipeline[0].meta``, while objective metadata is
+metadata is available on ``ctx.children[0].meta``, while objective metadata is
 available on the root ``ctx.meta``. Use direct ``ctx.meta`` writes instead for
 values computed during one evaluation.
 

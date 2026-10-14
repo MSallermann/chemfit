@@ -139,7 +139,7 @@ loss stages remain one atomic scheduler task:
    their losses.
 
 If you pass an explicit context, the child evaluations are directly available
-through ``ctx.incoming``. That makes combined objectives useful not just for
+through ``ctx.children``. That makes combined objectives useful not just for
 optimization but also for inspection and debugging.
 
 .. testcode::
@@ -162,7 +162,7 @@ optimization but also for inspection and debugging.
 
     print(loss) # 1.5
     print(ctx.output) # 1.5
-    print([child.output for child in ctx.incoming]) # child losses
+    print([child.output for child in ctx.children]) # child losses
 
 .. testoutput::
     :hide:
@@ -281,7 +281,7 @@ A context-aware reducer has the richer signature
 
 Pass either form with ``reduction=`` or ``with_reduction()``. ChemFit detects
 whether the callable accepts the keyword-only ``ctx`` argument. A
-context-aware reducer can inspect the incoming term contexts and write
+context-aware reducer can inspect the child term contexts and write
 additional information into the combined context.
 
 This is the right tool when the final loss should depend on more than the term
@@ -293,7 +293,7 @@ Writing a context-aware reducer
 Context-aware reducers are useful when the terms are built from quantity
 components.
 
-In that case each incoming term context contains its pipeline stage contexts,
+In that case each child term context contains its pipeline stage contexts,
 so the reducer can inspect both the scalar term values and intermediate
 quantities.
 
@@ -307,7 +307,7 @@ The following example is based on the actual test setup.
 
    def custom_reducer(terms, *, ctx):
        ctx.meta["foo"] = "bar"
-       quantities = [term_ctx.pipeline[0].output for term_ctx in ctx.incoming]
+       quantities = [term_ctx.children[0].output for term_ctx in ctx.children]
        return sum(q["test"] for q in quantities)
 
    @quantity()
@@ -454,7 +454,7 @@ Writing your own exception handler is straightforward:
 
     ctx = chemfit.EvaluateContext()
     print(objective({"x" : 2.0}, ctx))
-    print(ctx.incoming[1].meta["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
+    print(ctx.children[1].meta["last_failure"]) # {'idx': 1, 'message': 'Whoops'}
 
 .. testoutput::
     :hide:
@@ -497,7 +497,7 @@ A combined objective can therefore configure its terms independently:
     ctx = EvaluateContext()
     objective({"x": 2.0}, ctx)
 
-    print([term_ctx.meta["term_number"] for term_ctx in ctx.incoming])
+    print([term_ctx.meta["term_number"] for term_ctx in ctx.children])
 
 .. testoutput::
     :hide:
