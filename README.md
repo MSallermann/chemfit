@@ -8,7 +8,9 @@
 
 A ChemFit objective can combine many systems, observables, reference data sets, and simulation workflows into a single fitting problem. Individual terms can use ASE calculators, external simulation programs, or arbitrary Python code.
 
-The same scientific objective can be used with different execution and optimization strategies without being rewritten.
+Under the hood, ChemFit provides a lightweight, flexible framework for composing scientific computations into pipelines, independent branches, and arbitrary dependency graphs.
+
+Although parameter fitting is its primary application, ChemFit's composition and execution machinery can also be used independently of an optimizer.
 
 ## What can ChemFit do?
 
@@ -19,8 +21,7 @@ ChemFit can be used to:
 - use [ASE calculations and geometry optimizations](https://chemfit.readthedocs.io/en/latest/src/usage/ase_objective_function_api.html) as fitting terms;
 - build [external simulation workflows](https://chemfit.readthedocs.io/en/latest/src/usage/external_computer.html) that generate input, run programs, post-process output, and extract quantities;
 - evaluate independent calculations concurrently using [threads, processes, or custom schedulers](https://chemfit.readthedocs.io/en/latest/src/usage/parallel_execution.html), or distribute them using [MPI](https://chemfit.readthedocs.io/en/latest/src/usage/mpi.html);
-- build [combined and nested objectives](https://chemfit.readthedocs.io/en/latest/src/usage/combined_objective_function.html) with weighting, custom reductions, and failure handling;
-- compose graph-visible [pipelines and joins](https://chemfit.readthedocs.io/en/latest/src/usage/advanced_concepts.html) or keep tightly coupled stages opaque;
+- compose [pipelines, joins, and arbitrary dependency graphs](https://chemfit.readthedocs.io/en/latest/src/usage/advanced_concepts.html), including nested components and shared intermediate computations;
 - use Nevergrad, SciPy, or a custom optimization loop.
 
 # Installation
@@ -216,9 +217,9 @@ Related frameworks offer different strengths:
 - **[Dakota](https://dakota.sandia.gov/)** offers extensive capabilities for optimization, parameter estimation, sensitivity analysis, and uncertainty quantification. ChemFit emphasizes defining and customizing fitting objectives directly in Python rather than providing a comprehensive numerical methods suite.
 - **[pyiron](https://pyiron.org/)** provides an integrated environment for atomistic simulations, including job management, data storage, and potential fitting. ChemFit is more narrowly focused on fitting objectives that can combine arbitrary Python computations, ASE calculations, and external simulation programs.
 
-ChemFit compiles composed objectives into dependency graphs. Its schedulers execute those graphs in serial, with threads or processes, or across MPI ranks. Persistent workflow management is outside its scope. Custom schedulers and hooks allow more sophisticated infrastructure to be integrated.
+ChemFit's built-in schedulers execute component dependency graphs, but they are not general workflow-management systems. Persistent provenance, automatic recovery, and resource-aware scheduling are not provided out of the box. Custom schedulers, executors, and hooks allow more sophisticated infrastructure to be integrated.
 
-It is a fitting-specific library that can be used independently of a larger workflow ecosystem, while remaining extensible enough to integrate with one.
+ChemFit remains focused on parameter fitting rather than general workflow management. Its composition and execution machinery can be used independently or integrated with a larger workflow ecosystem.
 
 # Documentation
 
