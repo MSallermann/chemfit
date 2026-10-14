@@ -108,6 +108,11 @@ def test_successful_nested_pipeline_and_join(scheduler):
     graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
 
     assert direct_result == graph_result == 20
+    assert direct_ctx.meta["chemfit.structure"] == graph_ctx.meta["chemfit.structure"]
+    assert (
+        direct_ctx.children[2].meta["chemfit.structure"]
+        == graph_ctx.children[2].meta["chemfit.structure"]
+    )
     assert [ctx.output for ctx in direct_ctx.children] == [4, 7, 21, 20]
     assert [ctx.output for ctx in graph_ctx.children] == [4, 7, 21, 20]
     assert [ctx.output for ctx in graph_ctx.children[2].children] == [7, 14]
@@ -189,10 +194,9 @@ def test_structural_with_loss_remains_graph_visible(scheduler):
     assert direct_result == graph_result == 8
     assert [ctx.output for ctx in graph_ctx.children] == [(3, 4), 8]
     assert [ctx.output for ctx in graph_ctx.children[0].children] == [3, 4]
-    assert graph_ctx.children[0].meta == {
-        "scope": "joined",
-        "post_hook_ran": True,
-    }
+    assert graph_ctx.children[0].meta["scope"] == "joined"
+    assert graph_ctx.children[0].meta["post_hook_ran"] is True
+    assert "chemfit.structure" in graph_ctx.children[0].meta
 
 
 def test_atomic_with_loss_remains_opaque(scheduler):
@@ -403,6 +407,7 @@ def test_pre_hook_short_circuit_and_post_hook_transform_match_direct_call(schedu
 
     assert objective(2, direct_ctx) == graph_result == 9
     assert direct_ctx.children == graph_ctx.children == []
+    assert direct_ctx.meta["chemfit.structure"] == graph_ctx.meta["chemfit.structure"]
     assert graph_ctx.output == 9
 
 
@@ -515,7 +520,14 @@ def test_custom_input_policy_skips_subtree_and_unlocks_dependency_chain(schedule
     graph_result, graph_ctx = evaluate_graph(scheduler, objective, 5)
 
     assert direct_result == graph_result == 15
-    assert direct_ctx.meta == graph_ctx.meta == {"skipped_failed_branch": True}
+    assert direct_ctx.meta["skipped_failed_branch"] is True
+    assert graph_ctx.meta["skipped_failed_branch"] is True
+    assert direct_ctx.meta["chemfit.structure"] == graph_ctx.meta["chemfit.structure"]
+    assert (
+        direct_ctx.children[1].meta["chemfit.structure"]
+        == graph_ctx.children[1].meta["chemfit.structure"]
+    )
+    assert direct_ctx.children[1].children == []
     assert isinstance(graph_ctx.children[0].output, ValueError)
     assert graph_ctx.children[1].output is NO_OUTPUT
     assert graph_ctx.children[1].children == []

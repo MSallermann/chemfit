@@ -647,14 +647,23 @@ In both cases, ``ctx.children`` contains one context per immediate invocation
 in declaration order. Nested compositions create nested context trees
 recursively. Contexts have no parent or reverse-dependency links, and sibling
 dataflow dependencies are represented only by the compiled call graph.
-``ctx.to_summary(recursive=True)`` follows the ``children`` hierarchy.
+:meth:`~chemfit.evaluate_context.EvaluateContext.to_summary` follows the
+``children`` hierarchy when called with ``recursive=True``.
+
+Each structural context records its immediate declared structure in
+``ctx.meta["chemfit.structure"]``. Its child indices correspond to
+``ctx.children``; nested structural contexts carry their own descriptions.
+This supports recursive reconstruction without storing a flattened
+description. See :ref:`evaluation_contexts` for the metadata schema and an
+inspection example.
 
 Child contexts are created only after the structural parent's begin lifecycle
 succeeds. If a parent pre-hook returns a result or raises, it has no child
-contexts. Once child contexts have been created, a child skipped by input
-resolution keeps its initial ``NO_OUTPUT`` value because none of its lifecycle
-runs. A child that executes and fails instead stores the exception in its
-``ctx.output``.
+contexts, although its structural metadata still declares them. A structural
+child skipped by input resolution retains its local description but has
+``NO_OUTPUT`` and no children. A child that executes and fails instead stores
+the exception in ``ctx.output``. ChemFit does not create deeper contexts below
+a structural scope that never starts.
 
 Each child gets a deep copy of its parent's ``config``, a fresh ``meta`` and
 ``temp``, and the same ``shared`` namespace for local execution. Worker-backed

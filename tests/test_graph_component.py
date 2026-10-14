@@ -1,5 +1,6 @@
 """Focused tests for user-built structural graphs."""
 
+import json
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -154,6 +155,10 @@ def test_nested_structural_components_match_direct_evaluation(scheduler):
     assert direct_ctx.to_summary(recursive=True) == scheduled_ctx.to_summary(
         recursive=True
     )
+    assert "chemfit.structure" in direct_ctx.meta
+    assert "chemfit.structure" in direct_ctx.children[0].meta
+    assert "chemfit.structure" in direct_ctx.children[0].children[0].meta
+    json.dumps(direct_ctx.to_summary(recursive=True))
 
 
 def failure_graphs():
@@ -259,3 +264,24 @@ def test_output_snapshots_topology_and_keeps_inputs_separate_from_dependencies()
         (PARENT_INPUT,),
     )
     assert extended.combine_inputs() == (2,)
+
+    ctx = EvaluateContext()
+    assert extended(3, ctx) == 3
+    assert ctx.meta["chemfit.structure"] == {
+        "children": [
+            {"index": index, "name": name}
+            for index, name in enumerate(("identity", "pair", "identity"))
+        ],
+        "inputs": [
+            [{"kind": "parent_input"}],
+            [{"kind": "child", "index": 0}, {"kind": "child", "index": 0}],
+            [{"kind": "parent_input"}],
+        ],
+        "dependencies": [[], [0], [1]],
+        "outputs": [{"kind": "child", "index": 2}],
+    }
+
+    ctx.meta["chemfit.structure"]["children"].clear()
+    assert extended(4, ctx) == 4
+    assert len(ctx.meta["chemfit.structure"]["children"]) == 3
+    assert len(ctx.children) == 3

@@ -723,9 +723,10 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         # Allocate children only after begin succeeds. Consequently, an early
         # structural result has no child contexts, matching direct evaluation.
-        for child_node_id in node.contained_component_start_ids:
-            child_ctx = component_ctx.spawn_ctx()
-            component_ctx.children.append(child_ctx)
+        child_ctxs = component._spawn_child_contexts(component_ctx)  # noqa: SLF001
+        for child_node_id, child_ctx in zip(
+            node.contained_component_start_ids, child_ctxs, strict=True
+        ):
             run.state.contexts[child_node_id] = child_ctx
 
         run.state.complete(node_id, component_input)

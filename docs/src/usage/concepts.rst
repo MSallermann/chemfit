@@ -201,6 +201,60 @@ metadata. A failed component's output is the exception object. Opaque and
 structural pipelines both expose their stages as ``children``. Their scheduler
 visibility differs, but their evaluation-context representation does not.
 
+Structural metadata
+-------------------
+
+Every :class:`~chemfit.abstract_objective_function.StructuralComponent` also
+stores its immediate declared structure in ``ctx.meta["chemfit.structure"]``.
+The description is static and JSON-compatible. ``children`` identifies
+immediate components by index and name; ``inputs`` records their ordered data
+sources; ``dependencies`` records execution-order prerequisites separately;
+and ``outputs`` records how the result is constructed. Sources identify the
+parent input, another child by index, or a skipped value. Repeated sources are
+not collapsed. Runtime values, exceptions, and timings remain in the context.
+
+For example:
+
+.. testcode::
+
+    from chemfit import EvaluateContext, component, pipeline
+
+    @component()
+    def double(value):
+        return 2 * value
+
+    @component()
+    def add_one(value):
+        return value + 1
+
+    workflow = pipeline(double, add_one)
+    workflow_ctx = EvaluateContext()
+    workflow(3, workflow_ctx)
+    structure = workflow_ctx.meta["chemfit.structure"]
+
+    print(structure["inputs"])
+    print(structure["dependencies"])
+
+.. testoutput::
+    :hide:
+
+    [[{'kind': 'parent_input'}], [{'kind': 'child', 'index': 0}]]
+    [[], [0]]
+
+Structural metadata is local rather than flattened. A nested structural
+child's context has its own entry. Recursively pairing declared child indices
+with context ``children`` reconstructs the evaluated structure, with paths
+such as ``(0, 2)`` identifying components. The same information is included by
+:meth:`~chemfit.evaluate_context.EvaluateContext.to_summary` when called with
+``recursive=True``.
+
+Declared components and runtime contexts are distinct. A structural child
+skipped before its lifecycle begins retains its structural entry, but has
+``NO_OUTPUT`` and no children. A structural pre-hook that short-circuits
+likewise has structural metadata but no child contexts. ChemFit does not
+fabricate deeper contexts for a scope that never began, so topology below that
+scope is not available by context traversal alone.
+
 -------------------------
 
 Metadata
