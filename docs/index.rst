@@ -26,6 +26,9 @@ Out of the box, ChemFit includes integrations for the calculators defined in the
 - **Concurrent execution:** Evaluate parameter candidates and independent computations concurrently using threads, processes, or MPI ranks.
 - **Extensible architecture:** Implement custom computational components and simulation interfaces using ChemFit's core abstractions.
 
+Not sure which feature fits your problem? :ref:`problem_guide` explains the
+recommended approaches and tradeoffs for common fitting and execution tasks.
+
 -------------------------
 
 .. _quickstart:
@@ -184,6 +187,7 @@ direct control over threads, processes, or MPI. The :ref:`common_workflows`,
    :caption: Getting started
 
    src/installation
+   src/usage/what_do_you_want_to_do.rst
    src/usage/public_api.rst
 
 .. toctree::

@@ -329,6 +329,8 @@ the pipeline has no value to return.
 
 -------------------------
 
+.. _combine_or_join:
+
 Joins and independent children
 ==============================
 
@@ -370,14 +372,26 @@ and returns its child outcomes as a tuple:
     (9, 27)
     [9, 27]
 
-``JoinedComponent`` leaves ``combine_outcomes()`` to subclasses. The built-in
+:class:`~chemfit.abstract_objective_function.JoinedComponent` leaves
+:meth:`~chemfit.abstract_objective_function.JoinedComponent.combine_outcomes`
+to subclasses. The built-in
 :class:`~chemfit.abstract_objective_function.TupleJoinedComponent` returns the
 child outcomes in declaration order, preserving exceptions and skip markers as
 tuple entries.
 
-:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` is the
-join used by :func:`chemfit.combine() <chemfit.api.combine>`. Its children are
-independent scalar objective terms. Once all terms have completed, it:
+A component after :func:`chemfit.join() <chemfit.api.join>` therefore owns the
+result policy. It can re-raise a child exception, replace it with a penalty,
+omit that result, or preserve it for reporting. This is useful when the
+branches are not all scalar losses or when fitting-specific exception handlers
+do not express the required policy. ChemFit exposes the outcomes; the
+downstream component must implement the chosen interpretation explicitly.
+
+:class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`,
+constructed by :func:`chemfit.combine() <chemfit.api.combine>`, is a
+specialized join of scalar-valued objective terms. It has the same independent
+child structure as :func:`chemfit.join() <chemfit.api.join>`, but adds weights,
+a scalar reduction, and a built-in exception policy. Once all terms have
+completed, it:
 
 1. passes failed term outcomes to the configured exception handler;
 2. omits terms for which that handler returns ``None``;
