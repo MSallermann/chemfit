@@ -372,8 +372,9 @@ def call_graph_to_dot(  # noqa: PLR0912
 
     if svg_output_path is not None:
         if dot_output_path is None:
+            msg = "Have to set `dot_output_path` if `svg_output_path` is set."
             raise ValueError(
-                "Have to set `dot_output_path` if `svg_output_path` is set."  # noqa: EM101
+                msg
             )
 
         subprocess.run(  # noqa: S603
