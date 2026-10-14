@@ -176,31 +176,28 @@ The context can be used to record additional information during evaluation:
 
 ---------------------------
 
-Context relationships
-=====================
+Context hierarchy
+=================
 
-Structural components create context relationships mirroring their nested
-evaluation scopes.
+Components create a context tree mirroring their nested evaluation scopes.
 
 - The top-level evaluation uses the context supplied by the caller.
 - Each nested component receives its own context.
-- ``incoming`` and ``outgoing`` expose parent/child containment links without
-  allowing the topology to be mutated through those properties.
+- Every context exposes its ordered immediate evaluation contexts through
+  ``children``.
 
 Conceptually:
 
 .. code-block:: text
 
-    term 1 context ──┐
-                     ├── combined-objective context
-    term 2 context ──┘
+    combined-objective context
+    ├── term 1 context
+    └── term 2 context
 
-Each incoming context stores its component's input, finalized output, and
-metadata. A failed component's output is the exception object. Opaque
-pipelines expose their ordered stage contexts through ``pipeline``; structural
-pipelines expose their stages as ``incoming`` children. This makes nested
-results inspectable without flattening or copying metadata into the root
-context.
+Each child context stores its component's input, finalized output, and
+metadata. A failed component's output is the exception object. Opaque and
+structural pipelines both expose their stages as ``children``. Their scheduler
+visibility differs, but their evaluation-context representation does not.
 
 -------------------------
 
@@ -217,7 +214,7 @@ Typical uses include:
 - tracking which terms contributed to the final loss
 
 Metadata stays on the context whose component produced it. Inspect
-``ctx.incoming`` or ``ctx.pipeline`` when nested component metadata is needed.
+``ctx.children`` recursively when nested component metadata is needed.
 
 Static metadata belongs to a reusable computation or objective definition. Add
 it fluently with
@@ -237,7 +234,7 @@ it fluently with
 branch from one base definition. Metadata belongs to the component on which it
 was configured and is merged into that component's context after ``_run()``
 and before post-hooks. Thus quantity-computer metadata in this example is
-stored on ``ctx.pipeline[0].meta`` and the metadata added after ``with_loss()``
+stored on ``ctx.children[0].meta`` and the metadata added after ``with_loss()``
 is stored on the root ``ctx.meta``. The scopes are not flattened, so identical
 keys at the two levels do not overwrite one another.
 

@@ -331,12 +331,11 @@ class OpaquePipeline(ObjectiveComponent[InputT_contra, OutputT_co]):
         return cast("OpaquePipeline[InputT_contra, NextT]", new)
 
     def _run(self, input_: InputT_contra, /, ctx: EvaluateContext) -> OutputT_co:
-        ctx.pipeline = []
         result: Any = input_
 
         for component in self._components:
             stage_ctx = ctx.spawn_ctx()
-            ctx.pipeline.append(stage_ctx)
+            ctx.children.append(stage_ctx)
             result = component(result, stage_ctx)
 
         return cast("OutputT_co", result)
@@ -648,9 +647,7 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         # Create child contexts before evaluating any children.
         # This preserves the context structure even for skipped children.
         child_ctxs = [ctx.spawn_ctx() for _ in components]
-
-        for child_ctx in child_ctxs:
-            ctx.add_incoming(child_ctx)
+        ctx.children.extend(child_ctxs)
 
         # Store one outcome per child, including skipped evaluations.
         outcomes: list[Any] = [NO_OUTPUT] * len(components)

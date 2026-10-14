@@ -108,9 +108,19 @@ def test_successful_nested_pipeline_and_join(scheduler):
     graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
 
     assert direct_result == graph_result == 20
-    assert [ctx.output for ctx in direct_ctx.incoming] == [4, 7, 21, 20]
-    assert [ctx.output for ctx in graph_ctx.incoming] == [4, 7, 21, 20]
-    assert [ctx.output for ctx in graph_ctx.incoming[2].incoming] == [7, 14]
+    assert [ctx.output for ctx in direct_ctx.children] == [4, 7, 21, 20]
+    assert [ctx.output for ctx in graph_ctx.children] == [4, 7, 21, 20]
+    assert [ctx.output for ctx in graph_ctx.children[2].children] == [7, 14]
+    for ctx in (direct_ctx, graph_ctx):
+        terms = ctx.children[2].children
+        assert [stage.output for stage in terms[0].children] == [
+            {"value": 7},
+            7,
+        ]
+        assert [stage.output for stage in terms[1].children] == [
+            {"value": 14},
+            14,
+        ]
     assert graph_ctx.output == 20
 
 
@@ -136,13 +146,13 @@ def test_nested_pipeline_and_join_support_repeated_component_instances(scheduler
     graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
 
     assert direct_result == graph_result == (14, 14)
-    assert [child.output for child in graph_ctx.incoming] == [14, 14]
+    assert [child.output for child in graph_ctx.children] == [14, 14]
 
     occurrence_contexts = []
-    for branch_ctx in graph_ctx.incoming:
-        repeated_join_ctx = branch_ctx.incoming[0]
-        assert [ctx.output for ctx in repeated_join_ctx.incoming] == [4, 4, 3, 3]
-        occurrence_contexts.extend(repeated_join_ctx.incoming)
+    for branch_ctx in graph_ctx.children:
+        repeated_join_ctx = branch_ctx.children[0]
+        assert [ctx.output for ctx in repeated_join_ctx.children] == [4, 4, 3, 3]
+        occurrence_contexts.extend(repeated_join_ctx.children)
 
     assert len({id(ctx) for ctx in occurrence_contexts}) == 8
 
@@ -177,9 +187,9 @@ def test_structural_with_loss_remains_graph_visible(scheduler):
     graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
 
     assert direct_result == graph_result == 8
-    assert [ctx.output for ctx in graph_ctx.incoming] == [(3, 4), 8]
-    assert [ctx.output for ctx in graph_ctx.incoming[0].incoming] == [3, 4]
-    assert graph_ctx.incoming[0].meta == {
+    assert [ctx.output for ctx in graph_ctx.children] == [(3, 4), 8]
+    assert [ctx.output for ctx in graph_ctx.children[0].children] == [3, 4]
+    assert graph_ctx.children[0].meta == {
         "scope": "joined",
         "post_hook_ran": True,
     }
@@ -206,8 +216,8 @@ def test_atomic_with_loss_remains_opaque(scheduler):
     )
 
     assert atomic_direct_result == atomic_graph_result == 9
-    assert [ctx.output for ctx in atomic_direct_ctx.pipeline] == [3, 9]
-    assert [ctx.output for ctx in atomic_graph_ctx.pipeline] == [3, 9]
+    assert [ctx.output for ctx in atomic_direct_ctx.children] == [3, 9]
+    assert [ctx.output for ctx in atomic_graph_ctx.children] == [3, 9]
 
 
 def test_failed_atomic_stage_skips_downstream_stage(scheduler):
@@ -230,9 +240,9 @@ def test_failed_atomic_stage_skips_downstream_stage(scheduler):
     ):
         schedule(3, ctx)
 
-    assert isinstance(ctx.incoming[0].output, ValueError)
-    assert str(ctx.incoming[0].output) == "atomic failure"
-    assert ctx.incoming[1].output is NO_OUTPUT
+    assert isinstance(ctx.children[0].output, ValueError)
+    assert str(ctx.children[0].output) == "atomic failure"
+    assert ctx.children[1].output is NO_OUTPUT
 
 
 def test_join_recovers_from_one_failed_term_and_runs_sibling(scheduler):
@@ -252,9 +262,9 @@ def test_join_recovers_from_one_failed_term_and_runs_sibling(scheduler):
     result, ctx = evaluate_graph(scheduler, objective, 4)
 
     assert result == 8
-    assert isinstance(ctx.incoming[0].output, ValueError)
-    assert str(ctx.incoming[0].output) == "term failure"
-    assert ctx.incoming[1].output == 8
+    assert isinstance(ctx.children[0].output, ValueError)
+    assert str(ctx.children[0].output) == "term failure"
+    assert ctx.children[1].output == 8
 
 
 def test_failed_structural_begin_aborts_only_its_own_scope(scheduler):
@@ -294,10 +304,10 @@ def test_failed_structural_begin_aborts_only_its_own_scope(scheduler):
 
     assert result == 5
     assert calls == ["begin hook", "end hook"]
-    assert isinstance(ctx.incoming[0].output, RuntimeError)
-    assert str(ctx.incoming[0].output) == "begin failure"
-    assert ctx.incoming[0].incoming == ()  # No child evaluations started.
-    assert ctx.incoming[1].output == 5
+    assert isinstance(ctx.children[0].output, RuntimeError)
+    assert str(ctx.children[0].output) == "begin failure"
+    assert ctx.children[0].children == []  # No child evaluations started.
+    assert ctx.children[1].output == 5
 
 
 def test_failed_input_skips_entire_nested_structural_component(scheduler):
@@ -333,9 +343,9 @@ def test_failed_input_skips_entire_nested_structural_component(scheduler):
     ):
         schedule(2, ctx)
 
-    assert isinstance(ctx.incoming[0].output, ValueError)
-    assert ctx.incoming[1].output is NO_OUTPUT
-    assert ctx.incoming[1].incoming == ()
+    assert isinstance(ctx.children[0].output, ValueError)
+    assert ctx.children[1].output is NO_OUTPUT
+    assert ctx.children[1].children == []
     assert calls == []
 
 
@@ -371,11 +381,11 @@ def test_structural_end_failure_is_reported_without_aborting_siblings(scheduler)
 
     assert result == 7
     assert calls == ["failed branch post"]
-    assert [child.output for child in ctx.incoming[0].incoming] == [3, 6]
+    assert [child.output for child in ctx.children[0].children] == [3, 6]
     # A failed post-hook becomes the finalized outcome.
-    assert isinstance(ctx.incoming[0].output, RuntimeError)
-    assert str(ctx.incoming[0].output) == "end failure"
-    assert ctx.incoming[1].output == 7
+    assert isinstance(ctx.children[0].output, RuntimeError)
+    assert str(ctx.children[0].output) == "end failure"
+    assert ctx.children[1].output == 7
 
 
 def test_pre_hook_short_circuit_and_post_hook_transform_match_direct_call(scheduler):
@@ -392,7 +402,7 @@ def test_pre_hook_short_circuit_and_post_hook_transform_match_direct_call(schedu
     graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
 
     assert objective(2, direct_ctx) == graph_result == 9
-    assert direct_ctx.incoming == graph_ctx.incoming == ()
+    assert direct_ctx.children == graph_ctx.children == []
     assert graph_ctx.output == 9
 
 
@@ -413,7 +423,7 @@ def test_atomic_post_hook_recovery_is_used_by_downstream_component(scheduler):
     graph_result, ctx = evaluate_graph(scheduler, objective, 2)
 
     assert direct_result == graph_result == 7
-    assert [child.output for child in ctx.incoming] == [6, 7]
+    assert [child.output for child in ctx.children] == [6, 7]
 
 
 def test_literal_and_resolution_skips_reach_structural_reducer(scheduler):
@@ -457,7 +467,7 @@ def test_literal_and_resolution_skips_reach_structural_reducer(scheduler):
 
     assert direct_result == graph_result == (None, "resolution failed", None)
     assert calls == []
-    assert [child.output for child in ctx.incoming] == [NO_OUTPUT, NO_OUTPUT]
+    assert [child.output for child in ctx.children] == [NO_OUTPUT, NO_OUTPUT]
 
 
 def test_custom_input_policy_skips_subtree_and_unlocks_dependency_chain(scheduler):
@@ -506,10 +516,10 @@ def test_custom_input_policy_skips_subtree_and_unlocks_dependency_chain(schedule
 
     assert direct_result == graph_result == 15
     assert direct_ctx.meta == graph_ctx.meta == {"skipped_failed_branch": True}
-    assert isinstance(graph_ctx.incoming[0].output, ValueError)
-    assert graph_ctx.incoming[1].output is NO_OUTPUT
-    assert graph_ctx.incoming[1].incoming == ()
-    assert graph_ctx.incoming[2].output == 15
+    assert isinstance(graph_ctx.children[0].output, ValueError)
+    assert graph_ctx.children[1].output is NO_OUTPUT
+    assert graph_ctx.children[1].children == []
+    assert graph_ctx.children[2].output == 15
 
 
 def test_finish_waits_for_children_not_selected_by_combine_inputs(scheduler):
@@ -542,7 +552,7 @@ def test_finish_waits_for_children_not_selected_by_combine_inputs(scheduler):
     result, ctx = evaluate_graph(scheduler, SelectFirst(), 3)
 
     assert result == 4
-    assert [child.output for child in ctx.incoming] == [4, 6]
+    assert [child.output for child in ctx.children] == [4, 6]
 
 
 def test_batch_mixed_success_and_failure_keeps_request_indices(scheduler):
@@ -581,14 +591,14 @@ def test_batch_mixed_success_and_failure_keeps_request_indices(scheduler):
 
     assert [ctx.input for ctx in contexts] == inputs
     for index, expected_first, expected_result in [(0, 4, 5), (2, 10, 11)]:
-        assert contexts[index].incoming[0].output == expected_first
-        assert contexts[index].incoming[1].output == expected_result
+        assert contexts[index].children[0].output == expected_first
+        assert contexts[index].children[1].output == expected_result
         assert contexts[index].output == expected_result
 
     for index in (1, 3):
         ctx = contexts[index]
-        assert isinstance(ctx.incoming[0].output, ValueError)
-        assert ctx.incoming[1].output is NO_OUTPUT
+        assert isinstance(ctx.children[0].output, ValueError)
+        assert ctx.children[1].output is NO_OUTPUT
 
 
 def test_batch_recovered_failures_are_isolated_per_request(scheduler):
@@ -633,9 +643,9 @@ def test_batch_recovered_failures_are_isolated_per_request(scheduler):
 
     for index, (value, ctx) in enumerate(zip(inputs, contexts, strict=True)):
         assert ctx.output == {0: 3, 1: 4, 2: 9, 3: 8}[index]
-        assert ctx.incoming[1].output == 2 * value
+        assert ctx.children[1].output == 2 * value
         if value % 2 == 0:
-            assert isinstance(ctx.incoming[0].output, ValueError)
-            assert str(ctx.incoming[0].output) == f"failed: {value}"
+            assert isinstance(ctx.children[0].output, ValueError)
+            assert str(ctx.children[0].output) == f"failed: {value}"
         else:
-            assert ctx.incoming[0].output == value
+            assert ctx.children[0].output == value

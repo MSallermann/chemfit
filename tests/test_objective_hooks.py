@@ -82,4 +82,4 @@ def test_recursive_registration_updates_shared_descendant_instances():
     ctx = EvaluateContext()
     assert second_composition(5, ctx) == 3
     assert ctx.meta == {}
-    assert ctx.incoming[0].meta["registered_recursively"] is True
+    assert ctx.children[0].meta["registered_recursively"] is True

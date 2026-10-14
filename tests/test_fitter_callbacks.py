@@ -15,13 +15,13 @@ def make_context(loss: float, x: float) -> FitterEvaluateContext:
 def test_save_metadata_includes_nested_summaries(tmp_path: Path):
     ctx = FitterEvaluateContext()
     child = ctx.spawn_ctx()
-    ctx.add_incoming(child)
+    ctx.children.append(child)
     child.meta["marker"] = "child"
 
     SaveMetaData(tmp_path)(0, [ctx])
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
-    assert saved["incoming"][0]["meta"] == {"marker": "child"}
+    assert saved["children"][0]["meta"] == {"marker": "child"}
 
 
 def test_checkpoint_dont_overwrite_uses_next_available_path(tmp_path: Path):

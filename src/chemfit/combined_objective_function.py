@@ -300,7 +300,7 @@ class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
         for i in range(self.n_components()):
             t = outcomes[i]
             if isinstance(t, Exception):
-                outcomes_filtered[i] = self.exception_handler(t, ctx.incoming[i], i)
+                outcomes_filtered[i] = self.exception_handler(t, ctx.children[i], i)
 
         skipped_indices = []
         filtered_terms = []

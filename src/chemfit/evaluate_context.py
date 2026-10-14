@@ -27,9 +27,9 @@ class EvaluateContext:
         This makes evaluation easier to reason about and
         compatible with concurrent execution.
 
-        Structural evaluations link their component contexts through
-        ``incoming`` and ``outgoing``. Opaque pipelines record their ordered
-        stage contexts in ``pipeline``.
+        Nested component invocations are recorded in ``children`` in
+        declaration order. Contexts describe the evaluation hierarchy only;
+        execution dependencies belong to the compiled call graph.
 
         Args:
             config:
@@ -54,6 +54,8 @@ class EvaluateContext:
                 Child-local evaluation configuration for this context.
             shared:
                 Shared state or resources reused across related contexts.
+            children (list[EvaluateContext]): Ordered immediate child
+                evaluation contexts.
 
         """
 
@@ -64,13 +66,12 @@ class EvaluateContext:
         Return a dictionary summarizing the evaluation state.
 
         Args:
-            recursive: If ``True``, recursively summarize incoming and opaque
-                pipeline contexts. If ``False``, summarize only this context.
+            recursive: If ``True``, recursively summarize child contexts. If
+                ``False``, summarize only this context.
 
         Returns:
             Dictionary containing ``input``, ``output``, and ``meta``.
-            Recursive summaries may additionally contain ``incoming`` and
-            ``pipeline``.
+            Recursive summaries additionally contain ``children``.
 
         """
         summary = {
@@ -78,14 +79,9 @@ class EvaluateContext:
             "output": self.output,
             "meta": self.meta,
         }
-        if recursive and self._incoming:
-            summary["incoming"] = [
-                incoming.to_summary(recursive=True) for incoming in self._incoming
-            ]
-
-        if recursive and self.pipeline:
-            summary["pipeline"] = [
-                stage.to_summary(recursive=True) for stage in self.pipeline
+        if recursive:
+            summary["children"] = [
+                child.to_summary(recursive=True) for child in self.children
             ]
         return summary
 
@@ -98,47 +94,19 @@ class EvaluateContext:
         self.config = SimpleNamespace() if config is None else config
         self.shared = SimpleNamespace() if shared is None else shared
         self.meta: dict[str, Any] = {}
-        self.pipeline: list[EvaluateContext] = []
-        self._incoming: list[EvaluateContext] = []
-        self._outgoing: list[EvaluateContext] = []
+        self.children: list[EvaluateContext] = []
 
     def _reset_evaluation_state(self) -> None:
         """Clear per-call results while preserving configuration and shared state."""
-        self._clear_incoming()
         self.input = None
         self.output = NO_OUTPUT
         self.temp = SimpleNamespace()
         self.meta = {}
-        self.pipeline = []
+        self.children = []
 
     def spawn_ctx(self) -> EvaluateContext:
+        """Create a child-compatible context with copied configuration."""
         return EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
-
-    @property
-    def incoming(self) -> tuple[EvaluateContext, ...]:
-        """Return incoming contexts."""
-
-        return tuple(self._incoming)
-
-    @property
-    def outgoing(self) -> tuple[EvaluateContext, ...]:
-        """Return the outgoing contexts contexts."""
-
-        return tuple(self._outgoing)
-
-    def _clear_incoming(self) -> None:
-        for ctx in self._incoming:
-            ctx._outgoing.remove(self)  # noqa: SLF001
-        self._incoming.clear()
-
-    def add_incoming(self, ctx_incoming: EvaluateContext) -> None:
-        if ctx_incoming is self:
-            msg = "A context cannot depend on itself."
-            raise ValueError(msg)
-        if any(existing is ctx_incoming for existing in self._incoming):
-            return
-        self._incoming.append(ctx_incoming)
-        ctx_incoming._outgoing.append(self)
 
     def __getstate__(self) -> dict[str, Any]:
         """
@@ -186,7 +154,7 @@ class EvaluateContext:
             "input": self.input,
             "output": self.output,
             "meta": self.meta,
-            "pipeline": [p.to_result_state() for p in self.pipeline],
+            "children": [child.to_result_state() for child in self.children],
         }
 
     def apply_result_state(self, state: dict[str, Any]):
@@ -199,17 +167,17 @@ class EvaluateContext:
 
         Side Effects:
             Updates input, output, and metadata on this context and
-            restores result state on opaque-pipeline descendants.
+            recursively restores result state on child contexts.
 
         """
 
         self.input = state["input"]
         self.output = state["output"]
         self.meta = state["meta"]
-        pipeline_states = state["pipeline"]
+        child_states = state["children"]
 
-        if len(self.pipeline) != len(pipeline_states):
-            self.pipeline = [self.spawn_ctx() for _ in pipeline_states]
+        if len(self.children) != len(child_states):
+            self.children = [self.spawn_ctx() for _ in child_states]
 
-        for self_p, res_p in zip(self.pipeline, pipeline_states, strict=True):
-            self_p.apply_result_state(res_p)
+        for child, child_state in zip(self.children, child_states, strict=True):
+            child.apply_result_state(child_state)

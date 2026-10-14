@@ -56,7 +56,7 @@ def test_closing_partially_consumed_generator_closes_schedule():
         schedule(4)
 
 
-def test_repeated_batches_replace_context_graph_state():
+def test_repeated_batches_replace_context_hierarchy():
     @component()
     def double(value):
         return 2 * value
@@ -68,10 +68,15 @@ def test_repeated_batches_replace_context_graph_state():
     ctx = EvaluateContext()
     with SerialGraphScheduler().prepare(PipelineComponent(double, add_one)) as schedule:
         assert schedule(2, ctx) == 5
+        first_children = tuple(ctx.children)
         assert schedule(4, ctx) == 9
 
     assert ctx.output == 9
-    assert [child.output for child in ctx.incoming] == [8, 9]
+    assert [child.output for child in ctx.children] == [8, 9]
+    assert all(
+        current is not previous
+        for current, previous in zip(ctx.children, first_children, strict=True)
+    )
 
 
 def test_thread_backend_executes_independent_nodes_concurrently():
