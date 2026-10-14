@@ -18,6 +18,7 @@ from chemfit.api import (
     evaluate_many,
     external_quantity,
     fit_nevergrad,
+    graph,
     join,
     pipeline,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "evaluate_many",
     "external_quantity",
     "fit_nevergrad",
+    "graph",
     "join",
     "log_progress",
     "mean_reducer",

@@ -19,6 +19,7 @@ from chemfit.abstract_objective_function import (
     TupleJoinedComponent,
     WrappedComponent,
 )
+from chemfit.graph_component import GraphBuilder
 from chemfit.ase_objective_function import (
     ASEComputer,
     ASEEvaluator,
@@ -205,6 +206,10 @@ def join(
         components = cast("tuple[ObjectiveComponent[InputT, Any], ...]", args)
 
     return TupleJoinedComponent(components)
+
+
+def graph() -> GraphBuilder:
+    return GraphBuilder()
 
 
 def external_quantity(
