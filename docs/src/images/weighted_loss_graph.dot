@@ -1,0 +1,29 @@
+digraph WeightedLossGraph {
+    graph [
+        rankdir=LR,
+        bgcolor="#ffffff",
+        fontname="Helvetica",
+        nodesep=0.40,
+        ranksep=0.55,
+        pad=0.15
+    ];
+    node [shape=box, style="rounded,filled", fontname="Helvetica", margin="0.16,0.10"];
+    edge [fontname="Helvetica", color="#64748b", fontcolor="#475569", arrowsize=0.75];
+
+    parameters [shape=ellipse, fillcolor="#f8fafc", label="parameters"];
+    predictions [fillcolor="#dcfce7", label="predict_energies"];
+    variances [fillcolor="#dcfce7", label="estimate_variances\nshared result"];
+    misfit [fillcolor="#dbeafe", label="weighted_error"];
+    penalty [fillcolor="#dbeafe", label="noise_penalty"];
+    total [fillcolor="#f1f5f9", label="add_losses"];
+    result [shape=ellipse, fillcolor="#f8fafc", label="total loss"];
+
+    parameters -> predictions;
+    parameters -> variances;
+    predictions -> misfit;
+    variances -> misfit [label=" variances"];
+    variances -> penalty [label=" reused"];
+    misfit -> total;
+    penalty -> total;
+    total -> result;
+}
