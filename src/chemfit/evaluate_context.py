@@ -47,6 +47,8 @@ class EvaluateContext:
         Attributes:
             meta (dict[str, Any]): Free-form metadata dictionary.
                 Implementations may add diagnostic information here as needed.
+                Structural components reserve ``"chemfit.structure"`` for a
+                description of their immediate structure.
             temp (SimpleNamespace): Scratch space for temporary values
                 during evaluation. Nothing stored here is part of the
                 public API. It is omitted from the ``to_summary()`` method.

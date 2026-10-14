@@ -242,6 +242,9 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
                 ctx.output = e
                 raise
 
+    def _attach_context_metadata(self, ctx: EvaluateContext) -> None:
+        """Attach component-specific metadata to an evaluation context."""
+
     def _begin_evaluation(
         self,
         input_: InputT_contra,
@@ -251,6 +254,8 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         ctx._reset_evaluation_state()  # noqa: SLF001
         self._apply_ctx_configurator(ctx)
         ctx.input = input_
+
+        self._attach_context_metadata(ctx)
 
         result: None | OutputT_co = None
         for hook in self.pre_eval_hooks:
@@ -278,6 +283,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         ctx: EvaluateContext,
     ) -> OutputT_co:
         ctx.meta.update(self.static_meta_data)
+        self._attach_context_metadata(ctx)
 
         ctx.output = outcome
         self._invoke_post_eval_hooks(ctx)
@@ -491,6 +497,45 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
     concurrently, but must preserve the same evaluation semantics.
     """
 
+    @staticmethod
+    def _describe_source(source: InputSource) -> dict[str, Any]:
+        """Return a description of one declared input source."""
+        if source is PARENT_INPUT:
+            return {"kind": "parent_input"}
+        if isinstance(source, Skipped):
+            return {"kind": "skipped"}
+        return {"kind": "child", "index": source}
+
+    def _structure_metadata(self) -> dict[str, Any]:
+        """Return a fresh description of this component's immediate structure."""
+        return {
+            "children": [
+                {
+                    "index": index,
+                    "name": getattr(
+                        getattr(component, "func", None),
+                        "__name__",
+                        type(component).__name__,
+                    ),
+                }
+                for index, component in enumerate(self.components())
+            ],
+            "inputs": [
+                [self._describe_source(source) for source in sources]
+                for sources in self.component_inputs()
+            ],
+            "dependencies": [
+                list(dependencies) for dependencies in self.component_dependencies()
+            ],
+            "outputs": [
+                self._describe_source(source) for source in self.combine_inputs()
+            ],
+        }
+
+    def _attach_context_metadata(self, ctx: EvaluateContext) -> None:
+        """Attach this component's immediate structure to an evaluation context."""
+        ctx.meta["chemfit.structure"] = self._structure_metadata()
+
     def components(
         self,
     ) -> Sequence[ComponentExpr[Any, Any]]:
@@ -621,6 +666,17 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
         """
         raise NotImplementedError
 
+    def _spawn_child_contexts(self, ctx: EvaluateContext) -> list[EvaluateContext]:
+        """Create and initialize one context per immediate child component."""
+        child_ctxs = []
+        for component in self.components():
+            child_ctx = ctx.spawn_ctx()
+            component._attach_context_metadata(child_ctx)  # noqa: SLF001
+            child_ctxs.append(child_ctx)
+
+        ctx.children.extend(child_ctxs)
+        return child_ctxs
+
     def _run(
         self,
         input_: InputT_contra,
@@ -646,8 +702,7 @@ class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
 
         # Create child contexts before evaluating any children.
         # This preserves the context structure even for skipped children.
-        child_ctxs = [ctx.spawn_ctx() for _ in components]
-        ctx.children.extend(child_ctxs)
+        child_ctxs = self._spawn_child_contexts(ctx)
 
         # Store one outcome per child, including skipped evaluations.
         outcomes: list[Any] = [NO_OUTPUT] * len(components)

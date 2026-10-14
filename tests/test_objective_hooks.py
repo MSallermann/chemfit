@@ -81,5 +81,5 @@ def test_recursive_registration_updates_shared_descendant_instances():
 
     ctx = EvaluateContext()
     assert second_composition(5, ctx) == 3
-    assert ctx.meta == {}
+    assert set(ctx.meta) == {"chemfit.structure"}
     assert ctx.children[0].meta["registered_recursively"] is True
