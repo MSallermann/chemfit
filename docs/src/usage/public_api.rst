@@ -254,10 +254,11 @@ multiple variants:
 Composition
 -----------
 
-:func:`chemfit.pipeline() <chemfit.api.pipeline>` and
-:func:`chemfit.join() <chemfit.api.join>` expose general structural
-composition. A pipeline passes each result to the next stage. A join gives the
-same parent input to independent children and returns their outcomes in order:
+:func:`chemfit.pipeline() <chemfit.api.pipeline>`,
+:func:`chemfit.join() <chemfit.api.join>`, and
+:func:`chemfit.graph() <chemfit.api.graph>` expose structural composition. A
+pipeline passes each result to the next stage. A join gives the same parent
+input to independent children and returns their outcomes in order:
 
 .. testcode::
 
@@ -283,10 +284,48 @@ same parent input to independent children and returns their outcomes in order:
     14
     (6, 4)
 
-Both helpers require ``ObjectiveComponent`` instances, such as values produced
-by ``component()``, ``quantity()``, or ``objective()``. ``join()`` accepts the
-components positionally or as one iterable. See :ref:`advanced_concepts` for
-their dependency, failure, skip, context, and scheduler semantics.
+All three helpers require ``ObjectiveComponent`` instances, such as values
+produced by ``component()``, ``quantity()``, or ``objective()``. ``join()``
+accepts the components positionally or as one iterable. See
+:ref:`advanced_concepts` for their dependency, failure, skip, context, and
+scheduler semantics.
+
+Use ``graph()`` when data is shared between several consumers or when the
+topology is not a simple pipeline or join. Add calls in topological order and
+select the graph result with ``output()``:
+
+.. testcode::
+
+   @chemfit.component()
+   def square(value):
+       return value**2
+
+   @chemfit.component()
+   def increment(value):
+       return value + 1
+
+   @chemfit.component()
+   def double(value):
+       return 2 * value
+
+   builder = chemfit.graph()
+   shared = builder.call(square, builder.input)
+   incremented = builder.call(increment, shared)
+   doubled = builder.call(double, shared)
+   custom_graph = builder.output(incremented, doubled)
+
+   print(custom_graph(3))
+
+.. testoutput::
+   :hide:
+
+   (10, 18)
+
+The shared ``square`` node runs once. Each :meth:`~chemfit.graph_component.GraphBuilder.call`
+reference supplies data and therefore also creates an execution dependency.
+Use :meth:`~chemfit.graph_component.GraphBuilder.depends_on` for ordering that
+does not pass a value. See :ref:`custom_component_graphs` for output, failure,
+nesting, and scheduling semantics.
 
 :py:func:`chemfit.api.combine` accepts objective terms as separate positional
 arguments or as one iterable:

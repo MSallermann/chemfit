@@ -209,6 +209,18 @@ def join(
 
 
 def graph() -> GraphBuilder:
+    """
+    Create an empty builder for a scheduler-visible component graph.
+
+    Nodes are added in topological order with
+    :meth:`~chemfit.graph_component.GraphBuilder.call`. Finish the graph by
+    selecting one or more results with
+    :meth:`~chemfit.graph_component.GraphBuilder.output`.
+
+    Returns:
+        A new graph builder.
+
+    """
     return GraphBuilder()
 
 
