@@ -288,8 +288,10 @@ Using one context per evaluation avoids shared mutable state and makes
 parallel evaluation safe.
 
 This is distinct from the linked contexts created inside structural
-components: those contexts represent different nodes of one evaluation,
-whereas the contexts above represent separate root evaluations.
+components: those contexts record nested component invocations within one
+evaluation, whereas the contexts above represent separate root evaluations.
+The context hierarchy records evaluation information, not computational
+dependencies; structural components declare those dependencies separately.
 
 
 Design principles
@@ -297,14 +299,16 @@ Design principles
 
 ChemFit is built around a few key ideas:
 
-- **Composition over monoliths**
-  Complex objectives are assembled from small, independent pieces.
+- **Composition:** Build complex objectives from reusable components.
 
-- **Explicit data flow**
-  All evaluation state is passed through contexts, avoiding hidden global state.
+- **Explicit dependencies:** Structural components describe computational
+  dataflow and execution dependencies.
 
-- **Separation of concerns**
-  Quantity computation and loss evaluation are kept separate.
+- **Evaluation contexts:** Contexts record inputs, outputs, metadata, and
+  nested evaluation information.
+
+- **Independent execution:** Scheduling is separate from component definitions
+  and optimization.
 
 These principles make ChemFit flexible, extensible, and well-suited for
 large-scale fitting problems.
