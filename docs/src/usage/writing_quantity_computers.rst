@@ -517,14 +517,19 @@ Summary
 Composing custom components
 ******************************************
 
-For the conceptual distinction between atomic nesting, opaque pipelines,
-structural pipelines, and joins, read :ref:`advanced_concepts` first. This
-section focuses on implementing a custom structure.
+For the conceptual distinction between opaque pipelines, structural pipelines,
+and joins, read :ref:`advanced_concepts` first. This section focuses on
+implementing a custom structure.
 
-Calling another component directly from ``_run()`` is valid, but that nested
-call is opaque to a graph scheduler. Use it only when the whole operation
-should remain one atomic task. If the nested computations should be scheduled
-independently, express them with a
+For an ordinary ordered sequence that should remain one atomic scheduler task,
+prefer :class:`~chemfit.abstract_objective_function.OpaquePipeline`; it manages
+the stage lifecycles and child contexts consistently. Calling ``with_loss()``
+on an atomic component already creates this form. Calling another component
+directly from ``_run()`` is the lower-level option for custom atomic control
+flow that an opaque pipeline cannot express.
+
+If nested computations should instead be scheduled independently, express
+them with a
 :class:`~chemfit.abstract_objective_function.StructuralComponent`.
 
 The built-in
