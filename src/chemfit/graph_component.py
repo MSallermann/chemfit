@@ -18,6 +18,14 @@ from chemfit.evaluate_context import EvaluateContext
 
 
 class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
+    """
+    A scheduler-visible directed acyclic graph of objective components.
+
+    Graph components are normally created with :class:`GraphBuilder`. Their
+    topology is an immutable snapshot: later changes to the builder do not
+    affect an already-created component.
+    """
+
     def __init__(
         self,
         components: Sequence[ObjectiveComponent[Any, Any]],
@@ -25,7 +33,16 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
         component_inputs: tuple[tuple[InputSource, ...], ...],
         combine_inputs: tuple[InputSource, ...],
     ) -> None:
-        """Store an immutable snapshot of a builder's graph topology."""
+        """
+        Store an immutable snapshot of a builder's graph topology.
+
+        Args:
+            components: Child components in topological order.
+            component_dependencies: Prerequisite child indices for each child.
+            component_inputs: Ordered input sources for each child.
+            combine_inputs: Sources exposed as the graph result.
+
+        """
         super().__init__()
         self._components = tuple(components)
         self._component_dependencies = component_dependencies
@@ -33,15 +50,19 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
         self._combine_inputs = combine_inputs
 
     def components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+        """Return the graph's child components in topological order."""
         return self._components
 
     def component_dependencies(self) -> tuple[tuple[int, ...], ...]:
+        """Return execution dependencies for every child component."""
         return self._component_dependencies
 
     def component_inputs(self) -> tuple[tuple[InputSource, ...], ...]:
+        """Return the ordered data sources consumed by every child."""
         return self._component_inputs
 
     def combine_inputs(self) -> tuple[InputSource, ...]:
+        """Return the sources selected as graph outputs."""
         return self._combine_inputs
 
     def combine_outcomes(
@@ -49,6 +70,13 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
         outcomes: tuple[Any, ...],
         ctx: EvaluateContext,  # noqa: ARG002
     ) -> OutputT_co:
+        """
+        Return one selected output directly or multiple outputs as a tuple.
+
+        A failed or skipped sole output cannot produce a value, so its original
+        exception is raised when available. Multiple outputs preserve exception
+        and skip outcomes as tuple entries.
+        """
         if len(outcomes) != 1:
             return cast("OutputT_co", outcomes)
 
@@ -68,6 +96,8 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
 
 @dataclass(frozen=True, eq=False)
 class NodeRef(Generic[OutputT_co]):
+    """Opaque reference to one node's output within a particular builder."""
+
     _component: ObjectiveComponent[Any, OutputT_co]
     _node_inputs: list[InputSource]
     _node_dependencies: list[int]
@@ -75,12 +105,22 @@ class NodeRef(Generic[OutputT_co]):
 
 
 class GraphBuilder:
+    """
+    Incrementally construct a scheduler-visible directed acyclic graph.
+
+    Add nodes in topological order with :meth:`call`, optionally add ordering
+    constraints with :meth:`depends_on`, and finish with :meth:`output`.
+    References belong to the builder that created them and cannot be reused in
+    another graph.
+    """
+
     def __init__(self) -> None:
         """Initialize an empty graph."""
         self._nodes: list[NodeRef[Any]] = []
 
     @property
     def input(self) -> ParentInput_:
+        """Return a reference to the input received by the completed graph."""
         return PARENT_INPUT
 
     def _validate_ref(self, ref: NodeRef[Any]) -> None:
@@ -89,6 +129,18 @@ class GraphBuilder:
             raise ValueError(msg)
 
     def depends_on(self, a: NodeRef[Any], *others: NodeRef[Any]) -> None:
+        """
+        Make ``a`` wait for earlier nodes without passing their results.
+
+        Args:
+            a: Node whose execution should be delayed.
+            *others: Earlier nodes that must finish before ``a`` may run.
+
+        Raises:
+            ValueError: If a reference is foreign, invalid, or does not precede
+                ``a`` in construction order.
+
+        """
         self._validate_ref(a)
 
         for nref in others:
@@ -106,6 +158,26 @@ class GraphBuilder:
         component: ObjectiveComponent[InputT_contra, OutputT_co],
         *inputs: ParentInput_ | NodeRef[Any],
     ) -> NodeRef[OutputT_co]:
+        """
+        Add a component invocation and return a reference to its result.
+
+        One input source is passed to the component directly. Multiple sources
+        are assembled into a tuple in the supplied order, and no sources
+        produce an empty tuple. A node reference supplies both data and the
+        execution dependency needed to make that data available.
+
+        Args:
+            component: Component to invoke.
+            *inputs: Parent-input or earlier-node sources consumed by the
+                component.
+
+        Returns:
+            A builder-local reference to the new node's result.
+
+        Raises:
+            ValueError: If an input reference does not belong to this builder.
+
+        """
         for inp in inputs:
             if isinstance(inp, NodeRef):
                 self._validate_ref(inp)
@@ -133,6 +205,25 @@ class GraphBuilder:
     def output(
         self, *combine_nodes: NodeRef[Any] | ParentInput_
     ) -> GraphComponent[Any, Any]:
+        """
+        Create a graph component exposing the selected sources.
+
+        A single source becomes the graph result directly. Multiple sources
+        produce a tuple in the supplied order. The returned component snapshots
+        the current nodes, inputs, and dependencies, so the builder may be
+        extended afterward without changing it.
+
+        Args:
+            *combine_nodes: One or more parent-input or node-result sources.
+
+        Returns:
+            A structural component representing the current graph.
+
+        Raises:
+            ValueError: If no output is supplied or a reference is foreign or
+                invalid.
+
+        """
         if len(combine_nodes) == 0:
             msg = "Need at least one combine node"
             raise ValueError(msg)

@@ -473,6 +473,79 @@ when the branch outputs are non-scalar or require a custom downstream stage.
 
 -------------------------
 
+.. _custom_component_graphs:
+
+Custom component graphs
+=======================
+
+:func:`chemfit.graph() <chemfit.api.graph>` builds a
+:class:`~chemfit.graph_component.GraphComponent` for data flow that is more
+general than a pipeline or join. The builder is deliberately small:
+
+- ``builder.input`` refers to the completed graph's parent input;
+- ``builder.call(component, *inputs)`` adds a node and returns a
+  :class:`~chemfit.graph_component.NodeRef` to its result;
+- ``builder.depends_on(node, *dependencies)`` adds ordering without passing
+  data; and
+- ``builder.output(*sources)`` snapshots the graph and selects its result.
+
+Nodes must be added in topological order. A node reference may be used only
+with the builder that created it. Passing one reference to several calls shares
+that result: the referenced component is evaluated once, after which each
+consumer receives its outcome.
+
+.. testcode::
+
+    @chemfit.component()
+    def simulate(params):
+        return {
+            "energy": -params["scale"],
+            "force": 2 * params["scale"],
+        }
+
+    @chemfit.component()
+    def energy_error(quantities):
+        return abs(quantities["energy"] + 1.0)
+
+    @chemfit.component()
+    def force_error(quantities):
+        return abs(quantities["force"] - 1.5)
+
+    builder = chemfit.graph()
+    quantities = builder.call(simulate, builder.input)
+    energy = builder.call(energy_error, quantities)
+    force = builder.call(force_error, quantities)
+    errors = builder.output(energy, force)
+
+    print(errors({"scale": 1.0}))
+
+.. testoutput::
+    :hide:
+
+    (0.0, 0.5)
+
+One input is passed directly to a node. Multiple inputs are grouped into a
+tuple in their declared order. Those data references also imply execution
+dependencies. In contrast, ``depends_on()`` only delays a node; it does not
+change the values passed to that node. This is useful when two operations share
+the graph input but one must wait for the other's side effect.
+
+``output()`` requires at least one source. A sole output is returned directly;
+multiple outputs are returned as a tuple. For one output, an exception is
+raised and a skip caused by an upstream exception re-raises that cause. In a
+multiple-output tuple, exception and
+:class:`~chemfit.abstract_objective_function.Skipped` outcomes are preserved as
+entries, matching join semantics.
+
+Any component may be a graph node, including another graph, pipeline, join, or
+combined objective. Direct evaluation follows the reference structural
+semantics, while serial, executor, and MPI graph schedulers may overlap nodes
+whose dependencies are satisfied. Calling ``output()`` takes a topology
+snapshot, so extending the builder afterward does not modify components that
+were already created.
+
+-------------------------
+
 The structural component contract
 =================================
 
@@ -595,9 +668,11 @@ Use the smallest abstraction that expresses the scheduling boundary you need:
   returns every outcome, or
   :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction` for
   independent scalar terms followed by configurable reduction.
+- Use :func:`chemfit.graph() <chemfit.api.graph>` for a custom directed acyclic
+  graph with shared intermediate results or ordering-only dependencies.
 - Implement :class:`~chemfit.abstract_objective_function.StructuralComponent`
-  directly for a custom directed acyclic graph, conditional execution, or a
-  specialized recovery policy.
+  directly for conditional execution or a specialized recovery policy that
+  the graph builder does not express.
 
 Once the component structure is clear, :ref:`parallel_execution` explains how
 the available graph nodes are mapped to serial, executor, and MPI backends.
