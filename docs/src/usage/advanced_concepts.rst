@@ -11,9 +11,8 @@ structural composition, and the two different kinds of pipeline used by
 ChemFit.
 
 These distinctions matter when an objective is executed by a graph scheduler.
-Ordinary Python nesting and graph-visible composition can calculate the same
-value, but they expose different scheduling boundaries and different context
-topologies.
+Opaque and graph-visible composition can calculate the same value, but they
+expose different scheduling boundaries.
 
 -------------------------
 
@@ -110,7 +109,9 @@ An **atomic component** is any ``ObjectiveComponent`` that is not a
 scheduler treats its complete ``_run()`` as one work item. Atomic does not mean
 that the implementation is small or that it makes only one function call. An
 atomic component can run a simulation, launch an external program, or call
-several other components internally.
+several other components internally. An
+:class:`~chemfit.abstract_objective_function.OpaquePipeline` is the built-in
+way to represent an ordered sequence that should remain one atomic task.
 
 A **structural component** publishes its immediate children and their data
 flow. The graph scheduler expands that description recursively and schedules
@@ -129,35 +130,34 @@ stages between the parent's begin and finish phases:
    The same simulation-to-loss data flow represented by one opaque task
    (left) and by graph-visible structural stages (right).
 
-This means that merely calling a component from another component's ``_run()``
-does not add a node to the scheduler's graph:
+For example, an opaque pipeline runs both stages inside one scheduler node,
+while still recording both invocations in the context hierarchy:
 
 .. testcode::
 
-    class HiddenComposition(chemfit.ObjectiveComponent):
-        def __init__(self, child):
-            super().__init__()
-            self.child = child
+    from chemfit.abstract_objective_function import OpaquePipeline
 
-        def _run(self, input_, ctx):
-            # Valid, but the scheduler sees HiddenComposition as one atomic node.
-            ctx.children = [ctx.spawn_ctx()]
-            return self.child(input_, ctx.children[0])
+    @chemfit.component()
+    def minimum(values):
+        return min(values)
 
-    hidden = HiddenComposition(normalize)
-    hidden_ctx = chemfit.EvaluateContext()
-    print(hidden([1.0, -2.0], hidden_ctx))
-    print(len(hidden_ctx.children))
+    opaque = OpaquePipeline(normalize, minimum)
+    opaque_ctx = chemfit.EvaluateContext()
+    print(opaque([1.0, -2.0], opaque_ctx))
+    print([child.output for child in opaque_ctx.children])
 
 .. testoutput::
     :hide:
 
-    [0.5, -1.0]
-    1
+    -1.0
+    [[0.5, -1.0], -1.0]
 
-Use ordinary nesting when the operation should remain indivisible. Use a
-structural component when its children should be visible as independent graph
-nodes.
+Calling a component directly from another component's ``_run()`` has the same
+opaque scheduling boundary, but is mainly useful for custom atomic control
+flow that is not a simple pipeline. For ordinary ordered composition, prefer
+``OpaquePipeline``. Calling ``with_loss()`` on an atomic component constructs
+one automatically. Use a structural component when its children should be
+visible as independent graph nodes.
 
 -------------------------
 
@@ -584,9 +584,11 @@ Use the smallest abstraction that expresses the scheduling boundary you need:
 
 - Wrap one callable with ``component()``, ``quantity()``, or ``objective()``
   when it is one logical work item.
-- Call nested components directly, or use an
-  :class:`~chemfit.abstract_objective_function.OpaquePipeline`, when the nested
-  work must stay inside one atomic scheduler task.
+- Use an :class:`~chemfit.abstract_objective_function.OpaquePipeline` when an
+  ordered sequence must stay inside one atomic scheduler task. Calling
+  ``with_loss()`` on an atomic component creates this form automatically.
+- Call nested components directly from ``_run()`` only for custom atomic
+  control flow that cannot be expressed as an opaque pipeline.
 - Use :func:`chemfit.pipeline() <chemfit.api.pipeline>` for an ordered sequence
   whose stages should remain graph-visible.
 - Use :func:`chemfit.join() <chemfit.api.join>` for independent fan-out that
