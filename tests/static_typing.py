@@ -11,6 +11,7 @@ if TYPE_CHECKING:
         OpaquePipeline,
         PipelineComponent,
         WrappedComponent,
+        component,
         objective,
         quantity,
     )
@@ -21,6 +22,7 @@ if TYPE_CHECKING:
         ExecutorGraphScheduler,
     )
     from chemfit.fitter import Fitter
+    from chemfit.graph_component import GraphBuilder, GraphComponent, NodeRef
     from chemfit.graph_schedule_base import SerialGraphSchedule, SerialGraphScheduler
 
     Parameters = dict[str, float]
@@ -72,6 +74,27 @@ if TYPE_CHECKING:
 
     wrapped_with_context = objective(pass_ctx=True)(context_objective)
     assert_type(wrapped_with_context, WrappedComponent[Parameters, float])
+
+    @component()
+    def label(parameters: Parameters) -> str:
+        return str(parameters["x"])
+
+    @component()
+    def combine_graph_values(values: tuple[float, str]) -> str:
+        return f"{values[0]}: {values[1]}"
+
+    graph_builder = GraphBuilder()
+    number_node = graph_builder.call(wrapped_objective, graph_builder.input)
+    label_node = graph_builder.call(label, graph_builder.input)
+    graph_result = graph_builder.call(
+        combine_graph_values,
+        number_node,
+        label_node,
+    )
+    assert_type(number_node, NodeRef[float])
+    assert_type(label_node, NodeRef[str])
+    assert_type(graph_result, NodeRef[str])
+    assert_type(graph_builder.output(graph_result), GraphComponent[Any, Any])
 
     dynamic = Fitter(lambda parameters: parameters["x"], {"x": 1.0})
     assert_type(dynamic, Fitter[dict[str, Any]])
