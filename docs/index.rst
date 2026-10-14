@@ -9,17 +9,22 @@ ChemFit
 
 **ChemFit** is a framework for fitting parameters of models used in computational chemistry, molecular dynamics, and materials science.
 
-It provides composable building blocks for constructing objective functions from many independent terms, computing intermediate quantities using simulation workflows, and optimizing model parameters. A small set of core abstractions makes it straightforward to implement custom objective functions and to parallelize their evaluation across objective terms and/or trial parameters.
+ChemFit builds parameter-fitting objectives from reusable computational
+components. Components can be composed into pipelines, independent branches,
+and arbitrary dependency graphs, with intermediate results shared between
+computations. Scientific computations, scheduling, and optimization remain
+separate, so execution and optimization strategies can change without
+rewriting the scientific code.
 
 Out of the box, ChemFit includes integrations for the calculators defined in the Atomic Simulation Environment (ASE) as well as external simulation pipelines.
 
 
 **Highlights**:
 
-- **Designed for atomistic simulations:** Build objective functions from quantities computed by ASE calculators or external simulation codes.
-- **Composable objectives:** Assemble complex fitting targets from many independent objective terms.
-- **Parallel by construction:** Evaluate objective terms concurrently across processes or MPI ranks without changing the objective definition.
-- **Extensible architecture:** Implement custom objective functions and simulation interfaces using ChemFit's core abstractions.
+- **Simulation-based fitting:** Fit model parameters against quantities computed by ASE calculators, external simulation codes, or custom Python code.
+- **Flexible composition:** Build pipelines, independent branches, and dependency graphs from reusable components.
+- **Concurrent execution:** Evaluate parameter candidates and independent computations concurrently using threads, processes, or MPI ranks.
+- **Extensible architecture:** Implement custom computational components and simulation interfaces using ChemFit's core abstractions.
 
 -------------------------
 

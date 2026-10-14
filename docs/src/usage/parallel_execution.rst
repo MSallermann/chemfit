@@ -3,14 +3,18 @@
 Parallel execution
 ==================
 
-ChemFit can overlap work at two related levels:
+ChemFit supports concurrency at two related levels:
 
 1. several optimizer candidates can be evaluated in one batch;
-2. leaf terms of a combined objective can run concurrently.
+2. independent computations within an individual evaluation can run
+   concurrently.
 
-Graph schedulers handle both levels with the same pool of execution slots. A
-batch of candidates is expanded into its runnable atomic components, and the
-backend executes those components serially, through an executor, or on MPI
+Structural components expose dataflow and execution dependencies to graph
+schedulers. Independent computations may therefore run concurrently while
+their required execution order is preserved. Graph schedulers handle this
+within-evaluation concurrency and candidate batching with the same pool of
+execution slots. A batch is expanded into its runnable atomic components, and
+the backend executes those components serially, through an executor, or on MPI
 worker ranks. See :ref:`advanced_concepts` for how structural components are
 expanded and why opaque pipelines remain one atomic task.
 

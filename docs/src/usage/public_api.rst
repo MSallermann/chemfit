@@ -10,6 +10,10 @@ computation, attach a loss, combine terms, and fit parameters. Each helper
 returns or uses the same framework objects documented in the advanced pages,
 so you can move down a layer without rewriting the scientific code.
 
+Although ChemFit's high-level API focuses on parameter fitting, its underlying
+components can represent arbitrary computations. The composition and
+scheduling facilities can also be used independently of an optimizer.
+
 Compute, attach a loss, combine, fit
 ------------------------------------
 
