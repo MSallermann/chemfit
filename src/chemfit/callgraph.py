@@ -169,7 +169,7 @@ def objective_to_call_graph(
         nodes[target].inputs = (*tgt_node.inputs, source)
 
     def graph_source(
-        source: int | ParentInput_ | Skipped,
+        source: int | ParentInput_[Any] | Skipped,
         start_id: int,
         component_end_ids: list[int],
     ) -> int | Skipped:

@@ -6,7 +6,13 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from typing_extensions import assert_type
 
-    from chemfit import Component, DirectSchedule, DirectScheduler, FitContext
+    from chemfit import (
+        Component,
+        DirectSchedule,
+        DirectScheduler,
+        FitContext,
+        GraphBuilder,
+    )
     from chemfit.abstract_objective_function import (
         EvaluateContext,
         OpaquePipeline,
@@ -25,7 +31,7 @@ if TYPE_CHECKING:
         ExecutorGraphScheduler,
     )
     from chemfit.fitter import Fitter
-    from chemfit.graph_component import GraphBuilder, GraphComponent, NodeRef
+    from chemfit.graph_component import GraphComponent, NodeRef
     from chemfit.graph_schedule_base import SerialGraphSchedule, SerialGraphScheduler
     from chemfit.scheduling import EvaluationRequest
 
@@ -135,6 +141,31 @@ if TYPE_CHECKING:
     assert_type(label_node, NodeRef[str])
     assert_type(graph_result, NodeRef[str])
     assert_type(graph_builder.output(graph_result), GraphComponent[Any, Any])
+
+    typed_graph_builder = GraphBuilder[Parameters]()
+    typed_number_node = typed_graph_builder.call(
+        wrapped_objective,
+        typed_graph_builder.input,
+    )
+    assert_type(typed_number_node, NodeRef[float])
+    assert_type(
+        typed_graph_builder.output(typed_number_node),
+        GraphComponent[Parameters, Any],
+    )
+
+    @component()
+    def text_length(value: str) -> int:
+        return len(value)
+
+    typed_graph_builder.call(
+        text_length,
+        typed_graph_builder.input,  # pyright: ignore[reportArgumentType]
+    )
+    graph_builder.call(
+        combine_graph_values,
+        number_node,
+        number_node,  # pyright: ignore[reportArgumentType]
+    )
 
     dynamic = Fitter(lambda parameters: parameters["x"], {"x": 1.0})
     assert_type(dynamic, Fitter[dict[str, Any]])

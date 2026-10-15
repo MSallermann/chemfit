@@ -2,7 +2,9 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Generic, cast
+from typing import Any, Generic, cast, overload
+
+from typing_extensions import TypeVar
 
 from chemfit.abstract_objective_function import (
     PARENT_INPUT,
@@ -15,6 +17,11 @@ from chemfit.abstract_objective_function import (
     StructuralComponent,
 )
 from chemfit.evaluate_context import EvaluateContext
+
+RootInputT = TypeVar("RootInputT", default=Any)
+Input1T = TypeVar("Input1T")
+Input2T = TypeVar("Input2T")
+Input3T = TypeVar("Input3T")
 
 
 class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
@@ -104,14 +111,16 @@ class NodeRef(Generic[OutputT_co]):
     _index: int
 
 
-class GraphBuilder:
+class GraphBuilder(Generic[RootInputT]):
     """
     Incrementally construct a scheduler-visible directed acyclic graph.
 
     Add nodes in topological order with :meth:`call`, optionally add ordering
     constraints with :meth:`depends_on`, and finish with :meth:`output`.
     References belong to the builder that created them and cannot be reused in
-    another graph.
+    another graph. For static type checking, use ``GraphBuilder[InputType]()``
+    to type the graph's root input and ``builder.input``. ``GraphBuilder()``
+    defaults the root input type to :class:`typing.Any`.
     """
 
     def __init__(self) -> None:
@@ -119,14 +128,24 @@ class GraphBuilder:
         self._nodes: list[NodeRef[Any]] = []
 
     @property
-    def input(self) -> ParentInput_:
+    def input(self) -> ParentInput_[RootInputT]:
         """Return a reference to the input received by the completed graph."""
-        return PARENT_INPUT
+        return cast("ParentInput_[RootInputT]", PARENT_INPUT)
 
     def _validate_ref(self, ref: NodeRef[Any]) -> None:
         if not 0 <= ref._index < len(self._nodes) or self._nodes[ref._index] is not ref:
             msg = "NodeRef belongs to another graph."
             raise ValueError(msg)
+
+    def _validate_input(self, input_: object) -> None:
+        if input_ is PARENT_INPUT:
+            return
+        if isinstance(input_, NodeRef):
+            self._validate_ref(input_)
+            return
+
+        msg = "Graph inputs must be builder.input or a NodeRef from this builder."
+        raise TypeError(msg)
 
     def depends_on(self, a: NodeRef[Any], *others: NodeRef[Any]) -> None:
         """
@@ -153,10 +172,58 @@ class GraphBuilder:
             if nref._index not in a._node_dependencies:
                 a._node_dependencies.append(nref._index)
 
+    # Mirror the runtime input packing: no sources produce an empty tuple, one
+    # source is passed directly, and multiple sources are passed as a tuple.
+    # Explicit overloads for the common use cases (one to three inputs) preserve each source's type in
+    # the Component input while propagating the Component output to NodeRef.
+    @overload
     def call(
         self,
-        component: Component[InputT_contra, OutputT_co],
-        *inputs: ParentInput_ | NodeRef[Any],
+        component: Component[tuple[()], OutputT_co],
+    ) -> NodeRef[OutputT_co]: ...
+
+    @overload
+    def call(
+        self,
+        component: Component[Input1T, OutputT_co],
+        input1: ParentInput_[Input1T] | NodeRef[Input1T],
+    ) -> NodeRef[OutputT_co]: ...
+
+    @overload
+    def call(
+        self,
+        component: Component[tuple[Input1T, Input2T], OutputT_co],
+        input1: ParentInput_[Input1T] | NodeRef[Input1T],
+        input2: ParentInput_[Input2T] | NodeRef[Input2T],
+    ) -> NodeRef[OutputT_co]: ...
+
+    @overload
+    def call(
+        self,
+        component: Component[tuple[Input1T, Input2T, Input3T], OutputT_co],
+        input1: ParentInput_[Input1T] | NodeRef[Input1T],
+        input2: ParentInput_[Input2T] | NodeRef[Input2T],
+        input3: ParentInput_[Input3T] | NodeRef[Input3T],
+    ) -> NodeRef[OutputT_co]: ...
+
+    # Keep calls with four or more inputs type-checkable. Spelling out four
+    # required inputs prevents this Any-based fallback from also matching and
+    # masking connection errors handled by the precise overloads above.
+    @overload
+    def call(
+        self,
+        component: Component[Any, OutputT_co],
+        input1: ParentInput_[Any] | NodeRef[Any],
+        input2: ParentInput_[Any] | NodeRef[Any],
+        input3: ParentInput_[Any] | NodeRef[Any],
+        input4: ParentInput_[Any] | NodeRef[Any],
+        *inputs: ParentInput_[Any] | NodeRef[Any],
+    ) -> NodeRef[OutputT_co]: ...
+
+    def call(
+        self,
+        component: Component[Any, OutputT_co],
+        *inputs: ParentInput_[Any] | NodeRef[Any],
     ) -> NodeRef[OutputT_co]:
         """
         Add a component invocation and return a reference to its result.
@@ -175,21 +242,19 @@ class GraphBuilder:
             A builder-local reference to the new node's result.
 
         Raises:
+            TypeError: If an input is neither this builder's parent-input
+                reference nor a node reference.
             ValueError: If an input reference does not belong to this builder.
 
         """
         for inp in inputs:
-            if isinstance(inp, NodeRef):
-                self._validate_ref(inp)
+            self._validate_input(inp)
 
         node_inputs: list[InputSource] = [
-            PARENT_INPUT if isinstance(inp, ParentInput_) else inp._index
-            for inp in inputs
+            PARENT_INPUT if inp is PARENT_INPUT else inp._index for inp in inputs
         ]
         node_dependencies = list(
-            dict.fromkeys(
-                inp._index for inp in inputs if not isinstance(inp, ParentInput_)
-            )
+            dict.fromkeys(inp._index for inp in inputs if isinstance(inp, NodeRef))
         )
         index = len(self._nodes)
 
@@ -203,15 +268,17 @@ class GraphBuilder:
         return node
 
     def output(
-        self, *combine_nodes: NodeRef[Any] | ParentInput_
-    ) -> GraphComponent[Any, Any]:
+        self, *combine_nodes: NodeRef[Any] | ParentInput_[Any]
+    ) -> GraphComponent[RootInputT, Any]:
         """
         Create a graph component exposing the selected sources.
 
         A single source becomes the graph result directly. Multiple sources
         produce a tuple in the supplied order. The returned component snapshots
         the current nodes, inputs, and dependencies, so the builder may be
-        extended afterward without changing it.
+        extended afterward without changing it. The topology is frozen, but
+        the snapshot retains references to the original component instances;
+        components are not copied.
 
         Args:
             *combine_nodes: One or more parent-input or node-result sources.
@@ -220,6 +287,8 @@ class GraphBuilder:
             A structural component representing the current graph.
 
         Raises:
+            TypeError: If an output is neither this builder's parent-input
+                reference nor a node reference.
             ValueError: If no output is supplied or a reference is foreign or
                 invalid.
 
@@ -229,11 +298,10 @@ class GraphBuilder:
             raise ValueError(msg)
 
         for nref in combine_nodes:
-            if isinstance(nref, NodeRef):
-                self._validate_ref(nref)
+            self._validate_input(nref)
 
         combine_inputs = tuple(
-            PARENT_INPUT if isinstance(node, ParentInput_) else node._index
+            PARENT_INPUT if node is PARENT_INPUT else node._index
             for node in combine_nodes
         )
 

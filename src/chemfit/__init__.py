@@ -41,6 +41,7 @@ from chemfit.fitter_callbacks import (
     SaveMetaData,
     log_progress,
 )
+from chemfit.graph_component import GraphBuilder
 from chemfit.graph_schedule_base import SerialGraphSchedule, SerialGraphScheduler
 from chemfit.scheduling import (
     DirectSchedule,
@@ -65,6 +66,7 @@ __all__ = [
     "FitContext",
     "FitResult",
     "Fitter",
+    "GraphBuilder",
     "PipelineComponent",
     "PreparedSchedule",
     "QuantityComputer",

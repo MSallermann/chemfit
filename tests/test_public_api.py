@@ -7,6 +7,17 @@ import chemfit
 from chemfit.graph_schedule_base import SerialGraphScheduler
 
 
+def test_typed_graph_builder_is_available_from_public_api():
+    @chemfit.component()
+    def increment(value: int) -> int:
+        return value + 1
+
+    builder = chemfit.GraphBuilder[int]()
+    result = builder.call(increment, builder.input)
+
+    assert builder.output(result)(1) == 2
+
+
 def test_combine_accepts_an_iterable_and_context_aware_reducer():
     @chemfit.objective()
     def term(parameters: dict[str, float], *, offset):

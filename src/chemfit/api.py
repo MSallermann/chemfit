@@ -205,7 +205,7 @@ def join(
     return TupleJoinedComponent(components)
 
 
-def graph() -> GraphBuilder:
+def graph() -> GraphBuilder[Any]:
     """
     Create an empty builder for a scheduler-visible component graph.
 
