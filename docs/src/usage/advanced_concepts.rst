@@ -503,6 +503,18 @@ general than a pipeline or join. The builder is deliberately small:
   data; and
 - ``builder.output(*sources)`` snapshots the graph and selects its result.
 
+The ``graph()`` convenience function creates a builder whose root input type
+defaults to ``Any``. For stricter static checking, instantiate
+:class:`~chemfit.graph_component.GraphBuilder` with the root input type. This
+types ``builder.input`` and checks its connections to components:
+
+.. code-block:: python
+
+    import chemfit
+
+    Parameters = dict[str, float]
+    builder = chemfit.GraphBuilder[Parameters]()
+
 Nodes must be added in topological order. A node reference may be used only
 with the builder that created it. Passing one reference to several calls shares
 that result: the referenced component is evaluated once, after which each

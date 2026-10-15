@@ -13,6 +13,7 @@ from chemfit.abstract_objective_function import (
     NO_OUTPUT,
     PARENT_INPUT,
     EvaluateContext,
+    ParentInput_,
     Skipped,
     component,
 )
@@ -233,6 +234,20 @@ def test_foreign_and_invalid_node_references_are_rejected():
         second_builder.output(invalid)
 
 
+@pytest.mark.parametrize("invalid", [None, object(), ParentInput_()])
+def test_unsupported_graph_references_are_rejected(invalid):
+    @component()
+    def identity(value):
+        return value
+
+    builder = graph()
+
+    with pytest.raises(TypeError, match="builder.input or a NodeRef"):
+        builder.call(identity, invalid)
+    with pytest.raises(TypeError, match="builder.input or a NodeRef"):
+        builder.output(invalid)
+
+
 def test_output_snapshots_topology_and_keeps_inputs_separate_from_dependencies():
     @component()
     def identity(value):
@@ -246,6 +261,10 @@ def test_output_snapshots_topology_and_keeps_inputs_separate_from_dependencies()
     shared = builder.call(identity, builder.input)
     repeated_input = builder.call(pair, shared, shared)
     snapshot = builder.output(repeated_input)
+
+    assert snapshot.components()[0] is identity
+    identity.static_meta_data["after_snapshot"] = True
+    assert snapshot.components()[0].static_meta_data["after_snapshot"] is True
 
     ordered = builder.call(identity, builder.input)
     builder.depends_on(ordered, repeated_input)

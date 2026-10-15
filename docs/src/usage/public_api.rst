@@ -329,7 +329,8 @@ The shared ``square`` node runs once. Each :meth:`~chemfit.graph_component.Graph
 reference supplies data and therefore also creates an execution dependency.
 Use :meth:`~chemfit.graph_component.GraphBuilder.depends_on` for ordering that
 does not pass a value. See :ref:`custom_component_graphs` for output, failure,
-nesting, and scheduling semantics.
+nesting, scheduling semantics, and the option to type the root input with
+``chemfit.GraphBuilder[InputType]()``.
 
 :py:func:`chemfit.api.combine` accepts objective terms as separate positional
 arguments or as one iterable:

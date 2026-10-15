@@ -455,11 +455,11 @@ def component(
 ComponentExpr = Component[InputT_contra, OutputT_co]
 
 
-class ParentInput_:  # noqa: N801
+class ParentInput_(Generic[OutputT_co]):  # noqa: N801
     """Sentinel referring to the input of the enclosing structural component."""
 
 
-PARENT_INPUT = ParentInput_()
+PARENT_INPUT: ParentInput_[Any] = ParentInput_()
 
 
 @dataclass(frozen=True)
@@ -478,7 +478,7 @@ class Skipped:
 
 SKIPPED = Skipped()
 
-InputSource: TypeAlias = int | ParentInput_ | Skipped
+InputSource: TypeAlias = int | ParentInput_[Any] | Skipped
 
 
 class StructuralComponent(Component[InputT_contra, OutputT_co]):
