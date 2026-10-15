@@ -81,6 +81,14 @@ if TYPE_CHECKING:
     fitter = Fitter(wrapped_objective, {"x": 1.0})
     assert_type(fitter, Fitter[Parameters])
 
+    parameters: Parameters = {"x": 1.0}
+    parameters1: Parameters = {"x": 1.0}
+    parameters2: Parameters = {"x": 2.0}
+    single: float = fitter.evaluate(parameters)
+    batch: list[float] = fitter.evaluate([parameters1, parameters2])
+    assert_type(single, float)
+    assert_type(batch, list[float])
+
     fit_result = fit_nevergrad(wrapped_objective, {"x": 1.0}, budget=1)
     assert_type(fit_result, FitResult[Parameters])
 

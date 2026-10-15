@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Callable, Mapping
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Generic, cast
+from typing import TYPE_CHECKING, Any, Generic, cast, overload
 
 import nevergrad as ng
 import numpy as np
@@ -413,6 +413,20 @@ class Fitter(Generic[ParametersT]):
         self.contexts = (
             [FitContext() for _ in range(batch_size)] if contexts is None else contexts
         )
+
+    @overload
+    def evaluate(
+        self,
+        parameters: ParametersT,
+        context_index: int = 0,
+    ) -> float: ...
+
+    @overload
+    def evaluate(
+        self,
+        parameters: list[ParametersT],
+        context_index: int = 0,
+    ) -> list[float]: ...
 
     def evaluate(
         self,
