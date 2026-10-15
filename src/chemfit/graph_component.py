@@ -22,6 +22,10 @@ RootInputT = TypeVar("RootInputT", default=Any)
 Input1T = TypeVar("Input1T")
 Input2T = TypeVar("Input2T")
 Input3T = TypeVar("Input3T")
+HomogeneousInputT = TypeVar("HomogeneousInputT")
+Output1T = TypeVar("Output1T")
+Output2T = TypeVar("Output2T")
+Output3T = TypeVar("Output3T")
 
 
 class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
@@ -172,10 +176,12 @@ class GraphBuilder(Generic[RootInputT]):
             if nref._index not in a._node_dependencies:
                 a._node_dependencies.append(nref._index)
 
-    # Mirror the runtime input packing: no sources produce an empty tuple, one
-    # source is passed directly, and multiple sources are passed as a tuple.
-    # Explicit overloads for the common use cases (one to three inputs) preserve each source's type in
-    # the Component input while propagating the Component output to NodeRef.
+    # Mirror the runtime input packing in the overloads:
+    #   call(no_arg_component)                    passes ()
+    #   call(int_component, int_ref)              passes int
+    #   call(pair_component, int_ref, string_ref) passes tuple[int, str]
+    # This preserves the source types in Component's input and propagates the
+    # Component output type to the returned NodeRef.
     @overload
     def call(
         self,
@@ -187,6 +193,24 @@ class GraphBuilder(Generic[RootInputT]):
         self,
         component: Component[Input1T, OutputT_co],
         input1: ParentInput_[Input1T] | NodeRef[Input1T],
+        /,
+    ) -> NodeRef[OutputT_co]: ...
+
+    # A homogeneous variadic tuple covers, for example:
+    #   reduction: Component[Sequence[float], float]
+    #   call(reduction, float_ref1, float_ref2, float_ref3)
+    # Here T is float and the component receives tuple[float, ...], which is a
+    # valid Sequence[float]. input1 and input2 are explicit only to require at
+    # least two sources. With one source, call(reduction, float_ref1) would pass
+    # a bare float rather than a tuple and must use the single-input overload.
+    @overload
+    def call(
+        self,
+        component: Component[tuple[HomogeneousInputT, ...], OutputT_co],
+        input1: ParentInput_[HomogeneousInputT] | NodeRef[HomogeneousInputT],
+        input2: ParentInput_[HomogeneousInputT] | NodeRef[HomogeneousInputT],
+        /,
+        *inputs: ParentInput_[HomogeneousInputT] | NodeRef[HomogeneousInputT],
     ) -> NodeRef[OutputT_co]: ...
 
     @overload
@@ -195,6 +219,7 @@ class GraphBuilder(Generic[RootInputT]):
         component: Component[tuple[Input1T, Input2T], OutputT_co],
         input1: ParentInput_[Input1T] | NodeRef[Input1T],
         input2: ParentInput_[Input2T] | NodeRef[Input2T],
+        /,
     ) -> NodeRef[OutputT_co]: ...
 
     @overload
@@ -204,11 +229,12 @@ class GraphBuilder(Generic[RootInputT]):
         input1: ParentInput_[Input1T] | NodeRef[Input1T],
         input2: ParentInput_[Input2T] | NodeRef[Input2T],
         input3: ParentInput_[Input3T] | NodeRef[Input3T],
+        /,
     ) -> NodeRef[OutputT_co]: ...
 
-    # Keep calls with four or more inputs type-checkable. Spelling out four
-    # required inputs prevents this Any-based fallback from also matching and
-    # masking connection errors handled by the precise overloads above.
+    # For example, call(component, a, b, c, d, e) uses this Any-based fallback.
+    # Four required inputs keep it from also matching calls with one to three
+    # inputs and masking connection errors handled by the precise overloads.
     @overload
     def call(
         self,
@@ -217,6 +243,7 @@ class GraphBuilder(Generic[RootInputT]):
         input2: ParentInput_[Any] | NodeRef[Any],
         input3: ParentInput_[Any] | NodeRef[Any],
         input4: ParentInput_[Any] | NodeRef[Any],
+        /,
         *inputs: ParentInput_[Any] | NodeRef[Any],
     ) -> NodeRef[OutputT_co]: ...
 
@@ -266,6 +293,46 @@ class GraphBuilder(Generic[RootInputT]):
         )
         self._nodes.append(node)
         return node
+
+    # Mirror output packing as well:
+    #   output(float_ref)             -> GraphComponent[Root, float]
+    #   output(float_ref, string_ref) -> GraphComponent[Root, tuple[float, str]]
+    @overload
+    def output(
+        self,
+        combine_node1: ParentInput_[Output1T] | NodeRef[Output1T],
+        /,
+    ) -> GraphComponent[RootInputT, Output1T]: ...
+
+    @overload
+    def output(
+        self,
+        combine_node1: ParentInput_[Output1T] | NodeRef[Output1T],
+        combine_node2: ParentInput_[Output2T] | NodeRef[Output2T],
+        /,
+    ) -> GraphComponent[RootInputT, tuple[Output1T, Output2T]]: ...
+
+    @overload
+    def output(
+        self,
+        combine_node1: ParentInput_[Output1T] | NodeRef[Output1T],
+        combine_node2: ParentInput_[Output2T] | NodeRef[Output2T],
+        combine_node3: ParentInput_[Output3T] | NodeRef[Output3T],
+        /,
+    ) -> GraphComponent[RootInputT, tuple[Output1T, Output2T, Output3T]]: ...
+
+    # output(a, b, c, d, ...) uses tuple[Any, ...]. Requiring four sources keeps
+    # this fallback from weakening the precise one-to-three-source overloads.
+    @overload
+    def output(
+        self,
+        combine_node1: ParentInput_[Any] | NodeRef[Any],
+        combine_node2: ParentInput_[Any] | NodeRef[Any],
+        combine_node3: ParentInput_[Any] | NodeRef[Any],
+        combine_node4: ParentInput_[Any] | NodeRef[Any],
+        /,
+        *combine_nodes: ParentInput_[Any] | NodeRef[Any],
+    ) -> GraphComponent[RootInputT, tuple[Any, ...]]: ...
 
     def output(
         self, *combine_nodes: NodeRef[Any] | ParentInput_[Any]

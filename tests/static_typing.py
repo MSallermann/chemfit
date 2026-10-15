@@ -4,6 +4,8 @@
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from typing_extensions import assert_type
 
     from chemfit import (
@@ -140,7 +142,39 @@ if TYPE_CHECKING:
     assert_type(number_node, NodeRef[float])
     assert_type(label_node, NodeRef[str])
     assert_type(graph_result, NodeRef[str])
-    assert_type(graph_builder.output(graph_result), GraphComponent[Any, Any])
+    assert_type(graph_builder.output(graph_result), GraphComponent[Any, str])
+    assert_type(
+        graph_builder.output(number_node, label_node),
+        GraphComponent[Any, tuple[float, str]],
+    )
+
+    @component()
+    def reduce_graph_values(values: Sequence[float]) -> float:
+        return sum(values)
+
+    @component()
+    def times_two(value: float) -> float:
+        return 2 * value
+
+    float_graph_builder = GraphBuilder[float]()
+    first_float = float_graph_builder.call(times_two, float_graph_builder.input)
+    second_float = float_graph_builder.call(times_two, first_float)
+    third_float = float_graph_builder.call(times_two, first_float)
+    reduced_node = float_graph_builder.call(
+        reduce_graph_values,
+        third_float,
+        second_float,
+        first_float,
+    )
+    assert_type(reduced_node, NodeRef[float])
+    assert_type(
+        float_graph_builder.output(
+            reduced_node,
+            reduced_node,
+            float_graph_builder.input,
+        ),
+        GraphComponent[float, tuple[float, float, float]],
+    )
 
     typed_graph_builder = GraphBuilder[Parameters]()
     typed_number_node = typed_graph_builder.call(
@@ -150,7 +184,11 @@ if TYPE_CHECKING:
     assert_type(typed_number_node, NodeRef[float])
     assert_type(
         typed_graph_builder.output(typed_number_node),
-        GraphComponent[Parameters, Any],
+        GraphComponent[Parameters, float],
+    )
+    assert_type(
+        typed_graph_builder.output(typed_graph_builder.input),
+        GraphComponent[Parameters, Parameters],
     )
 
     @component()
@@ -161,7 +199,7 @@ if TYPE_CHECKING:
         text_length,
         typed_graph_builder.input,  # pyright: ignore[reportArgumentType]
     )
-    graph_builder.call(
+    graph_builder.call(  # pyright: ignore[reportCallIssue]
         combine_graph_values,
         number_node,
         number_node,  # pyright: ignore[reportArgumentType]
