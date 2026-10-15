@@ -6,9 +6,9 @@ from typing import Any, Generic, cast
 
 from chemfit.abstract_objective_function import (
     PARENT_INPUT,
+    Component,
     InputSource,
     InputT_contra,
-    ObjectiveComponent,
     OutputT_co,
     ParentInput_,
     Skipped,
@@ -28,7 +28,7 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
 
     def __init__(
         self,
-        components: Sequence[ObjectiveComponent[Any, Any]],
+        components: Sequence[Component[Any, Any]],
         component_dependencies: tuple[tuple[int, ...], ...],
         component_inputs: tuple[tuple[InputSource, ...], ...],
         combine_inputs: tuple[InputSource, ...],
@@ -49,7 +49,7 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
         self._component_inputs = component_inputs
         self._combine_inputs = combine_inputs
 
-    def components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+    def components(self) -> Sequence[Component[Any, Any]]:
         """Return the graph's child components in topological order."""
         return self._components
 
@@ -98,7 +98,7 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
 class NodeRef(Generic[OutputT_co]):
     """Opaque reference to one node's output within a particular builder."""
 
-    _component: ObjectiveComponent[Any, OutputT_co]
+    _component: Component[Any, OutputT_co]
     _node_inputs: list[InputSource]
     _node_dependencies: list[int]
     _index: int
@@ -155,7 +155,7 @@ class GraphBuilder:
 
     def call(
         self,
-        component: ObjectiveComponent[InputT_contra, OutputT_co],
+        component: Component[InputT_contra, OutputT_co],
         *inputs: ParentInput_ | NodeRef[Any],
     ) -> NodeRef[OutputT_co]:
         """

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from chemfit.abstract_objective_function import (
-    ObjectiveComponent,
+    Component,
     ParentInput_,
     Skipped,
     StructuralComponent,
@@ -45,7 +45,7 @@ class GraphNode:
     """
 
     id: int
-    objective: ObjectiveComponent[Any, Any]
+    objective: Component[Any, Any]
     outgoing: tuple[int, ...] = ()
     incoming: tuple[int, ...] = ()
 
@@ -109,7 +109,7 @@ class CallGraph:
 
 
 def objective_to_call_graph(
-    objective: ObjectiveComponent[Any, Any],
+    objective: Component[Any, Any],
 ) -> CallGraph:
     """
     Compile an objective hierarchy into execution and dataflow relationships.
@@ -189,7 +189,7 @@ def objective_to_call_graph(
         return component_end_ids[source]
 
     def add(
-        component: ObjectiveComponent[Any, Any],
+        component: Component[Any, Any],
     ) -> tuple[int, int]:
         """
         Recursively add a component and return its entry and result node IDs.
@@ -373,9 +373,7 @@ def call_graph_to_dot(  # noqa: PLR0912
     if svg_output_path is not None:
         if dot_output_path is None:
             msg = "Have to set `dot_output_path` if `svg_output_path` is set."
-            raise ValueError(
-                msg
-            )
+            raise ValueError(msg)
 
         subprocess.run(  # noqa: S603
             [

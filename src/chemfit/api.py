@@ -14,7 +14,7 @@ from ase import Atoms
 
 from chemfit.abstract_objective_function import (
     EvaluateContext,
-    ObjectiveComponent,
+    Component,
     PipelineComponent,
     TupleJoinedComponent,
     WrappedComponent,
@@ -38,7 +38,7 @@ from chemfit.combined_objective_function import (
 )
 from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 from chemfit.external_computer import ExternalQuantityComputer
-from chemfit.fitter import CallbackT, Fitter, FitterEvaluateContext
+from chemfit.fitter import CallbackT, Fitter, FitContext
 from chemfit.scheduling import (
     EvaluationRequest,
     PreparedSchedule,
@@ -55,7 +55,7 @@ QuantityT = TypeVar(
     bound=dict[str, Any],
     default=dict[str, Any],
 )
-ObjectiveLike = Callable[[ParamsT], float] | ObjectiveComponent[ParamsT, float]
+ObjectiveLike = Callable[[ParamsT], float] | Component[ParamsT, float]
 FitObjective = ObjectiveLike[ParamsT] | PreparedSchedule[ParamsT, float]
 
 
@@ -143,8 +143,8 @@ def combine(
 
 
 def pipeline(
-    first: ObjectiveComponent[InputT, MiddleT],
-    second: ObjectiveComponent[MiddleT, OutputT],
+    first: Component[InputT, MiddleT],
+    second: Component[MiddleT, OutputT],
 ) -> PipelineComponent[InputT, OutputT]:
     """
     Concatenate two components in a scheduler-inspectable pipeline.
@@ -165,21 +165,19 @@ def pipeline(
 
 @overload
 def join(
-    args: Iterable[ObjectiveComponent[InputT, Any]],
+    args: Iterable[Component[InputT, Any]],
     /,
 ) -> TupleJoinedComponent[InputT]: ...
 
 
 @overload
 def join(
-    *args: ObjectiveComponent[InputT, Any],
+    *args: Component[InputT, Any],
 ) -> TupleJoinedComponent[InputT]: ...
 
 
 def join(
-    *args: (
-        ObjectiveComponent[InputT, Any] | Iterable[ObjectiveComponent[InputT, Any]]
-    ),
+    *args: (Component[InputT, Any] | Iterable[Component[InputT, Any]]),
 ) -> TupleJoinedComponent[InputT]:
     """
     Join components in a scheduler-inspectable fan-out.
@@ -203,7 +201,7 @@ def join(
     if len(args) == 1 and not callable(args[0]):
         components = tuple(args[0])
     else:
-        components = cast("tuple[ObjectiveComponent[InputT, Any], ...]", args)
+        components = cast("tuple[Component[InputT, Any], ...]", args)
 
     return TupleJoinedComponent(components)
 
@@ -495,7 +493,7 @@ def evaluate_many(
         assert executor is not None
         scheduler = ExecutorGraphScheduler(executor=executor)
 
-    if not isinstance(objective, ObjectiveComponent):
+    if not isinstance(objective, Component):
         ob = WrappedComponent(objective)
     else:
         ob = objective
@@ -542,10 +540,10 @@ class FitResult(Generic[ParamsT]):
     """
 
     recommendation: ParamsT
-    contexts: tuple[FitterEvaluateContext, ...]
+    contexts: tuple[FitContext, ...]
 
     @property
-    def best_context(self) -> FitterEvaluateContext:
+    def best_context(self) -> FitContext:
         """
         Return the context containing the best successful evaluation.
 
@@ -640,12 +638,12 @@ def _fit_nevergrad_with_fitter(
     return FitResult(recommendation=recommendation, contexts=tuple(fitter.contexts))
 
 
-def _as_objective_component(
+def _as_component(
     objective: ObjectiveLike[ParamsT],
-) -> ObjectiveComponent[ParamsT, float]:
+) -> Component[ParamsT, float]:
     """Return one objective component suitable for preparation."""
 
-    if isinstance(objective, ObjectiveComponent):
+    if isinstance(objective, Component):
         return objective
     return WrappedComponent(objective, pass_ctx=False)
 
@@ -867,7 +865,7 @@ def fit_nevergrad(
             )
         )
 
-    objective_function = _as_objective_component(objective)
+    objective_function = _as_component(objective)
 
     with scheduler.prepare(objective_function) as schedule:
         return _fit_nevergrad_with_fitter(

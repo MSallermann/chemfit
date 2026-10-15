@@ -79,7 +79,7 @@ The remainder of this page documents that object's complete framework API.
 
 The terms do not need to be plain functions. Generic callables are accepted and
 wrapped internally. In practice many terms are instances of
-:py:class:`~chemfit.abstract_objective_function.ObjectiveComponent`, for example
+:py:class:`~chemfit.abstract_objective_function.Component`, for example
 objective terms returned by ``quantity_computer.with_loss(...)``.
 
 Fluent configuration
@@ -469,7 +469,7 @@ Writing your own exception handler is straightforward:
 Using context configurators
 ---------------------------
 
-Every component supports ``with_ctx_configurator()``. The configurator runs
+Every component supports ``with_context_configurator()``. The configurator runs
 when that component's context begins evaluation and has the signature
 
 .. code-block:: python
@@ -488,7 +488,7 @@ A combined objective can therefore configure its terms independently:
         def configure(ctx):
             ctx.meta["term_number"] = number
 
-        return term.with_ctx_configurator(configure)
+        return term.with_context_configurator(configure)
 
     objective = CombinedObjectiveFunction(
         [with_term_number(term1, 0), with_term_number(term2, 1)],

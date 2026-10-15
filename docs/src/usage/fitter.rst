@@ -109,17 +109,17 @@ Objective interface
 The fitter accepts either:
 
 - a plain callable ``f(params) -> float``
-- an :py:class:`~chemfit.abstract_objective_function.ObjectiveComponent`
+- an :py:class:`~chemfit.abstract_objective_function.Component`
 - a caller-owned :py:class:`~chemfit.scheduling.PreparedSchedule`
 
 A plain callable is wrapped in a
 :py:class:`~chemfit.abstract_objective_function.WrappedComponent`. Existing
-``ObjectiveComponent`` instances are used directly. Both forms use an internally
+``Component`` instances are used directly. Both forms use an internally
 managed serial schedule. A supplied prepared schedule is used directly and is
 never closed or replaced by the fitter. Loss normalization and incumbent
 bookkeeping are applied by the fitter around scheduled evaluations.
 
-To use an evaluation context, supply an ``ObjectiveComponent``. The
+To use an evaluation context, supply a ``Component``. The
 :py:func:`~chemfit.abstract_objective_function.objective` decorator is the shortest route:
 
 .. code-block:: python
@@ -245,11 +245,11 @@ leaf belong on its Nevergrad parameter; the separate ``bounds`` dictionary **onl
 configures numeric leaves that use the automatic scalar behavior.
 
 ----------------------------------
-FitterEvaluateContext
+FitContext
 ----------------------------------
 
 During optimization, ChemFit uses
-:py:class:`~chemfit.fitter.FitterEvaluateContext`, which extends
+:py:class:`~chemfit.fitter.FitContext`, which extends
 :py:class:`~chemfit.evaluate_context.EvaluateContext`
 with optimization-specific fields:
 
@@ -275,7 +275,7 @@ Each callback has the form:
 
 .. code-block:: python
 
-    def callback(step: int, contexts: list[FitterEvaluateContext]) -> None:
+    def callback(step: int, contexts: list[FitContext]) -> None:
         ...
 
 Callbacks are invoked every ``n_steps`` completed optimizer steps. At the end
@@ -498,7 +498,7 @@ the optimizer loop:
 
             opt_params = fitter.finish(optimizer.recommendation())
 
-One :class:`~chemfit.fitter.FitterEvaluateContext` is maintained per candidate
+One :class:`~chemfit.fitter.FitContext` is maintained per candidate
 slot. The losses returned by ``fitter.evaluate`` have the same order as the
 candidate list. A caller-supplied executor remains caller-owned; closing the
 prepared schedule does not shut it down.
@@ -521,7 +521,7 @@ the final batch contains only the remaining candidates. For example,
 ``budget=10`` with ``batch_size=4`` evaluates batches of four, four and two.
 
 Each candidate slot uses its own
-:py:class:`~chemfit.fitter.FitterEvaluateContext`. Actual concurrency is
+:py:class:`~chemfit.fitter.FitContext`. Actual concurrency is
 determined by the prepared schedule. Passing an objective directly creates an
 internally managed :class:`~chemfit.graph_schedule_base.SerialGraphSchedule`, which
 evaluates the batch serially.
@@ -568,11 +568,11 @@ For example:
 
 .. code-block:: python
 
-    from chemfit.fitter import Fitter, FitterEvaluateContext
+    from chemfit.fitter import Fitter, FitContext
 
     fitter = Fitter(...)
 
-    ctxs = [FitterEvaluateContext() for _ in range(NUM_WORKERS)]
+    ctxs = [FitContext() for _ in range(NUM_WORKERS)]
 
     for ctx in ctxs:
         ctx.config.gandalf = "the white" # <-- make sure it's not the grey
@@ -581,7 +581,7 @@ For example:
 
 .. important::
 
-    Make sure to pass instances of :py:class:`~chemfit.fitter.FitterEvaluateContext` and **not** the base class
+    Make sure to pass instances of :py:class:`~chemfit.fitter.FitContext` and **not** the base class
     :py:class:`~chemfit.evaluate_context.EvaluateContext`!
 
 .. warning::
@@ -590,7 +590,7 @@ For example:
 
     .. code-block:: python
 
-        ctxs = [FitterEvaluateContext()] * NUM_WORKERS # <-- bad
+        ctxs = [FitContext()] * NUM_WORKERS # <-- bad
 
     This will create a list with ``NUM_WORKERS`` references to the **same** ``ctx``. Very bad!
 
@@ -658,7 +658,7 @@ Summary
 - Supports native Nevergrad parameter types in ``fit_nevergrad``
 - Supports SciPy and Nevergrad backends
 - Normalizes losses and tracks the best optimizer-visible evaluation
-- Uses ``FitterEvaluateContext`` for evaluation bookkeeping
+- Uses ``FitContext`` for evaluation bookkeeping
 - Supports callbacks and predefined callback utilities
 - Allows replaying observations for warm-starting
 - Supports parallel evaluation with Nevergrad

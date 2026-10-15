@@ -1,8 +1,8 @@
 """ChemFit: composable objective functions and parameter fitting."""
 
 from chemfit.abstract_objective_function import (
+    Component,
     EvaluateContext,
-    ObjectiveComponent,
     PipelineComponent,
     QuantityComputer,
     StructuralComponent,
@@ -35,7 +35,7 @@ from chemfit.executor_graph_schedule import (
     ExecutorGraphSchedule,
     ExecutorGraphScheduler,
 )
-from chemfit.fitter import Fitter, FitterEvaluateContext
+from chemfit.fitter import FitContext, Fitter
 from chemfit.fitter_callbacks import (
     CheckpointBestParameters,
     SaveMetaData,
@@ -52,15 +52,15 @@ from chemfit.scheduling import (
 __all__ = [
     "CheckpointBestParameters",
     "CombinedObjectiveFunction",
+    "Component",
     "EvaluateContext",
     "EvaluationRequest",
     "EvaluationResult",
     "ExecutorGraphSchedule",
     "ExecutorGraphScheduler",
+    "FitContext",
     "FitResult",
     "Fitter",
-    "FitterEvaluateContext",
-    "ObjectiveComponent",
     "PipelineComponent",
     "PreparedSchedule",
     "QuantityComputer",

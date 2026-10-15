@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from typing_extensions import assert_type
 
+    from chemfit import Component, FitContext
     from chemfit.abstract_objective_function import (
         EvaluateContext,
         OpaquePipeline,
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     from chemfit.fitter import Fitter
     from chemfit.graph_component import GraphBuilder, GraphComponent, NodeRef
     from chemfit.graph_schedule_base import SerialGraphSchedule, SerialGraphScheduler
+    from chemfit.scheduling import EvaluationRequest
 
     Parameters = dict[str, float]
     Quantities = dict[str, float]
@@ -33,11 +35,22 @@ if TYPE_CHECKING:
         return parameters["x"] ** 2
 
     assert_type(wrapped_objective, WrappedComponent[Parameters, float])
+    public_component: Component[Parameters, float] = wrapped_objective
     assert_type(
         wrapped_objective.with_meta(dataset="training"),
         WrappedComponent[Parameters, float],
     )
+    assert_type(
+        wrapped_objective.with_context_configurator(lambda _ctx: None),
+        WrappedComponent[Parameters, float],
+    )
     wrapped_objective({"x": "wrong"})  # pyright: ignore[reportArgumentType]
+
+    fit_context = FitContext()
+    assert_type(fit_context, FitContext)
+
+    request = EvaluationRequest(input={"x": 1.0}, ctx=fit_context)
+    assert_type(request.input, dict[str, float])
 
     serial_schedule = SerialGraphScheduler().prepare(wrapped_objective)
     assert_type(serial_schedule, SerialGraphSchedule)

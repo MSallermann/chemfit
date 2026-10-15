@@ -51,9 +51,9 @@ The top-level API expresses this workflow directly: use
 :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>`.
 
 Underneath, these helpers operate on ChemFit's
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent` and
+:class:`~chemfit.abstract_objective_function.Component` and
 :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
-abstractions. ``ObjectiveComponent`` is the general runtime base for every
+abstractions. ``Component`` is the general runtime base for every
 stage, not only complete scalar objectives. A quantity computer is a component
 that maps parameters to intermediate quantities; attaching a loss returns a
 new component that maps parameters to a scalar objective value. See
@@ -94,7 +94,7 @@ The quantity computer is defined via a simple Python function, mapping a :class:
 The :func:`~chemfit.abstract_objective_function.quantity` decorator turns this function into a
 :class:`~chemfit.abstract_objective_function.WrappedComponent` instance.
 
-The :meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`
+The :meth:`~chemfit.abstract_objective_function.Component.with_loss`
 method returns an objective term that runs the quantity computer and then
 applies the loss function. The original quantity computer is unchanged.
 

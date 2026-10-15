@@ -585,7 +585,7 @@ def test_batch_mixed_success_and_failure_keeps_request_indices(scheduler):
     inputs = [2, -1, 5, -3]
     contexts = [EvaluateContext() for _ in inputs]
     requests = [
-        EvaluationRequest(parameters=value, ctx=ctx)
+        EvaluationRequest(input=value, ctx=ctx)
         for value, ctx in zip(inputs, contexts, strict=True)
     ]
 
@@ -638,7 +638,7 @@ def test_batch_recovered_failures_are_isolated_per_request(scheduler):
         results = list(
             schedule.evaluate_many(
                 [
-                    EvaluationRequest(parameters=value, ctx=ctx)
+                    EvaluationRequest(input=value, ctx=ctx)
                     for value, ctx in zip(inputs, contexts, strict=True)
                 ]
             )

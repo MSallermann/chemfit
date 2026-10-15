@@ -1,10 +1,10 @@
-"""Direct ObjectiveComponent lifecycle tests (no schedulers)."""
+"""Direct Component lifecycle tests (no schedulers)."""
 
 import pytest
 
 from chemfit.abstract_objective_function import (
     NO_OUTPUT,
-    ObjectiveComponent,
+    Component,
     OpaquePipeline,
     component,
     quantity,
@@ -12,10 +12,21 @@ from chemfit.abstract_objective_function import (
 from chemfit.evaluate_context import EvaluateContext
 
 
-class Square(ObjectiveComponent[int, int]):
+class Square(Component[int, int]):
     def _run(self, value: int, /, ctx: EvaluateContext) -> int:
         ctx.meta["ran"] = True
         return value * value
+
+
+def test_context_configurator_runs_before_component_evaluation():
+    def configure(ctx: EvaluateContext, *, label: str) -> None:
+        ctx.config.label = label
+
+    component = Square().with_context_configurator(configure, label="square")
+    ctx = EvaluateContext()
+
+    assert component(3, ctx) == 9
+    assert ctx.config.label == "square"
 
 
 def test_hooks_run_in_registration_order():

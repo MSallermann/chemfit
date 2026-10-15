@@ -19,12 +19,12 @@ expose different scheduling boundaries.
 The general component abstraction
 =================================
 
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent` is the
+:class:`~chemfit.abstract_objective_function.Component` is the
 general abstraction behind quantities, losses, objective terms, pipelines,
-and joins. Conceptually, an ``ObjectiveComponent[InputT, OutputT]`` maps one
+and joins. Conceptually, a ``Component[InputT, OutputT]`` maps one
 input value to one output value::
 
-    InputT -> ObjectiveComponent -> OutputT
+    InputT -> Component -> OutputT
 
 The input and output do not have to be parameter mappings and scalar losses.
 For example, a component may map parameters to quantities, quantities to a
@@ -56,7 +56,7 @@ callable into a
 
 ``quantity()`` and ``objective()`` use the same wrapping machinery but express
 more specific intent in an objective definition. Custom classes can instead
-subclass ``ObjectiveComponent`` and implement ``_run(input_, ctx)``; see
+subclass ``Component`` and implement ``_run(input_, ctx)``; see
 :ref:`writing_quantity_computers` for implementation guidance.
 
 The evaluation lifecycle
@@ -93,7 +93,7 @@ important for structural components: a structural component that is
 short-circuited at its own pre-hook never creates or evaluates its children.
 
 Fluent configuration methods such as ``with_meta()``, ``bind()``, and
-``with_ctx_configurator()`` return configured copies. This makes it possible
+``with_context_configurator()`` return configured copies. This makes it possible
 to derive several component definitions from one base object without sharing
 their registration lists or configuration dictionaries accidentally.
 
@@ -104,7 +104,7 @@ Atomic and structural components
 
 The graph scheduler divides components into two categories.
 
-An **atomic component** is any ``ObjectiveComponent`` that is not a
+An **atomic component** is any ``Component`` that is not a
 :class:`~chemfit.abstract_objective_function.StructuralComponent`. The graph
 scheduler treats its complete ``_run()`` as one work item. Atomic does not mean
 that the implementation is small or that it makes only one function call. An
@@ -201,7 +201,7 @@ the output of one stage to the next, but the scheduler sees them differently.
 Opaque pipelines
 ----------------
 
-:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`
+:meth:`~chemfit.abstract_objective_function.Component.with_loss`
 constructs an opaque pipeline when the receiver is an ordinary, non-structural
 component. The pipeline contains the quantity component and a wrapped loss
 component:

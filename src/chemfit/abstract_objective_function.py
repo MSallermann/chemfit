@@ -34,11 +34,11 @@ InputT_contra = TypeVar("InputT_contra", contravariant=True)
 OutputT_co = TypeVar("OutputT_co", covariant=True)
 
 
-class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
+class Component(Generic[InputT_contra, OutputT_co]):
     """
     Base class for a context-aware computation from one input to one output.
 
-    ``ObjectiveComponent`` is ChemFit's general runtime abstraction. Despite
+    ``Component`` is ChemFit's general runtime abstraction. Despite
     the class name, an instance need not be a complete scalar objective: its
     role is determined by its input and output types. For example, a quantity
     computer maps fitting parameters to a quantity dictionary, while an
@@ -51,19 +51,19 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
         self.pre_eval_hooks: list[Callable[[EvaluateContext], None | OutputT_co]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
-        self._ctx_configurator: (
+        self._context_configurator: (
             Callable[Concatenate[EvaluateContext, ...], None] | None
         ) = None
-        self._ctx_configurator_args: tuple[Any, ...] = ()
-        self._ctx_configurator_kwargs: dict[str, Any] = {}
+        self._context_configurator_args: tuple[Any, ...] = ()
+        self._context_configurator_kwargs: dict[str, Any] = {}
         self.static_meta_data: dict[str, Any] = {}
 
     def copy(self) -> Self:
         new = copy.copy(self)
         new.pre_eval_hooks = self.pre_eval_hooks.copy()
         new.post_eval_hooks = self.post_eval_hooks.copy()
-        new._ctx_configurator_kwargs = (  # noqa: SLF001
-            self._ctx_configurator_kwargs.copy()
+        new._context_configurator_kwargs = (  # noqa: SLF001
+            self._context_configurator_kwargs.copy()
         )
         new.static_meta_data = self.static_meta_data.copy()
         return new
@@ -136,7 +136,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
 
         return OpaquePipeline(first=self, second=loss_component)
 
-    def with_ctx_configurator(
+    def with_context_configurator(
         self,
         configurator: Callable[Concatenate[EvaluateContext, ...], None],
         /,
@@ -144,17 +144,17 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         **kwargs: Any,
     ) -> Self:
         new = self.copy()
-        new._ctx_configurator = configurator  # noqa: SLF001
-        new._ctx_configurator_args = args  # noqa: SLF001
-        new._ctx_configurator_kwargs = kwargs.copy()  # noqa: SLF001
+        new._context_configurator = configurator  # noqa: SLF001
+        new._context_configurator_args = args  # noqa: SLF001
+        new._context_configurator_kwargs = kwargs.copy()  # noqa: SLF001
         return new
 
-    def _apply_ctx_configurator(self, ctx: EvaluateContext) -> None:
-        if self._ctx_configurator is None:
+    def _apply_context_configurator(self, ctx: EvaluateContext) -> None:
+        if self._context_configurator is None:
             return
 
-        self._ctx_configurator(
-            ctx, *self._ctx_configurator_args, **self._ctx_configurator_kwargs
+        self._context_configurator(
+            ctx, *self._context_configurator_args, **self._context_configurator_kwargs
         )
 
     def register_eval_hook(
@@ -215,7 +215,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
             raise TypeError(msg)
 
         # Traverse child evaluation scopes without recursive Python calls.
-        pending: list[ObjectiveComponent[Any, Any]] = [self]
+        pending: list[Component[Any, Any]] = [self]
         while pending:
             component = pending.pop()
 
@@ -252,7 +252,7 @@ class ObjectiveComponent(Generic[InputT_contra, OutputT_co]):
         ctx: EvaluateContext,
     ) -> None | OutputT_co:
         ctx._reset_evaluation_state()  # noqa: SLF001
-        self._apply_ctx_configurator(ctx)
+        self._apply_context_configurator(ctx)
         ctx.input = input_
 
         self._attach_context_metadata(ctx)
@@ -315,22 +315,22 @@ MiddleT = TypeVar("MiddleT")
 NextT = TypeVar("NextT")
 
 
-class OpaquePipeline(ObjectiveComponent[InputT_contra, OutputT_co]):
+class OpaquePipeline(Component[InputT_contra, OutputT_co]):
     def __init__(
         self,
-        first: ObjectiveComponent[InputT_contra, MiddleT],
-        second: ObjectiveComponent[MiddleT, OutputT_co],
+        first: Component[InputT_contra, MiddleT],
+        second: Component[MiddleT, OutputT_co],
     ) -> None:
         """Execute a sequence of components as one schedulable unit."""
         super().__init__()
-        self._components: tuple[ObjectiveComponent[Any, Any], ...] = (
+        self._components: tuple[Component[Any, Any], ...] = (
             first,
             second,
         )
 
     def then(
         self,
-        next_component: ObjectiveComponent[OutputT_co, NextT],
+        next_component: Component[OutputT_co, NextT],
     ) -> OpaquePipeline[InputT_contra, NextT]:
         new = self.copy()
         new._components = (*self._components, next_component)  # noqa: SLF001
@@ -348,7 +348,7 @@ class OpaquePipeline(ObjectiveComponent[InputT_contra, OutputT_co]):
 
 
 class WrappedComponent(
-    ObjectiveComponent[InputT_contra, OutputT_co], Generic[InputT_contra, OutputT_co]
+    Component[InputT_contra, OutputT_co], Generic[InputT_contra, OutputT_co]
 ):
     def __init__(
         self,
@@ -361,7 +361,7 @@ class WrappedComponent(
         Initialize a wrapped component.
 
         Args:
-            func: Callable to wrap as an ``ObjectiveComponent``. The callable may
+            func: Callable to wrap as a ``Component``. The callable may
                 either accept only ``input_`` or accept both
                 ``input_`` and ``ctx``.
             pass_ctx: If ``True``, call ``func(parameters, ctx)``. If
@@ -452,7 +452,7 @@ def component(
     return wrap
 
 
-ComponentExpr = ObjectiveComponent[InputT_contra, OutputT_co]
+ComponentExpr = Component[InputT_contra, OutputT_co]
 
 
 class ParentInput_:  # noqa: N801
@@ -481,7 +481,7 @@ SKIPPED = Skipped()
 InputSource: TypeAlias = int | ParentInput_ | Skipped
 
 
-class StructuralComponent(ObjectiveComponent[InputT_contra, OutputT_co]):
+class StructuralComponent(Component[InputT_contra, OutputT_co]):
     """
     Base class for objective components composed of other components.
 
@@ -752,7 +752,7 @@ class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
 
     def __init__(
         self,
-        components: tuple[ObjectiveComponent[InputT_contra, Any], ...],
+        components: tuple[Component[InputT_contra, Any], ...],
     ) -> None:
         """Initialize a nonempty collection of independent components."""
         super().__init__()
@@ -767,7 +767,7 @@ class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
         """Return the number of child components."""
         return len(self._components)
 
-    def components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+    def components(self) -> Sequence[Component[Any, Any]]:
         """Return the independently evaluated components."""
         return self._components
 
@@ -815,23 +815,23 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
 
     def __init__(
         self,
-        first: ObjectiveComponent[InputT_contra, MiddleT],
-        second: ObjectiveComponent[MiddleT, OutputT_co],
+        first: Component[InputT_contra, MiddleT],
+        second: Component[MiddleT, OutputT_co],
     ) -> None:
         """Initialize a pipeline containing two components."""
         super().__init__()
-        self._components: list[ObjectiveComponent[Any, Any]] = [first, second]
+        self._components: list[Component[Any, Any]] = [first, second]
 
     def then(
         self,
-        next_component: ObjectiveComponent[OutputT_co, NextT],
+        next_component: Component[OutputT_co, NextT],
     ) -> PipelineComponent[InputT_contra, NextT]:
         """Return a copy of the pipeline with an additional final component."""
         new = self.copy()
         new._components = [*self._components, next_component]  # noqa: SLF001
         return cast("PipelineComponent[InputT_contra, NextT]", new)
 
-    def components(self) -> Sequence[ObjectiveComponent[Any, Any]]:
+    def components(self) -> Sequence[Component[Any, Any]]:
         """Return the components in execution order."""
         return self._components
 
@@ -912,7 +912,7 @@ LossQuantitiesT = TypeVar(
     "LossQuantitiesT", bound=dict[str, Any], default=dict[str, Any]
 )
 
-QuantityComputer = ObjectiveComponent[ParametersT_contra, QuantitiesT_co]
+QuantityComputer = Component[ParametersT_contra, QuantitiesT_co]
 
 
 def quantity(

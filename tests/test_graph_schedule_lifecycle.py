@@ -67,7 +67,7 @@ def test_repeated_batches_replace_context_hierarchy():
 
     ctx = EvaluateContext()
     with SerialGraphScheduler().prepare(PipelineComponent(double, add_one)) as schedule:
-        assert schedule(2, ctx) == 5
+        assert schedule(input=2, ctx=ctx) == 5
         first_children = tuple(ctx.children)
         assert schedule(4, ctx) == 9
 

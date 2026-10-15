@@ -1,19 +1,19 @@
 import json
 from pathlib import Path
 
-from chemfit.fitter import FitterEvaluateContext
+from chemfit.fitter import FitContext
 from chemfit.fitter_callbacks import CheckpointBestParameters, SaveMetaData
 
 
-def make_context(loss: float, x: float) -> FitterEvaluateContext:
-    ctx = FitterEvaluateContext()
+def make_context(loss: float, x: float) -> FitContext:
+    ctx = FitContext()
     ctx.opt_loss = loss
     ctx.opt_params = {"x": x}
     return ctx
 
 
 def test_save_metadata_includes_nested_summaries(tmp_path: Path):
-    ctx = FitterEvaluateContext()
+    ctx = FitContext()
     child = ctx.spawn_ctx()
     ctx.children.append(child)
     child.meta["marker"] = "child"

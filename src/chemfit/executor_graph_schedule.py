@@ -2,8 +2,8 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import FIRST_COMPLETED, Executor, Future, wait
 
 from chemfit.abstract_objective_function import (
+    Component,
     InputT_contra,
-    ObjectiveComponent,
     OutputT_co,
 )
 from chemfit.callgraph import CallGraph, objective_to_call_graph
@@ -18,7 +18,7 @@ from chemfit.scheduling import Scheduler
 
 
 def evaluate_leaf_task(
-    objective: ObjectiveComponent[InputT_contra, OutputT_co],
+    objective: Component[InputT_contra, OutputT_co],
     task: NodeTask[InputT_contra],
 ) -> NodeCompletion:
     """Evaluate one task and convert ordinary exceptions into node outcomes."""
@@ -131,7 +131,7 @@ class ExecutorGraphScheduler(Scheduler[ExecutorGraphSchedule]):
         super().__init__()
 
     def prepare(
-        self, objective: ObjectiveComponent[InputT_contra, OutputT_co]
+        self, objective: Component[InputT_contra, OutputT_co]
     ) -> ExecutorGraphSchedule:
         """
         Compile an objective component into an executor-backed graph schedule.
