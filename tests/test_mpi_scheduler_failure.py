@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from chemfit.abstract_objective_function import EvaluateContext, ObjectiveComponent
+from chemfit.abstract_objective_function import Component, EvaluateContext
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 
 MPI = pytest.importorskip("mpi4py.MPI", reason="Missing mpi4py")
@@ -27,7 +27,7 @@ class UnpickleableInterrupt(KeyboardInterrupt):
         raise TypeError(msg)
 
 
-class CatastrophicLeaf(ObjectiveComponent[Parameters, float]):
+class CatastrophicLeaf(Component[Parameters, float]):
     """Raise an unpickleable BaseException on an MPI worker."""
 
     def _run(self, parameters: Parameters, /, ctx: EvaluateContext) -> float:

@@ -4,7 +4,7 @@ Evaluation hooks
 ================
 
 Evaluation hooks attach instrumentation to an
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent` without changing
+:class:`~chemfit.abstract_objective_function.Component` without changing
 its evaluation implementation. Register either a hook object with
 ``pre_eval(ctx)`` and/or ``post_eval(ctx)`` methods, or pass ordinary callables
 through the ``pre=`` and ``post=`` keyword arguments. No hook base class is
@@ -77,7 +77,7 @@ key.
     True
 
 ``chemfit.objective()`` returns a wrapped
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent`; the same hook
+:class:`~chemfit.abstract_objective_function.Component`; the same hook
 API applies to every component, including quantity computers and composed
 objective terms.
 

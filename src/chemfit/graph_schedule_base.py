@@ -9,8 +9,8 @@ from typing import Any, Generic, TypeAlias, TypeVar, cast
 
 from chemfit.abstract_objective_function import (
     SKIPPED,
+    Component,
     EvaluateContext,
-    ObjectiveComponent,
     Skipped,
     StructuralComponent,
 )
@@ -935,7 +935,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
             # Each request needs independent slots and dependency counts even
             # though all runs share the schedule's immutable compiled graph.
             for idx, req in enumerate(requests):
-                req.ctx.input = req.parameters
+                req.ctx.input = req.input
                 eval_state = EvaluationState(
                     self.graph,
                     root_ctx=req.ctx,
@@ -1086,7 +1086,7 @@ class SerialGraphScheduler(Scheduler[SerialGraphSchedule]):
 
     def prepare(
         self,
-        objective: ObjectiveComponent[InputT, OutputT_co],
+        objective: Component[InputT, OutputT_co],
         /,
     ) -> SerialGraphSchedule:
         """

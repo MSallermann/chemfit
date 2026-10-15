@@ -7,6 +7,11 @@ import chemfit
 from chemfit.graph_schedule_base import SerialGraphScheduler
 
 
+def test_component_and_fit_context_are_public():
+    assert chemfit.Component.__name__ == "Component"
+    assert chemfit.FitContext.__name__ == "FitContext"
+
+
 def test_combine_accepts_an_iterable_and_context_aware_reducer():
     @chemfit.objective()
     def term(parameters, *, offset):

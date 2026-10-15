@@ -25,7 +25,7 @@ How do I fit one calculated quantity to reference data?
 Begin by wrapping the function that performs the scientific calculation. Its
 input is normally a dictionary of parameters, and its output is whatever data
 the loss needs. Then attach a loss function with
-:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`:
+:meth:`~chemfit.abstract_objective_function.Component.with_loss`:
 
 .. testcode::
 
@@ -59,7 +59,7 @@ loss without rewriting the simulation. If an existing function already
 returns the final scalar loss, wrap it with :func:`chemfit.objective()
 <chemfit.abstract_objective_function.objective>` instead.
 
-:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss` is
+:meth:`~chemfit.abstract_objective_function.Component.with_loss` is
 the right default for one calculation followed by one comparison. It keeps the
 usually cheap loss beside its calculation as one scheduler task. Use explicit
 composition only when an intermediate result must be reused or when its stages
@@ -170,7 +170,7 @@ Configure the calculator with
 quantities with
 :meth:`~chemfit.ase_objective_function.ASEComputer.with_processor`, and attach
 the loss with
-:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`.
+:meth:`~chemfit.abstract_objective_function.Component.with_loss`.
 By default this performs a single-point calculation. Add
 :meth:`~chemfit.ase_objective_function.ASEComputer.minimize` when the geometry
 itself should be optimized before quantities are extracted, or
@@ -212,7 +212,7 @@ How do I calculate an expensive intermediate result only once?
 
 Suppose one simulation produces both an energy and forces. Building two
 separate terms with
-:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`
+:meth:`~chemfit.abstract_objective_function.Component.with_loss`
 would run that simulation twice. Instead, run it once, then branch into two
 loss components. Because the branch outputs are scalar losses,
 :func:`chemfit.combine() <chemfit.api.combine>` is the appropriate branch:
@@ -500,7 +500,7 @@ When should I write a custom component or scheduler?
 
 Prefer the function wrappers until a calculation needs reusable configuration,
 a specialized evaluation method, or a custom copy policy. Then subclass
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent` and implement
+:class:`~chemfit.abstract_objective_function.Component` and implement
 its calculation. Keep mutable per-evaluation state in the context rather than
 on the component, because the same component may be evaluated concurrently.
 

@@ -24,8 +24,8 @@ from typing import TYPE_CHECKING, Any
 from mpi4py import MPI
 
 from chemfit.abstract_objective_function import (
+    Component,
     InputT_contra,
-    ObjectiveComponent,
     OutputT_co,
 )
 from chemfit.callgraph import AtomicNode, CallGraph, objective_to_call_graph
@@ -336,7 +336,7 @@ class MPIGraphScheduler(Scheduler[MPIGraphSchedule]):
 
     def prepare(
         self,
-        objective: ObjectiveComponent[InputT_contra, OutputT_co],
+        objective: Component[InputT_contra, OutputT_co],
         /,
     ) -> MPIGraphSchedule:
         """Compile and bind the objective graph to the MPI communicator."""

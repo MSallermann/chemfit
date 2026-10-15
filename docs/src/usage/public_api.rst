@@ -51,7 +51,7 @@ Compute, attach a loss, combine, fit
 
 ``chemfit.quantity()`` wraps ``simulate`` as a
 :class:`~chemfit.abstract_objective_function.WrappedComponent`. It is already
-an :class:`~chemfit.abstract_objective_function.ObjectiveComponent`; its
+an :class:`~chemfit.abstract_objective_function.Component`; its
 ``parameters -> quantities`` contract gives it the role of a quantity
 computer. ``with_loss()`` returns a new ``parameters -> float`` pipeline, which
 has the role of an objective term. Here the two terms compare the same model
@@ -68,7 +68,7 @@ graph-visible children; see :ref:`advanced_concepts`.
 :class:`~chemfit.api.FitResult`. ``result.recommendation`` is Nevergrad's
 recommended parameter mapping. ``best_parameters`` and ``best_loss`` identify
 the best optimizer-visible evaluation recorded by ChemFit, and ``contexts``
-contains one :class:`~chemfit.fitter.FitterEvaluateContext` per candidate slot.
+contains one :class:`~chemfit.fitter.FitContext` per candidate slot.
 Internally, the helper configures a :class:`~chemfit.fitter.Fitter`; see
 :ref:`fitter` when you need direct lifecycle control, SciPy, or custom loops.
 
@@ -214,10 +214,10 @@ corresponding callable.
 
 The main fluent families are:
 
-- Every :class:`~chemfit.abstract_objective_function.ObjectiveComponent`
+- Every :class:`~chemfit.abstract_objective_function.Component`
   provides ``with_meta()`` for copy-on-write static metadata.
 - Every quantity computer supports
-  :meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`,
+  :meth:`~chemfit.abstract_objective_function.Component.with_loss`,
   which ends the quantity-building chain and returns an objective term.
 - :class:`~chemfit.combined_objective_function.CombinedObjectiveFunction`
   provides ``with_weights()``, ``with_reduction()``, and
@@ -288,7 +288,7 @@ input to independent children and returns their outcomes in order:
     14
     (6, 4)
 
-All three helpers require ``ObjectiveComponent`` instances, such as values
+All three helpers require ``Component`` instances, such as values
 produced by ``component()``, ``quantity()``, or ``objective()``. ``join()``
 accepts the components positionally or as one iterable. See
 :ref:`advanced_concepts` for their dependency, failure, skip, context, and
@@ -342,7 +342,7 @@ arguments or as one iterable:
    objective = chemfit.combine(terms)
 
 Each term may be an
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent` or a plain
+:class:`~chemfit.abstract_objective_function.Component` or a plain
 ``objective(parameters) -> float`` callable. Plain callables are wrapped
 without context injection.
 
@@ -411,10 +411,10 @@ quantity computer, loss function, objective term, and combined objective.
 All of :func:`chemfit.quantity() <chemfit.abstract_objective_function.quantity>`,
 :func:`chemfit.ase_quantity() <chemfit.api.ase_quantity>`, and
 :func:`chemfit.external_quantity() <chemfit.api.external_quantity>` return a
-subclass of :class:`~chemfit.abstract_objective_function.ObjectiveComponent`
+subclass of :class:`~chemfit.abstract_objective_function.Component`
 matching the ``QuantityComputer`` typing alias. The base component provides the
 general evaluation semantics and
-:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`.
+:meth:`~chemfit.abstract_objective_function.Component.with_loss`.
 
 More specifically:
 

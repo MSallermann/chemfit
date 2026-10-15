@@ -27,14 +27,13 @@ These terms describe two different things:
 
 - **Component** is the runtime abstraction. Every ChemFit computation and
   composition object derives from
-  :class:`~chemfit.abstract_objective_function.ObjectiveComponent` and maps one
+  :class:`~chemfit.abstract_objective_function.Component` and maps one
   input to one output.
 - **Quantity computer** and **objective** describe particular input/output
   roles a component can have.
 
-The name ``ObjectiveComponent`` is deliberately general despite containing
-the word *objective*. Not every ``ObjectiveComponent`` is a complete objective
-that an optimizer can minimize. It may instead produce quantities, apply an
+The name ``Component`` is deliberately general. Not every ``Component`` is a
+complete objective that an optimizer can minimize. It may instead produce quantities, apply an
 intermediate transform, join branches, or connect pipeline stages.
 
 .. list-table:: Canonical ChemFit vocabulary
@@ -47,7 +46,7 @@ intermediate transform, join branches, or connect pipeline stages.
      - Meaning
    * - Component
      - ``InputT -> OutputT``
-     - ``component()`` or an ``ObjectiveComponent`` subclass
+     - ``component()`` or a ``Component`` subclass
      - Any unit participating in ChemFit's evaluation lifecycle
    * - Quantity computer
      - ``parameters -> quantities dict``
@@ -66,7 +65,7 @@ intermediate transform, join branches, or connect pipeline stages.
      - ``combine(term_a, term_b, ...)``
      - Weights and reduces several objective terms to the total loss
 
-``QuantityComputer`` is a typing alias for an ``ObjectiveComponent`` with the
+``QuantityComputer`` is a typing alias for a ``Component`` with the
 quantity-computer contract; it is not another runtime base class. Likewise,
 ``component()``, ``quantity()``, and ``objective()`` all wrap a Python function
 in :class:`~chemfit.abstract_objective_function.WrappedComponent`. The helpers
@@ -274,7 +273,7 @@ Metadata stays on the context whose component produced it. Inspect
 
 Static metadata belongs to a reusable computation or objective definition. Add
 it fluently with
-:py:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_meta`:
+:py:meth:`~chemfit.abstract_objective_function.Component.with_meta`:
 
 .. code-block:: python
 

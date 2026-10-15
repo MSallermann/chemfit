@@ -43,7 +43,7 @@ def test_user_session_supports_batches_and_reuses_contexts_cleanly():
     fitter.init(batch_size=2)
 
     assert fitter.evaluate([{"x": 1.0}, {"x": 3.0}]) == [3.0, 7.0]
-    assert fitter.evaluate({"x": 2.0}) == 5.0
+    assert fitter.evaluate(parameters={"x": 2.0}) == 5.0
     assert len(fitter.contexts[0].children) == 2
     assert fitter.contexts[0].n_evals == 2
     assert fitter.finish() == {"x": 1.0}

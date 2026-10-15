@@ -15,8 +15,8 @@ from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
 from chemfit.abstract_objective_function import (
+    Component,
     EvaluateContext,
-    ObjectiveComponent,
     WrappedComponent,
 )
 from chemfit.graph_schedule_base import SerialGraphScheduler
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, Any], default=dict[str, Any])
 
 
-class FitterEvaluateContext(EvaluateContext):
+class FitContext(EvaluateContext):
     def __init__(self):
         """
         Initialize fitter-specific evaluation state.
@@ -102,7 +102,7 @@ class FitterEvaluateContext(EvaluateContext):
         self.opt_quantities = state["opt_quantities"]
 
 
-CallbackT = Callable[[int, list[FitterEvaluateContext]], None]
+CallbackT = Callable[[int, list[FitContext]], None]
 
 
 def _validate_batch_size(batch_size: int) -> None:
@@ -139,7 +139,7 @@ class Fitter(Generic[ParametersT]):
         self,
         objective_function: (
             Callable[[ParametersT], float]
-            | ObjectiveComponent[ParametersT, float]
+            | Component[ParametersT, float]
             | PreparedSchedule[ParametersT, float]
         ),
         initial_params: Mapping[str, Any],
@@ -153,14 +153,14 @@ class Fitter(Generic[ParametersT]):
         """
         Driver class for parameter optimization.
 
-        A `Fitter` evaluates a plain callable, an ``ObjectiveComponent``, or an
+        A `Fitter` evaluates a plain callable, a ``Component``, or an
         already prepared schedule and exposes convenience methods for running
         optimizations with Nevergrad and SciPy. Plain callables receive only
         the parameter mapping; wrap a context-aware callable as an
-        ``ObjectiveComponent`` first.
+        ``Component`` first.
 
         Args:
-            objective_function (Callable | ObjectiveComponent | PreparedSchedule):
+            objective_function (Callable | Component | PreparedSchedule):
                 Objective or prepared execution plan to minimize. Plain
                 callables are converted to ``WrappedComponent`` objects
                 and evaluated through an internally managed serial schedule.
@@ -211,15 +211,13 @@ class Fitter(Generic[ParametersT]):
         self.bounds: Mapping[str, object] = {} if bounds is None else bounds
 
         if isinstance(objective_function, PreparedSchedule):
-            self._objective_function: ObjectiveComponent[ParametersT, float] | None = (
-                None
-            )
+            self._objective_function: Component[ParametersT, float] | None = None
             self._schedule: PreparedSchedule[ParametersT, float] | None = (
                 objective_function
             )
             self._owns_schedule = False
         else:
-            if not isinstance(objective_function, ObjectiveComponent):
+            if not isinstance(objective_function, Component):
                 objective_function = WrappedComponent(
                     func=objective_function, pass_ctx=False
                 )
@@ -232,11 +230,9 @@ class Fitter(Generic[ParametersT]):
         self.log_exceptions = log_exceptions
         self.near_bound_tol = near_bound_tol
 
-        self.contexts: list[FitterEvaluateContext] = []
+        self.contexts: list[FitContext] = []
 
-        self.callbacks: list[
-            tuple[Callable[[int, list[FitterEvaluateContext]], None], int]
-        ] = []
+        self.callbacks: list[tuple[Callable[[int, list[FitContext]], None], int]] = []
 
     def _close_schedule(self) -> None:
         """Close and discard an internally created schedule, if any."""
@@ -253,7 +249,7 @@ class Fitter(Generic[ParametersT]):
         self,
         parameters: ParametersT,
         value: object,
-        ctx: FitterEvaluateContext,
+        ctx: FitContext,
     ) -> float:
         """Record one optimizer-visible evaluation result."""
 
@@ -278,7 +274,7 @@ class Fitter(Generic[ParametersT]):
         self,
         parameters: ParametersT,
         outcome: float | Exception,
-        ctx: FitterEvaluateContext,
+        ctx: FitContext,
     ) -> float:
         """Convert a completed scheduler root outcome into an optimizer loss."""
 
@@ -311,11 +307,11 @@ class Fitter(Generic[ParametersT]):
         The callback is invoked after every ``n_steps`` completed optimizer
         steps and once at the end of the fit if the final step does not fall
         exactly on the requested interval. The callback receives the number
-        of completed optimizer steps and the list of `FitterEvaluateContext`
+        of completed optimizer steps and the list of `FitContext`
         instances used by the fitter.
 
         Args:
-            func (Callable[[int, list[FitterEvaluateContext]], None]):
+            func (Callable[[int, list[FitContext]], None]):
                 Callback function of the form ``func(step, contexts)``.
             n_steps (int): Number of completed optimizer steps between callback
                 invocations.
@@ -377,7 +373,7 @@ class Fitter(Generic[ParametersT]):
     def init(
         self,
         batch_size: int = 1,
-        contexts: list[FitterEvaluateContext] | None = None,
+        contexts: list[FitContext] | None = None,
     ) -> None:
         """
         Initialize a user-driven optimization session.
@@ -416,9 +412,7 @@ class Fitter(Generic[ParametersT]):
         self._session_batch_size = batch_size
         self._session_step = 0
         self.contexts = (
-            [FitterEvaluateContext() for _ in range(batch_size)]
-            if contexts is None
-            else contexts
+            [FitContext() for _ in range(batch_size)] if contexts is None else contexts
         )
 
     def evaluate(
@@ -460,7 +454,7 @@ class Fitter(Generic[ParametersT]):
 
         requests = [
             EvaluationRequest(
-                parameters=params,
+                input=params,
                 ctx=ctx,
             )
             for params, ctx in zip(batch, contexts, strict=True)
@@ -601,7 +595,7 @@ class Fitter(Generic[ParametersT]):
         budget: int,
         optimizer_str: str = "NgIohTuned",
         batch_size: int = 1,
-        contexts: list[FitterEvaluateContext] | None = None,
+        contexts: list[FitContext] | None = None,
         parametrization: Mapping[str, object] | None = None,
         initial_observations: Iterable[tuple[ParametersT, float | None]] | None = None,
     ) -> ParametersT:
@@ -610,7 +604,7 @@ class Fitter(Generic[ParametersT]):
 
         This method drives nevergrad's ask/tell interface and evaluates each
         candidate batch through the supplied prepared schedule. One
-        ``FitterEvaluateContext`` is used per candidate slot so that
+        ``FitContext`` is used per candidate slot so that
         evaluation-side state can be tracked independently.
 
         Args:
@@ -752,7 +746,7 @@ class Fitter(Generic[ParametersT]):
     def fit_scipy(
         self,
         method: str = "L-BFGS-B",
-        ctx: FitterEvaluateContext | None = None,
+        ctx: FitContext | None = None,
         **kwargs,
     ) -> ParametersT:
         """
@@ -761,7 +755,7 @@ class Fitter(Generic[ParametersT]):
         The parameter dictionary is flattened into a vector representation for
         SciPy and reconstructed on each objective evaluation. Because SciPy's
         ``minimize`` interface is synchronous, a single
-        ``FitterEvaluateContext`` is used for the full optimization run.
+        ``FitContext`` is used for the full optimization run.
 
         Args:
             method: Optimization method passed to

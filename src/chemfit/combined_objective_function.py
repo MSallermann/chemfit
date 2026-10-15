@@ -9,24 +9,24 @@ from typing import Protocol, TypeVar
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import (
+    Component,
     EvaluateContext,
     JoinedComponent,
     NoOutput,
-    ObjectiveComponent,
     WrappedComponent,
 )
 
 ParametersT = TypeVar("ParametersT", bound=Mapping[str, object])
-ObjectiveLike = Callable[[ParametersT], float] | ObjectiveComponent[ParametersT, float]
+ObjectiveLike = Callable[[ParametersT], float] | Component[ParametersT, float]
 
 
 def transform_generic_callables(
     list_of_callables: Sequence[ObjectiveLike[ParametersT]],
-) -> list[ObjectiveComponent[ParametersT, float]]:
-    res: list[ObjectiveComponent[ParametersT, float]] = []
+) -> list[Component[ParametersT, float]]:
+    res: list[Component[ParametersT, float]] = []
 
     for func in list_of_callables:
-        if isinstance(func, ObjectiveComponent):
+        if isinstance(func, Component):
             res.append(func)
         else:
             res.append(WrappedComponent(func))

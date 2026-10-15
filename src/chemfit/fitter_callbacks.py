@@ -16,13 +16,13 @@ from typing import Any
 import numpy as np
 
 from chemfit.evaluate_context import NoOutput
-from chemfit.fitter import FitterEvaluateContext
+from chemfit.fitter import FitContext
 
 logger = logging.getLogger(__name__)
 
 
 # Logging progress
-def log_progress(step: int, ctxs: list[FitterEvaluateContext]):
+def log_progress(step: int, ctxs: list[FitContext]):
     """
     Log optimization progress.
 
@@ -35,7 +35,7 @@ def log_progress(step: int, ctxs: list[FitterEvaluateContext]):
 
     Args:
         step: Current optimizer step index.
-        ctxs: List of ``FitterEvaluateContext`` instances used by the
+        ctxs: List of ``FitContext`` instances used by the
             optimizer. Each context corresponds to one candidate slot.
 
     """
@@ -89,7 +89,7 @@ class SaveMetaData:
         self.output_folder = Path(output_folder)
         self.output_folder.mkdir(exist_ok=True)
 
-    def __call__(self, step: int, ctxs: list[FitterEvaluateContext]):
+    def __call__(self, step: int, ctxs: list[FitContext]):
         try:
             for ictx, ctx in enumerate(ctxs):
                 with (self.output_folder / f"step_{step}_ctx_{ictx}.json").open(
@@ -111,7 +111,7 @@ class CheckpointBestParameters:
     Callback that checkpoints the best parameters observed during fitting.
 
     Whenever a new best loss is detected across the provided
-    ``FitterEvaluateContext`` instances, the corresponding parameters and
+    ``FitContext`` instances, the corresponding parameters and
     metadata are written to disk. The file is overwritten whenever a
     better solution is found (except if `dont_overwrite` is set to True).
 
@@ -138,7 +138,7 @@ class CheckpointBestParameters:
         self.dont_overwrite = dont_overwrite
         self.counter = -1
 
-    def __call__(self, step: int, ctxs: list[FitterEvaluateContext]):
+    def __call__(self, step: int, ctxs: list[FitContext]):
         for ctx in ctxs:
             if ctx.opt_loss is None:
                 continue

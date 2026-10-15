@@ -14,7 +14,7 @@ Before we start...
 ********************
 
 A quantity computer is a role, not a separate runtime class. It is an
-:class:`~chemfit.abstract_objective_function.ObjectiveComponent` whose input is
+:class:`~chemfit.abstract_objective_function.Component` whose input is
 a fitting-parameter mapping and whose output is a dictionary of quantities.
 Use one when the scientific calculation should remain separate from the loss
 that scores its results. If a function already computes the final scalar loss,
@@ -46,8 +46,8 @@ Let's cook
 ********************
 
 For a custom quantity computer, derive from
-:py:class:`~chemfit.abstract_objective_function.ObjectiveComponent` and
-implement ``ObjectiveComponent._run``. ``QuantityComputer`` is the typing alias
+:py:class:`~chemfit.abstract_objective_function.Component` and
+implement ``Component._run``. ``QuantityComputer`` is the typing alias
 for a component mapping parameter dictionaries to quantity dictionaries.
 
 The ``_run`` method should accept exactly two arguments: a parameter
@@ -67,7 +67,7 @@ This is probably a point at which we should familiarize ourselves with the...
 
     .. code-block:: python
 
-        class GoldenRuleViolator(ObjectiveComponent):
+        class GoldenRuleViolator(Component):
             # ...
             def _run(self, params, ctx):
                 self.bad = params["x"] # <-- bad mojo
@@ -88,9 +88,9 @@ Let's fix the ``GoldenRuleViolator``:
 
 .. testcode::
 
-    from chemfit import EvaluateContext, ObjectiveComponent
+    from chemfit import EvaluateContext, Component
 
-    class GoodCitizen(ObjectiveComponent):
+    class GoodCitizen(Component):
         def _run(self, params, ctx):
             bad = params["x"]
             ctx.meta["bad"] = bad # <-- no problemo
@@ -157,9 +157,9 @@ If we forego the :py:func:`~chemfit.abstract_objective_function.quantity` approa
 
 .. code-block:: python
 
-    from chemfit.abstract_objective_function import ObjectiveComponent
+    from chemfit.abstract_objective_function import Component
 
-    class Computer(ObjectiveComponent):
+    class Computer(Component):
 
         def __init__(self,f):
             super().__init__()
@@ -298,7 +298,7 @@ calculation begins without adding that preparation to ``_run()``:
 
 .. testcode::
 
-    from chemfit import EvaluateContext, ObjectiveComponent
+    from chemfit import EvaluateContext, Component
 
     class ReferenceEnergyHook:
         def __init__(self, reference_energies):
@@ -308,7 +308,7 @@ calculation begins without adding that preparation to ``_run()``:
             species = ctx.input["species"]
             ctx.temp.reference_energy = self.reference_energies[species]
 
-    class ReferenceShift(ObjectiveComponent):
+    class ReferenceShift(Component):
         def _run(self, params, ctx):
             return params["energy"] - ctx.temp.reference_energy
 
@@ -684,7 +684,7 @@ are not transported back.
 Configuring component contexts
 ==============================
 
-Use ``with_ctx_configurator()`` when a particular component needs context
+Use ``with_context_configurator()`` when a particular component needs context
 configuration at evaluation start:
 
 .. testcode::
@@ -697,7 +697,7 @@ configuration at evaluation start:
         ctx.meta["label"] = label
         ctx.config.mode = "diagnostic"
 
-    configured = configurable_computer.with_ctx_configurator(
+    configured = configurable_computer.with_context_configurator(
         configure,
         label="reference",
     )

@@ -122,7 +122,7 @@ to one objective and returns a prepared schedule.
    from chemfit.scheduling import EvaluationRequest
 
    requests = [
-       EvaluationRequest(params, EvaluateContext())
+       EvaluationRequest(input=params, ctx=EvaluateContext())
        for params in parameters
    ]
 
@@ -143,7 +143,7 @@ to one objective and returns a prepared schedule.
 :class:`~chemfit.scheduling.EvaluationResult` objects in completion order.
 Each result contains its original request index and either a numerical value or
 an ordinary evaluation exception. A prepared schedule is also callable:
-``schedule(parameters, ctx)`` handles one parameter mapping synchronously and
+``schedule(input, ctx)`` handles one input synchronously and
 raises its evaluation exception directly. The context is optional when its
 result state is not needed.
 

@@ -368,7 +368,7 @@ Creating an objective term
 --------------------------
 
 Like every component, an ``ASEComputer`` becomes an objective through
-:py:meth:`~chemfit.abstract_objective_function.ObjectiveComponent.with_loss`:
+:py:meth:`~chemfit.abstract_objective_function.Component.with_loss`:
 
 .. code-block:: python
 
