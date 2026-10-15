@@ -6,6 +6,7 @@ import pytest
 from chemfit.abstract_objective_function import PipelineComponent, component
 from chemfit.fitter import Fitter
 from chemfit.graph_schedule_base import SerialGraphScheduler
+from chemfit.scheduling import DirectSchedule
 
 
 def square(parameters):
@@ -53,14 +54,14 @@ def test_internal_schedule_is_reprepared_and_closed_per_session():
     fitter = Fitter(square, initial_params={"x": 1.0})
     fitter.init()
     first = fitter._schedule  # noqa: SLF001
-    assert first is not None
+    assert isinstance(first, DirectSchedule)
     fitter.evaluate({"x": 1.0})
     fitter.finish()
     assert first.closed
 
     fitter.init()
     second = fitter._schedule  # noqa: SLF001
-    assert second is not None
+    assert isinstance(second, DirectSchedule)
     assert second is not first
     fitter.evaluate({"x": 2.0})
     fitter.finish()

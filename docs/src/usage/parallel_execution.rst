@@ -40,16 +40,17 @@ executor-backed scheduler; it defaults to ``batch_size``. Those execution slots
 are shared by all leaf terms from all candidates in the batch.
 
 With no custom execution backend, an effective ``execution_workers`` value of
-one uses an internally managed serial schedule. Larger values use an internally
-managed ``concurrent.futures.ThreadPoolExecutor``-backed schedule.
+one uses an internally managed direct schedule. Larger values use an
+internally managed ``concurrent.futures.ThreadPoolExecutor``-backed graph
+schedule.
 
-For an objective graph with ``L`` available work nodes, a batch of ``B``
+For a component graph with ``L`` available work nodes, a batch of ``B``
 candidates may expose up to ``B * L`` tasks. Allowing all of those nodes
 to execute concurrently can therefore require
 ``execution_workers = batch_size * number_of_nodes``. This is a concurrency
 upper bound: a sensible setting must also account for available hardware and
 the resources consumed by each leaf task. The leaf count includes leaves below
-nested composite objectives, not only the direct children of the root.
+nested structural components, not only the direct children of the root.
 
 To choose a different executor, pass a caller-owned executor and omit
 ``execution_workers``:
@@ -111,7 +112,13 @@ Preparing a scheduler directly
 The lower-level scheduler API is useful when a schedule should be reused or
 when individual results should be consumed as they complete. A scheduler is
 backend configuration; :meth:`~chemfit.scheduling.Scheduler.prepare` binds it
-to one objective and returns a prepared schedule.
+to one component and returns a prepared schedule.
+
+:class:`~chemfit.scheduling.DirectScheduler` invokes the prepared component
+directly without compiling its structure. In contrast,
+:class:`~chemfit.graph_schedule_base.SerialGraphScheduler` compiles the
+component graph and executes its nodes serially. Use a graph scheduler when
+structural scheduling semantics or graph diagnostics are required.
 
 .. testcode::
 
@@ -172,8 +179,8 @@ Threads and processes
 ``concurrent.futures.ThreadPoolExecutor`` has low overhead and works well
 for external programs and native libraries that release the GIL. CPU-bound
 Python code normally needs a process executor for actual parallelism. Process
-execution adds serialization overhead, and objectives, hooks, parameters, and
-worker input context state must be serializable.
+execution adds serialization overhead, and components, hooks, inputs, and
+worker-input context state must be serializable.
 
 Executor and MPI schedules return result-bearing context state to the driver:
 input, output, nested child state, and metadata. ``ctx.temp`` is scratch state
@@ -212,7 +219,7 @@ MPI
 ---
 
 :class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` uses persistent nonzero MPI
-ranks as leaf-task workers while rank zero coordinates objective-graph
+ranks as leaf-task workers while rank zero coordinates component-graph
 semantics and fitting. MPI programs must enter the worker loop on every
 nonzero rank. See :ref:`mpi` for the complete lifecycle and launch example.
 
@@ -221,6 +228,6 @@ Practical guidance
 
 Parallel execution is useful only when leaf work is large enough to outweigh
 scheduling and serialization overhead. Measure representative workloads.
-Avoid mutable global or objective-instance state, allocate a distinct context
+Avoid mutable global or component-instance state, allocate a distinct context
 for every overlapping evaluation, and use a process backend only when all
 worker inputs are serializable.

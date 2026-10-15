@@ -134,13 +134,13 @@ class ExecutorGraphScheduler(Scheduler[ExecutorGraphSchedule]):
         self, objective: Component[InputT_contra, OutputT_co]
     ) -> ExecutorGraphSchedule:
         """
-        Compile an objective component into an executor-backed graph schedule.
+        Compile a component into an executor-backed graph schedule.
 
         Args:
-            objective: Root ordinary or composite objective to schedule.
+            objective: Root atomic or structural component to schedule.
 
         Returns:
-            Prepared executor-backed schedule for the objective graph.
+            Prepared executor-backed schedule for the component graph.
 
         """
 

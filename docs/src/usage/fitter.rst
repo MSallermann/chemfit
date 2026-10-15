@@ -523,8 +523,8 @@ the final batch contains only the remaining candidates. For example,
 Each candidate slot uses its own
 :py:class:`~chemfit.fitter.FitContext`. Actual concurrency is
 determined by the prepared schedule. Passing an objective directly creates an
-internally managed :class:`~chemfit.graph_schedule_base.SerialGraphSchedule`, which
-evaluates the batch serially.
+internally managed :class:`~chemfit.scheduling.DirectSchedule`, which evaluates
+the batch serially without compiling the component graph.
 
 For concurrent execution, prepare an executor-backed schedule and pass it to
 the fitter:

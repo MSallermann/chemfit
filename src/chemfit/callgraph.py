@@ -94,7 +94,7 @@ class AtomicNode(GraphNode):
 @dataclass(frozen=True)
 class CallGraph:
     """
-    Store the immutable executable graph for one root objective component.
+    Store the immutable executable graph for one root component.
 
     Args:
         nodes: Nodes in stable ID order; each node's ID equals its position.
@@ -112,7 +112,7 @@ def objective_to_call_graph(
     objective: Component[Any, Any],
 ) -> CallGraph:
     """
-    Compile an objective hierarchy into execution and dataflow relationships.
+    Compile a component hierarchy into execution and dataflow relationships.
 
     Atomic components become a single :class:`~chemfit.callgraph.AtomicNode`. Structural
     components become a start/finish pair surrounding recursively compiled
@@ -130,7 +130,7 @@ def objective_to_call_graph(
     literal skip sources pass policy data without introducing an edge.
 
     Args:
-        objective: Root objective component to compile.
+        objective: Root component to compile.
 
     Returns:
         Immutable call graph reusable across evaluation requests.

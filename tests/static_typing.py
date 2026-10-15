@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from typing_extensions import assert_type
 
-    from chemfit import Component, FitContext
+    from chemfit import Component, DirectSchedule, DirectScheduler, FitContext
     from chemfit.abstract_objective_function import (
         EvaluateContext,
         OpaquePipeline,
@@ -51,6 +51,10 @@ if TYPE_CHECKING:
 
     request = EvaluationRequest(input={"x": 1.0}, ctx=fit_context)
     assert_type(request.input, dict[str, float])
+
+    direct_scheduler: DirectScheduler[Parameters, float] = DirectScheduler()
+    direct_schedule = direct_scheduler.prepare(wrapped_objective)
+    assert_type(direct_schedule, DirectSchedule[Parameters, float])
 
     serial_schedule = SerialGraphScheduler().prepare(wrapped_objective)
     assert_type(serial_schedule, SerialGraphSchedule)

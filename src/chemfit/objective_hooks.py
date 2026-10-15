@@ -1,4 +1,4 @@
-"""Built-in hooks for objective-function evaluations."""
+"""Built-in hooks for component evaluations."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from chemfit.abstract_objective_function import EvaluateContext
 
 class UUIDHook:
     """
-    Assign a unique identifier to each objective evaluation.
+    Assign a unique identifier to each component evaluation.
 
     The UUID is stored as a string so that it can be serialized in context
     metadata and propagated across executor and MPI process boundaries.
@@ -42,22 +42,22 @@ class UUIDHook:
 
 class TimingHook:
     """
-    Record the elapsed real time of an objective evaluation.
+    Record the elapsed real time of a component evaluation.
 
     The monotonic start time is kept in ``ctx.temp`` and is therefore local to
     the current evaluation. The completed duration is written to
     ``ctx.meta[meta_key]["elapsed_seconds"]``, which allows executor and MPI
     schedulers to propagate it back from worker processes.
 
-    Register both halves of the hook on an objective with::
+    Register both halves of the hook on a component with::
 
         objective.register_eval_hook(hook=TimingHook())
 
-    Timing is also recorded when the objective raises, because post-evaluation
+    Timing is also recorded when the component raises, because post-evaluation
     hooks run during exception unwinding.
 
     To time a combined objective and all its terms, register once after building
-    the objective graph::
+    the component graph::
 
         objective.register_eval_hook(hook=TimingHook(), recursive=True)
 

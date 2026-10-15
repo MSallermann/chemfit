@@ -19,8 +19,7 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     WrappedComponent,
 )
-from chemfit.graph_schedule_base import SerialGraphScheduler
-from chemfit.scheduling import EvaluationRequest, PreparedSchedule
+from chemfit.scheduling import DirectScheduler, EvaluationRequest, PreparedSchedule
 from chemfit.utils import check_params_near_bounds
 from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 
@@ -163,7 +162,7 @@ class Fitter(Generic[ParametersT]):
             objective_function (Callable | Component | PreparedSchedule):
                 Objective or prepared execution plan to minimize. Plain
                 callables are converted to ``WrappedComponent`` objects
-                and evaluated through an internally managed serial schedule.
+                and evaluated through an internally managed direct schedule.
                 A prepared schedule remains caller-owned.
             initial_params: Nested mapping of concrete initial parameter
                 values passed to the objective.
@@ -403,7 +402,7 @@ class Fitter(Generic[ParametersT]):
         if self._owns_schedule:
             self._close_schedule()
             assert self._objective_function is not None
-            self._schedule = SerialGraphScheduler().prepare(self._objective_function)
+            self._schedule = DirectScheduler().prepare(self._objective_function)
         elif self._schedule is None or self._schedule.closed:
             msg = "Prepared schedule is closed."
             raise RuntimeError(msg)

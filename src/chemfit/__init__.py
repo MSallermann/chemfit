@@ -43,6 +43,8 @@ from chemfit.fitter_callbacks import (
 )
 from chemfit.graph_schedule_base import SerialGraphSchedule, SerialGraphScheduler
 from chemfit.scheduling import (
+    DirectSchedule,
+    DirectScheduler,
     EvaluationRequest,
     EvaluationResult,
     PreparedSchedule,
@@ -53,6 +55,8 @@ __all__ = [
     "CheckpointBestParameters",
     "CombinedObjectiveFunction",
     "Component",
+    "DirectSchedule",
+    "DirectScheduler",
     "EvaluateContext",
     "EvaluationRequest",
     "EvaluationResult",

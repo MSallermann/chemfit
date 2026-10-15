@@ -21,9 +21,9 @@ class EvaluateContext:
         Container for per-evaluation state.
 
         A new instance of `EvaluateContext` should generally be created for each
-        evaluation of an objective function or quantity computation.
+        component evaluation.
         Implementations write all per-call information into the context
-        rather than storing it in the objective instance.
+        rather than storing it in the component instance.
         This makes evaluation easier to reason about and
         compatible with concurrent execution.
 

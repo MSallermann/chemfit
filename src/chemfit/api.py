@@ -187,8 +187,7 @@ def join(
     output is a tuple of individual outcomes in declaration order.
 
     Args:
-        *args: Objective components supplied positionally, or one iterable of
-            objective components.
+        *args: Components supplied positionally, or one iterable of components.
 
     Returns:
         The constructed structural join.
@@ -681,14 +680,14 @@ def fit_nevergrad(
         budget: Total number of live objective evaluations.
         batch_size: Maximum number of candidates Nevergrad requests in one
             optimizer step.
-        execution_workers: Maximum number of objective leaf tasks executed
+        execution_workers: Maximum number of component leaf tasks executed
             concurrently by the built-in scheduler. Defaults to ``batch_size``.
             It cannot be combined with ``executor`` or ``scheduler``. With no
             custom execution backend, an effective value of one uses an
-            internally managed serial schedule; larger values use an internally
+            internally managed direct schedule; larger values use an internally
             managed thread-pool-backed schedule.
             Values greater than ``batch_size`` may be useful when each candidate
-            exposes multiple atomic nodes. For an objective graph with
+            exposes multiple atomic nodes. For a component graph with
             ``number_of_nodes`` atomic nodes, a batch may expose up to
             ``batch_size * number_of_nodes`` tasks. Allowing all of them to
             execute concurrently can therefore require that many execution

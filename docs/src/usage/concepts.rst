@@ -117,9 +117,9 @@ rather than being added on top.
 
 Execution backends are selected with a
 :class:`~chemfit.scheduling.Scheduler`. A scheduler prepares an
-objective-specific schedule. The prepared schedule is callable for one
-parameter mapping and provides ``evaluate_many`` for batches. Serial,
-executor-backed, and MPI graph schedulers all operate on the same objective
+component-specific schedule. The prepared schedule is callable for one input
+and provides ``evaluate_many`` for batches. Direct, serial-graph,
+executor-backed, and MPI graph schedulers all operate on the same component
 definition; see :ref:`parallel_execution`.
 
 -------------------------

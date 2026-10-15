@@ -12,18 +12,18 @@ from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext, NoOutput
 
 
 class PreEvaluationHook(Protocol):
-    """Callback that runs before an objective evaluation."""
+    """Callback that runs before a component evaluation."""
 
     def pre_eval(self, ctx: EvaluateContext) -> None | Any:
-        """Run before the objective evaluation."""
+        """Run before the component evaluation."""
         ...
 
 
 class PostEvaluationHook(Protocol):
-    """Callback that runs after an objective evaluation."""
+    """Callback that runs after a component evaluation."""
 
     def post_eval(self, ctx: EvaluateContext) -> None:
-        """Run after the objective evaluation."""
+        """Run after the component evaluation."""
         ...
 
 
@@ -47,7 +47,7 @@ class Component(Generic[InputT_contra, OutputT_co]):
     """
 
     def __init__(self) -> None:
-        """Initialize a generic objective component."""
+        """Initialize a generic component."""
 
         self.pre_eval_hooks: list[Callable[[EvaluateContext], None | OutputT_co]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
@@ -439,7 +439,7 @@ def component(
     [Callable[Concatenate[InputT_contra, ...], OutputT_co]],
     WrappedComponent[InputT_contra, OutputT_co],
 ]:
-    """Wrap a generic input-to-output callable as an objective component."""
+    """Wrap a generic input-to-output callable as a component."""
 
     def wrap(
         func: Callable[Concatenate[InputT_contra, ...], OutputT_co],
@@ -483,7 +483,7 @@ InputSource: TypeAlias = int | ParentInput_ | Skipped
 
 class StructuralComponent(Component[InputT_contra, OutputT_co]):
     """
-    Base class for objective components composed of other components.
+    Base class for components composed of other components.
 
     Structural components declare their children, their dependencies, and
     the sources of their inputs. They also control whether individual
