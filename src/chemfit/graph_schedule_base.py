@@ -113,8 +113,8 @@ class EvaluationState:
     state.
 
     Args:
-        graph: Compiled objective graph evaluated by the schedule.
-        root_ctx: Context belonging directly to the root objective.
+        graph: Compiled component graph evaluated by the schedule.
+        root_ctx: Context belonging directly to the root component.
 
     """
 
@@ -280,7 +280,7 @@ class EvaluationState:
         Structural scopes contain separate start and finish nodes. The start is
         completed first, descendants are recursively marked skipped, and the
         paired finish is completed last. This preserves dependency accounting
-        while ensuring neither hooks nor child objective bodies run.
+        while ensuring neither hooks nor child component bodies run.
 
         Args:
             node_id: Atomic node or structural start node at the subtree root.
@@ -584,7 +584,7 @@ class NodeCompletion:
     Args:
         run_id: Position of the associated run in the active run sequence.
         node_id: Identifier of the completed node in the call graph.
-        outcome: Numerical result or ordinary objective exception.
+        outcome: Component output or ordinary component exception.
         ctx_result_state: Optional context state produced outside the
             coordinator process and requiring restoration before propagation.
 
@@ -598,13 +598,13 @@ class NodeCompletion:
 
 class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
     """
-    Drive a compiled objective graph while delegating atomic work to a backend.
+    Drive a compiled component graph while delegating atomic work to a backend.
 
     The base class owns all backend-independent semantics:
 
     - structural begin, reduce, and end lifecycles run on the coordinator;
     - child inputs are resolved by their containing structural component;
-    - skipped nodes never execute hooks or objective bodies;
+    - skipped nodes never execute hooks or component bodies;
     - ordinary component exceptions remain node outcomes so independent work
       can continue and structural parents can recover from them; and
     - batch results are yielded as soon as each root graph completes.
@@ -615,13 +615,13 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
     and one :class:`EvaluationState` per request.
 
     Args:
-        graph: Immutable call graph compiled for the root objective.
+        graph: Immutable call graph compiled for the root component.
 
     """
 
     def __init__(self, graph: CallGraph):
         """
-        Initialize a reusable schedule for one compiled objective graph.
+        Initialize a reusable schedule for one compiled component graph.
 
         Args:
             graph: Call graph whose node IDs and edges remain stable for the
@@ -908,7 +908,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         Evaluate a batch by interleaving graph progress across all requests.
 
         Results are yielded in completion order and retain their original
-        request index. Ordinary objective exceptions are yielded as result
+        request index. Ordinary component exceptions are yielded as result
         values for the public scheduling layer to handle. Failures of the
         scheduler or backend itself abort outstanding work, close the prepared
         schedule when required, and are re-raised.
@@ -1082,7 +1082,7 @@ class SerialGraphSchedule(GraphScheduleBase):
 
 
 class SerialGraphScheduler(Scheduler[SerialGraphSchedule]):
-    """Prepare synchronous graph schedules for objective components."""
+    """Prepare synchronous graph schedules for components."""
 
     def prepare(
         self,
@@ -1090,13 +1090,13 @@ class SerialGraphScheduler(Scheduler[SerialGraphSchedule]):
         /,
     ) -> SerialGraphSchedule:
         """
-        Compile an objective component into a serial graph schedule.
+        Compile a component into a serial graph schedule.
 
         Args:
-            objective: Root ordinary or composite objective to schedule.
+            objective: Root atomic or structural component to schedule.
 
         Returns:
-            Prepared serial schedule for the objective graph.
+            Prepared serial schedule for the component graph.
 
         """
 

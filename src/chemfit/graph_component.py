@@ -19,7 +19,7 @@ from chemfit.evaluate_context import EvaluateContext
 
 class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
     """
-    A scheduler-visible directed acyclic graph of objective components.
+    A scheduler-visible directed acyclic graph of components.
 
     Graph components are normally created with :class:`GraphBuilder`. Their
     topology is an immutable snapshot: later changes to the builder do not

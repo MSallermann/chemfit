@@ -11,7 +11,7 @@ from chemfit.abstract_objective_function import (
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 from chemfit.graph_schedule_base import SerialGraphScheduler
-from chemfit.scheduling import EvaluationRequest
+from chemfit.scheduling import DirectScheduler, EvaluationRequest
 
 
 def test_owned_and_borrowed_executor_lifecycles():
@@ -54,6 +54,25 @@ def test_closing_partially_consumed_generator_closes_schedule():
     assert schedule.closed
     with pytest.raises(RuntimeError, match="closed"):
         schedule(4)
+
+
+def test_direct_and_serial_graph_schedulers_produce_the_same_result():
+    @component()
+    def double(value):
+        return 2 * value
+
+    pipeline = PipelineComponent(double, double)
+    direct_ctx = EvaluateContext()
+    graph_ctx = EvaluateContext()
+
+    with DirectScheduler().prepare(pipeline) as direct_schedule:
+        assert direct_schedule(3, direct_ctx) == 12
+
+    with SerialGraphScheduler().prepare(pipeline) as graph_schedule:
+        assert graph_schedule(3, graph_ctx) == 12
+
+    assert [child.output for child in direct_ctx.children] == [6, 12]
+    assert [child.output for child in graph_ctx.children] == [6, 12]
 
 
 def test_repeated_batches_replace_context_hierarchy():

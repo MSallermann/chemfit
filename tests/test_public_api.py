@@ -7,23 +7,18 @@ import chemfit
 from chemfit.graph_schedule_base import SerialGraphScheduler
 
 
-def test_component_and_fit_context_are_public():
-    assert chemfit.Component.__name__ == "Component"
-    assert chemfit.FitContext.__name__ == "FitContext"
-
-
 def test_combine_accepts_an_iterable_and_context_aware_reducer():
     @chemfit.objective()
-    def term(parameters, *, offset):
+    def term(parameters: dict[str, float], *, offset):
         return parameters["x"] + offset
 
-    def reduce(values, *, ctx):
+    def reduce(values, *, ctx) -> float:
         ctx.meta["values"] = tuple(values)
         return max(values)
 
     objective = chemfit.combine(
         (term.bind(offset=value) for value in (1, 3)),
-        weights=(2, 1),
+        weights=(2.0, 1.0),
         reduction=reduce,
     )
     ctx = chemfit.EvaluateContext()

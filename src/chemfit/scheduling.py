@@ -1,8 +1,8 @@
 """
-Public interfaces for preparing and executing objective evaluations.
+Public interfaces for preparing and executing component evaluations.
 
-A Scheduler turns an objective functor into an objective-specific
-PreparedSchedule. Prepared schedules are callable for synchronous singleton
+A Scheduler turns a component into a component-specific PreparedSchedule.
+Prepared schedules are callable for synchronous singleton
 evaluation. They also accept batches of EvaluationRequest objects through
 ``evaluate_many`` and yield EvaluationResult objects as individual evaluations
 finish. Results carry their input index, so a backend may emit them in
@@ -69,7 +69,7 @@ class EvaluationResult(Generic[OutputT_co]):
             passed to PreparedSchedule.evaluate_many. Consumers should use
             this index to restore request order because schedules may yield
             results in completion order.
-        value: Computed objective value, or the exception representing a
+        value: Computed output, or the exception representing a
             failure of this individual evaluation.
 
     """
@@ -87,12 +87,12 @@ class EvaluationResult(Generic[OutputT_co]):
 @runtime_checkable
 class PreparedSchedule(Protocol[InputT, OutputT_co]):
     """
-    Reusable, objective-specific execution plan produced by a scheduler.
+    Reusable, component-specific execution plan produced by a scheduler.
 
-    A prepared schedule owns state derived from a particular objective, such
+    A prepared schedule owns state derived from a particular component, such
     as a compiled call graph, worker placement, or distributed object
     registrations. It may be reused for multiple evaluations until it is
-    closed or the objective structure changes. Call the schedule directly to
+    closed or the component structure changes. Call the schedule directly to
     evaluate one input synchronously, or use ``evaluate_many`` for
     a batch.
 
@@ -145,7 +145,7 @@ class PreparedSchedule(Protocol[InputT, OutputT_co]):
             ctx: Context updated with this evaluation's state and metadata.
 
         Returns:
-            Computed objective value.
+            Computed output.
 
         Raises:
             Exception: The exception stored for the individual evaluation if
@@ -168,7 +168,7 @@ class PreparedSchedule(Protocol[InputT, OutputT_co]):
             ctx: Optional context updated with this evaluation's state and metadata.
 
         Returns:
-            Computed objective value.
+            Computed output.
 
         Raises:
             Exception: The exception stored for the individual evaluation if
@@ -264,7 +264,7 @@ class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
             ctx: Optional context updated with this evaluation's state and metadata.
 
         Returns:
-            Computed objective value.
+            Computed output.
 
         Raises:
             Exception: The exception stored for the individual evaluation if
@@ -333,11 +333,11 @@ PreparedScheduleT_co = TypeVar(
 @runtime_checkable
 class Scheduler(Protocol[PreparedScheduleT_co]):
     """
-    Factory for prepared objective execution plans.
+    Factory for prepared component execution plans.
 
     A scheduler describes reusable backend configuration or scheduling policy.
-    Calling prepare binds that configuration to one objective and
-    returns a PreparedSchedule containing objective-specific state.
+    Calling prepare binds that configuration to one component and
+    returns a PreparedSchedule containing component-specific state.
 
     The protocol is structural. Implementations need not inherit from a
     ChemFit base class, and backends may differ substantially in how they
@@ -346,44 +346,43 @@ class Scheduler(Protocol[PreparedScheduleT_co]):
 
     def prepare(
         self,
-        objective: Component[Any, Any],
+        component: Component[Any, Any],
         /,
     ) -> PreparedScheduleT_co:
         """
-        Prepare an objective-specific plan for repeated evaluations.
+        Prepare a component-specific plan for repeated evaluations.
 
         Args:
-            objective: Root objective to prepare. For a combined objective,
-                preparation covers its complete nested call graph.
+            component: Root component to prepare. For a structural component,
+                preparation covers its complete nested component graph.
 
         Returns:
-            Objective-specific execution plan reusable for repeated parameter
-            evaluations.
+            Component-specific execution plan reusable for repeated inputs.
 
         Notes:
             Preparation is the appropriate place for work that depends on the
-            objective but should not occur in the hot evaluation path.
+            component but should not occur in the hot evaluation path.
             Examples include tree traversal, rank assignment, scattering
-            immutable data, and installing persistent worker-side objective
+            immutable data, and installing persistent worker-side component
             state.
 
-            The returned schedule is valid only for the objective structure
-            that was prepared. Structural mutation of the objective must
+            The returned schedule is valid only for the component structure
+            that was prepared. Structural mutation of the component must
             invalidate and close the schedule before further evaluation.
 
             Implementations should avoid mutating the scientific definition of
-            the supplied objective. Backend-specific compiled representations
+            the supplied component. Backend-specific compiled representations
             belong in the returned schedule.
 
         """
         ...
 
 
-class SerialSchedule(
+class DirectSchedule(
     PreparedScheduleBase[InputT, OutputT_co], Generic[InputT, OutputT_co]
 ):
     def __init__(self, ob: Component[InputT, OutputT_co]) -> None:
-        """Initialize a reference serial schedule."""
+        """Initialize a schedule that invokes its component directly."""
         super().__init__()
         self.ob = ob
 
@@ -409,13 +408,15 @@ class SerialSchedule(
             raise
 
 
-class SerialScheduler(
-    Scheduler[SerialSchedule[InputT, OutputT_co]],
+class DirectScheduler(
+    Scheduler[DirectSchedule[InputT, OutputT_co]],
     Generic[InputT, OutputT_co],
 ):
+    """Prepare schedules that invoke components without graph compilation."""
+
     def prepare(
         self,
-        objective: Component[InputT, OutputT_co],
+        component: Component[InputT, OutputT_co],
         /,
-    ) -> SerialSchedule[InputT, OutputT_co]:
-        return SerialSchedule(objective)
+    ) -> DirectSchedule[InputT, OutputT_co]:
+        return DirectSchedule(component)

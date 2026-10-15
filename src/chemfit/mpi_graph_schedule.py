@@ -6,10 +6,10 @@ run a persistent worker loop and evaluate only AtomicNode tasks. Tasks are
 queued on rank 0 and dispatched to idle workers one at a time, allowing new
 work to become available as earlier graph nodes finish.
 
-Ordinary objective exceptions are returned in NodeCompletion. MPI/protocol
+Ordinary component exceptions are returned in NodeCompletion. MPI/protocol
 failures are fatal to the prepared schedule and trigger worker shutdown.
 
-All ranks must prepare the same objective graph; only rank 0 evaluates it.
+All ranks must prepare the same component graph; only rank 0 evaluates it.
 Nonzero ranks call ``schedule.worker_loop()`` and rank 0 calls ``schedule.close()``
 after the final evaluation to release the workers.
 """
@@ -339,7 +339,7 @@ class MPIGraphScheduler(Scheduler[MPIGraphSchedule]):
         objective: Component[InputT_contra, OutputT_co],
         /,
     ) -> MPIGraphSchedule:
-        """Compile and bind the objective graph to the MPI communicator."""
+        """Compile and bind the component graph to the MPI communicator."""
         return MPIGraphSchedule(
             graph=objective_to_call_graph(objective),
             comm=self.comm,

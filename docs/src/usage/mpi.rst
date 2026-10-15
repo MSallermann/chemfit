@@ -3,11 +3,11 @@
 Running with MPI
 ================
 
-:class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` executes objective leaf tasks
-on persistent MPI worker ranks. Rank zero expands parameter batches into leaf
+:class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` executes atomic component
+tasks on persistent MPI worker ranks. Rank zero expands input batches into
 tasks, distributes them round-robin across nonzero ranks, restores returned
-context state, and performs composite reductions. The same scheduler works for
-ordinary and combined objectives.
+context state, and performs structural reductions. The same scheduler works
+for atomic and structural components.
 
 Requirements
 ------------
@@ -44,11 +44,11 @@ schedule's worker loop:
        else:
            schedule.worker_loop()
 
-``worker_loop()`` takes no objective argument: the objective graph was bound by
+``worker_loop()`` takes no component argument: the component graph was bound by
 ``prepare``. Leaving the rank-zero context closes the schedule and sends a
-shutdown request to every worker. Worker contexts return parameters, loss,
-quantities, and metadata to rank zero; ``ctx.temp`` and ``ctx.shared`` are not
-part of returned result state.
+shutdown request to every worker. Worker contexts return inputs, outputs,
+child state, and metadata to rank zero; ``ctx.temp`` and ``ctx.shared`` are not
+part of the returned result state.
 
 Fitting on rank zero
 --------------------
@@ -153,8 +153,8 @@ Worker hang at the first evaluation
    ``schedule.worker_loop()`` before rank zero started evaluating.
 
 Mismatched results or deserialization errors
-   Construct the same objective structure and term order on every rank. Leaf
-   objectives, hooks, parameter mappings, and context worker-input state must
+   Construct the same component structure and child order on every rank. Leaf
+   components, hooks, inputs, and context worker-input state must
    be serializable.
 
 Hooks missing on workers
