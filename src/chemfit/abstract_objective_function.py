@@ -14,7 +14,7 @@ from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext, NoOutput
 class PreEvaluationHook(Protocol):
     """Callback that runs before a component evaluation."""
 
-    def pre_eval(self, ctx: EvaluateContext) -> None | Any:
+    def pre_eval(self, ctx: EvaluateContext, /) -> None | Any:
         """Run before the component evaluation."""
         ...
 
@@ -22,7 +22,7 @@ class PreEvaluationHook(Protocol):
 class PostEvaluationHook(Protocol):
     """Callback that runs after a component evaluation."""
 
-    def post_eval(self, ctx: EvaluateContext) -> None:
+    def post_eval(self, ctx: EvaluateContext, /) -> None:
         """Run after the component evaluation."""
         ...
 

@@ -11,6 +11,8 @@ if TYPE_CHECKING:
         EvaluateContext,
         OpaquePipeline,
         PipelineComponent,
+        PostEvaluationHook,
+        PreEvaluationHook,
         WrappedComponent,
         component,
         objective,
@@ -36,6 +38,19 @@ if TYPE_CHECKING:
 
     assert_type(wrapped_objective, WrappedComponent[Parameters, float])
     public_component: Component[Parameters, float] = wrapped_objective
+
+    class RenamedContextHook:
+        def pre_eval(self, context: EvaluateContext) -> None:
+            context.meta["started"] = True
+
+        def post_eval(self, context: EvaluateContext) -> None:
+            context.meta["finished"] = True
+
+    pre_hook: PreEvaluationHook = RenamedContextHook()
+    post_hook: PostEvaluationHook = RenamedContextHook()
+    wrapped_objective.register_eval_hook(hook=pre_hook)
+    wrapped_objective.register_eval_hook(hook=post_hook)
+
     assert_type(
         wrapped_objective.with_meta(dataset="training"),
         WrappedComponent[Parameters, float],

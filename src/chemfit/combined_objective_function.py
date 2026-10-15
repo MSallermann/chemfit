@@ -53,11 +53,11 @@ def _validate_weights(weights: Sequence[float], n_objectives: int) -> None:
 
 
 class Reducer(Protocol):
-    def __call__(self, terms: list[float], *, ctx: EvaluateContext) -> float: ...
+    def __call__(self, terms: list[float], /, *, ctx: EvaluateContext) -> float: ...
 
 
 class SimpleReducer(Protocol):
-    def __call__(self, terms: list[float]) -> float: ...
+    def __call__(self, terms: list[float], /) -> float: ...
 
 
 def sum_reducer(terms: list[float]) -> float:
