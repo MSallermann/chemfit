@@ -282,6 +282,13 @@ class Component(Generic[InputT_contra, OutputT_co]):
         /,
         ctx: EvaluateContext,
     ) -> OutputT_co:
+        """
+        Finalize an evaluation and return its authoritative outcome.
+
+        The supplied outcome is stored before post-evaluation hooks run. A
+        post-hook exception replaces ``ctx.output`` and is re-raised, while a
+        hook may deliberately replace ``ctx.output`` with a recovered value.
+        """
         ctx.meta.update(self.static_meta_data)
         self._attach_context_metadata(ctx)
 

@@ -381,15 +381,87 @@ def test_structural_end_failure_is_reported_without_aborting_siblings(scheduler)
         [failed_branch, healthy_sibling]
     ).with_exception_handler(skip_exception_handler)
 
-    result, ctx = evaluate_graph(scheduler, objective, 2)
+    direct_ctx = EvaluateContext()
+    direct_result = objective(2, direct_ctx)
+    graph_result, graph_ctx = evaluate_graph(scheduler, objective, 2)
 
-    assert result == 7
-    assert calls == ["failed branch post"]
-    assert [child.output for child in ctx.children[0].children] == [3, 6]
-    # A failed post-hook becomes the finalized outcome.
-    assert isinstance(ctx.children[0].output, RuntimeError)
-    assert str(ctx.children[0].output) == "end failure"
-    assert ctx.children[1].output == 7
+    assert direct_result == graph_result == 7
+    assert calls == ["failed branch post", "failed branch post"]
+    for ctx in (direct_ctx, graph_ctx):
+        assert [child.output for child in ctx.children[0].children] == [3, 6]
+        # A failed nested post-hook becomes the finalized branch outcome.
+        assert isinstance(ctx.children[0].output, RuntimeError)
+        assert str(ctx.children[0].output) == "end failure"
+        assert ctx.children[1].output == 7
+
+
+def test_root_structural_post_hook_failure_matches_direct_call(scheduler):
+    @component()
+    def add_one(value):
+        return value + 1
+
+    @component()
+    def double(value):
+        return 2 * value
+
+    objective = PipelineComponent(add_one, double)
+
+    def fail_on_end(ctx):
+        assert ctx.output == 6
+        msg = "root post-hook failure"
+        raise RuntimeError(msg)
+
+    objective.register_eval_hook(post=fail_on_end)
+    direct_ctx = EvaluateContext()
+    graph_ctx = EvaluateContext()
+
+    with pytest.raises(RuntimeError, match="root post-hook failure"):
+        objective(2, direct_ctx)
+    with (
+        prepare_schedule(scheduler, objective) as schedule,
+        pytest.raises(RuntimeError, match="root post-hook failure"),
+    ):
+        schedule(2, graph_ctx)
+
+    for ctx in (direct_ctx, graph_ctx):
+        assert isinstance(ctx.output, RuntimeError)
+        assert str(ctx.output) == "root post-hook failure"
+        assert [child.output for child in ctx.children] == [3, 6]
+
+
+def test_finish_failure_before_output_write_matches_direct_call(scheduler):
+    @component()
+    def add_one(value):
+        return value + 1
+
+    @component()
+    def double(value):
+        return 2 * value
+
+    class FailDuringFinalMetadata(PipelineComponent):
+        def _attach_context_metadata(self, ctx):
+            calls = getattr(ctx.temp, "metadata_calls", 0) + 1
+            ctx.temp.metadata_calls = calls
+            if calls == 2:
+                msg = "final metadata failure"
+                raise RuntimeError(msg)
+            super()._attach_context_metadata(ctx)
+
+    objective = FailDuringFinalMetadata(add_one, double)
+    direct_ctx = EvaluateContext()
+    graph_ctx = EvaluateContext()
+
+    with pytest.raises(RuntimeError, match="final metadata failure"):
+        objective(2, direct_ctx)
+    with (
+        prepare_schedule(scheduler, objective) as schedule,
+        pytest.raises(RuntimeError, match="final metadata failure"),
+    ):
+        schedule(2, graph_ctx)
+
+    for ctx in (direct_ctx, graph_ctx):
+        assert ctx.output is NO_OUTPUT
+        assert [child.output for child in ctx.children] == [3, 6]
 
 
 def test_pre_hook_short_circuit_and_post_hook_transform_match_direct_call(scheduler):
