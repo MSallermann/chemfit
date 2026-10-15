@@ -1,7 +1,6 @@
 import json
 from collections import deque
 from collections.abc import Iterator, Sequence
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -759,13 +758,17 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         except Exception as e:
             outcome = e
 
-        # _end_evaluation() always writes the authoritative result to the
-        # context before it either returns or raises. Suppression is therefore
-        # safe: a post-hook failure remains available in component_ctx.output.
-        with suppress(Exception):
-            component._end_evaluation(outcome, component_ctx)  # noqa: SLF001
+        # Post-hook failures are written to component_ctx.output, but other
+        # finalization failures may happen before that write. Use the returned
+        # value or raised exception directly as the authoritative graph outcome.
+        try:
+            final_outcome = component._end_evaluation(  # noqa: SLF001
+                outcome, component_ctx
+            )
+        except Exception as e:
+            final_outcome = e
 
-        run.state.complete(node_id, component_ctx.output)
+        run.state.complete(node_id, final_outcome)
 
     def collect_ready_tasks(
         self, runs: Sequence[EvaluationRun[InputT]]
