@@ -16,6 +16,7 @@ protocol.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import (
@@ -33,6 +34,8 @@ from chemfit.abstract_objective_function import (
     EvaluateContext,
     OutputT_co,
 )
+
+logger = logging.getLogger(__name__)
 
 InputT = TypeVar("InputT")
 
@@ -299,10 +302,30 @@ class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
         try:
             self.close()
         except BaseException as cleanup_exception:
-            if hasattr(exception, "add_note"):  # add_note was only introduced in 3.11
-                exception.add_note(f"Schedule cleanup failed: {cleanup_exception!r}")
+            self._report_cleanup_failure(exception, cleanup_exception)
         finally:
             self._closed = True
+
+    @staticmethod
+    def _report_cleanup_failure(
+        exception: BaseException,
+        cleanup_exception: BaseException,
+    ) -> None:
+        """Record a cleanup failure without replacing the primary exception."""
+        # Cleanup is secondary to the failure that triggered it. Raising the
+        # cleanup error here would hide the scientifically relevant traceback.
+        if hasattr(exception, "add_note"):  # add_note was only introduced in 3.11
+            exception.add_note(f"Schedule cleanup failed: {cleanup_exception!r}")
+        logger.warning(
+            "Schedule cleanup failed while handling %s: %r",
+            type(exception).__name__,
+            cleanup_exception,
+            exc_info=(
+                type(cleanup_exception),
+                cleanup_exception,
+                cleanup_exception.__traceback__,
+            ),
+        )
 
     def __enter__(self) -> Self:
         """Return this schedule, rejecting attempts to reuse a closed one."""
@@ -320,7 +343,16 @@ class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
     ) -> None:
         """Close the schedule when its context-manager scope exits."""
 
-        self.close()
+        try:
+            self.close()
+        except BaseException as cleanup_exception:
+            self._closed = True
+            if exc_value is None:
+                raise
+
+            # Context-manager cleanup must not mask an exception raised by the
+            # body; retain that exception and report the close failure on it.
+            self._report_cleanup_failure(exc_value, cleanup_exception)
 
 
 PreparedScheduleT_co = TypeVar(

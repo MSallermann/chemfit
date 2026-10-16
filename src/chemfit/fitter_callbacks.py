@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +74,46 @@ class NumpyEncoder(json.JSONEncoder):
         return super().default(o)
 
 
+def _write_json_atomic(
+    path: Path,
+    data: object,
+    *,
+    overwrite: bool = True,
+    skipkeys: bool = False,
+) -> None:
+    """Write JSON completely before exposing it at its destination path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temp_path = Path(temp_name)
+
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as output_file:
+            json.dump(
+                data,
+                output_file,
+                indent=4,
+                skipkeys=skipkeys,
+                cls=NumpyEncoder,
+            )
+            output_file.flush()
+            os.fsync(output_file.fileno())
+
+        if overwrite:
+            # Replacing only after serialization succeeds prevents an
+            # interrupted write from destroying the previous checkpoint.
+            temp_path.replace(path)
+        else:
+            # A hard link publishes the complete file atomically and fails if
+            # another checkpoint already claimed this numbered destination.
+            os.link(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
 class SaveMetaData:
     def __init__(self, output_folder: Path | str):
         """
@@ -87,21 +129,16 @@ class SaveMetaData:
 
         """
         self.output_folder = Path(output_folder)
-        self.output_folder.mkdir(exist_ok=True)
+        self.output_folder.mkdir(parents=True, exist_ok=True)
 
     def __call__(self, step: int, ctxs: list[FitContext]):
         try:
             for ictx, ctx in enumerate(ctxs):
-                with (self.output_folder / f"step_{step}_ctx_{ictx}.json").open(
-                    "w"
-                ) as f:
-                    json.dump(
-                        ctx.to_summary(recursive=True),
-                        f,
-                        indent=4,
-                        skipkeys=True,
-                        cls=NumpyEncoder,
-                    )
+                _write_json_atomic(
+                    self.output_folder / f"step_{step}_ctx_{ictx}.json",
+                    ctx.to_summary(recursive=True),
+                    skipkeys=True,
+                )
         except Exception:
             logger.exception("Exception when trying to save meta data!")
 
@@ -134,6 +171,7 @@ class CheckpointBestParameters:
 
         """
         self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
         self.best_loss = None
         self.dont_overwrite = dont_overwrite
         self.counter = -1
@@ -144,9 +182,6 @@ class CheckpointBestParameters:
                 continue
 
             if self.best_loss is None or ctx.opt_loss < self.best_loss:
-                self.best_loss = ctx.opt_loss
-                self.counter += 1
-
                 data = {
                     "step": step,
                     "loss": ctx.opt_loss,
@@ -157,19 +192,26 @@ class CheckpointBestParameters:
 
                 write_out_path = self.path
                 if self.dont_overwrite:
+                    next_counter = self.counter + 1
                     while True:
                         write_out_path = self.path.with_name(
-                            f"{self.path.stem}_{self.counter}{self.path.suffix}"
+                            f"{self.path.stem}_{next_counter}{self.path.suffix}"
                         )
                         try:
-                            output_file = write_out_path.open("x")
+                            _write_json_atomic(
+                                write_out_path,
+                                data,
+                                overwrite=False,
+                            )
                             break
                         except FileExistsError:
-                            self.counter += 1
+                            next_counter += 1
+                    self.counter = next_counter
                 else:
-                    output_file = write_out_path.open("w")
+                    _write_json_atomic(write_out_path, data)
+                    self.counter += 1
 
-                with output_file as f:
-                    json.dump(data, f, indent=4, cls=NumpyEncoder)
-
+                # Update in-memory state only after the durable checkpoint is
+                # published, so a failed write can be retried on the next call.
+                self.best_loss = ctx.opt_loss
                 logger.info(f"New best loss {ctx.opt_loss} written to {write_out_path}")

@@ -349,7 +349,9 @@ This enables:
 
 In contrast, :class:`~chemfit.fitter_callbacks.CheckpointBestParameters`
 stores only the best solution and is primarily intended for fault
-tolerance.
+tolerance. Metadata and checkpoint JSON files are written through temporary
+files and published atomically, so an interrupted write does not replace the
+previous complete file with partial JSON.
 
 ----------------------------------
 SciPy backend

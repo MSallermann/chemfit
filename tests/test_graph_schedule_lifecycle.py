@@ -1,3 +1,4 @@
+import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -11,7 +12,21 @@ from chemfit.abstract_objective_function import (
 from chemfit.combined_objective_function import CombinedObjectiveFunction
 from chemfit.executor_graph_schedule import ExecutorGraphScheduler
 from chemfit.graph_schedule_base import SerialGraphScheduler
-from chemfit.scheduling import DirectScheduler, EvaluationRequest
+from chemfit.scheduling import (
+    DirectScheduler,
+    EvaluationRequest,
+    PreparedScheduleBase,
+)
+
+
+class FailingCloseSchedule(PreparedScheduleBase[object, object]):
+    def evaluate_many(self, _requests):
+        return iter(())
+
+    def close(self) -> None:
+        super().close()
+        msg = "close failed"
+        raise OSError(msg)
 
 
 def test_owned_and_borrowed_executor_lifecycles():
@@ -36,6 +51,34 @@ def test_owned_and_borrowed_executor_lifecycles():
         assert borrowed_executor.submit(lambda: 3).result() == 3
     finally:
         borrowed_executor.shutdown()
+
+
+def test_context_manager_cleanup_does_not_mask_body_failure(
+    caplog: pytest.LogCaptureFixture,
+):
+    schedule = FailingCloseSchedule()
+
+    with (
+        caplog.at_level(logging.WARNING),
+        pytest.raises(ValueError, match="body failed") as exception_info,
+        schedule,
+    ):
+        msg = "body failed"
+        raise ValueError(msg)
+
+    assert schedule.closed
+    assert "close failed" in caplog.text
+    if hasattr(exception_info.value, "__notes__"):
+        assert "close failed" in "\n".join(exception_info.value.__notes__)
+
+
+def test_context_manager_propagates_cleanup_failure_after_success():
+    schedule = FailingCloseSchedule()
+
+    with pytest.raises(OSError, match="close failed"), schedule:
+        pass
+
+    assert schedule.closed
 
 
 def test_closing_partially_consumed_generator_closes_schedule():
