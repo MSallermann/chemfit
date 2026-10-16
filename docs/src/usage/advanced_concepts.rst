@@ -685,6 +685,28 @@ state back to the coordinator; temporary state and worker mutations to
 
 -------------------------
 
+Visualizing the call graph
+==========================
+
+Compile a component and render its scheduler-visible structure with
+:func:`~chemfit.callgraph.call_graph_to_dot`:
+
+.. code-block:: python
+
+    from chemfit.callgraph import call_graph_to_dot, objective_to_call_graph
+
+    graph = objective_to_call_graph(objective)
+    dot_source = call_graph_to_dot(
+        graph,
+        svg_output_path="graphs/objective.svg",
+    )
+
+SVG output requires the Graphviz ``dot`` executable. Pass
+``dot_output_path`` when the DOT source should also be retained. Parent
+directories for either output are created automatically.
+
+-------------------------
+
 Choosing the right composition
 ==============================
 

@@ -282,11 +282,11 @@ def objective_to_call_graph(
     return CallGraph(nodes=tuple(nodes), root_id=start_id, result_id=end_id)
 
 
-def call_graph_to_dot(  # noqa: PLR0912
+def call_graph_to_dot(
     graph: CallGraph,
     dot_output_path: Path | str | None = None,
     svg_output_path: Path | str | None = None,
-    path_to_dot_exec: Path = Path("dot"),
+    path_to_dot_exec: Path | str = Path("dot"),
 ) -> str:
     """
     Render a call graph as Graphviz DOT and optionally write DOT and SVG files.
@@ -299,15 +299,13 @@ def call_graph_to_dot(  # noqa: PLR0912
     Args:
         graph: Compiled call graph to render.
         dot_output_path: Optional destination for the generated DOT text.
-        svg_output_path: Optional SVG destination rendered by Graphviz. Requires
-            ``dot_output_path`` so the external process has an input file.
+        svg_output_path: Optional SVG destination rendered by Graphviz.
         path_to_dot_exec: Path to the Graphviz ``dot`` executable.
 
     Returns:
         Generated DOT source regardless of whether files were written.
 
     Raises:
-        ValueError: If SVG output is requested without a DOT output path.
         subprocess.CalledProcessError: If Graphviz rendering fails.
 
     """
@@ -368,22 +366,25 @@ def call_graph_to_dot(  # noqa: PLR0912
     res = "\n".join(lines)
 
     if dot_output_path is not None:
-        Path(dot_output_path).write_text(res)
+        dot_output_path = Path(dot_output_path)
+        dot_output_path.parent.mkdir(parents=True, exist_ok=True)
+        dot_output_path.write_text(res, encoding="utf-8")
 
     if svg_output_path is not None:
-        if dot_output_path is None:
-            msg = "Have to set `dot_output_path` if `svg_output_path` is set."
-            raise ValueError(msg)
+        svg_output_path = Path(svg_output_path)
+        svg_output_path.parent.mkdir(parents=True, exist_ok=True)
 
         subprocess.run(  # noqa: S603
             [
-                path_to_dot_exec,
+                str(path_to_dot_exec),
                 "-Tsvg",
-                str(dot_output_path),
                 "-o",
                 str(svg_output_path),
             ],
             check=True,
+            input=res,
+            text=True,
+            encoding="utf-8",
         )
 
     return res
