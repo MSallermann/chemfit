@@ -37,6 +37,7 @@ from chemfit.combined_objective_function import (
     raising_exception_handler,
 )
 from chemfit.executor_graph_schedule import ExecutorGraphScheduler
+from chemfit.evaluation_working_directory import EvaluationWorkingDirectory
 from chemfit.external_computer import ExternalQuantityComputer
 from chemfit.fitter import CallbackT, Fitter, FitContext
 from chemfit.scheduling import (
@@ -304,12 +305,14 @@ def external_quantity(
 
     """
     return ExternalQuantityComputer(
-        base_working_directory=workdir,
+        evaluation_working_directory=EvaluationWorkingDirectory(
+            workdir,
+            delete_temp_workdirs=delete_temp_workdirs,
+            keep_temp_workdir_after_crash=keep_temp_workdir_after_crash,
+        ),
         wait_timeout=wait_timeout,
         poll_interval=poll_interval,
-        delete_temp_workdirs=delete_temp_workdirs,
         write_dump_file_after_crash=write_dump_file_after_crash,
-        keep_temp_workdir_after_crash=keep_temp_workdir_after_crash,
         try_parsing_after_exception=try_parsing_after_exception,
     )
 
@@ -326,6 +329,9 @@ def ase_quantity(
     atoms_modifiers: Iterable[AtomsModifier[ParamsT]] | None = None,
     quantity_processors: Iterable[QuantityProcessor[QuantityT]] | None = None,
     evaluator: ASEEvaluator[ParamsT] | None = None,
+    workdir: Path | str | None = None,
+    delete_temp_workdirs: bool = True,
+    keep_temp_workdir_after_crash: bool = True,
 ) -> ASEComputer[ParamsT, QuantityT]:
     """
     Create an ASE-backed quantity computer from atoms or an atoms source.
@@ -348,6 +354,13 @@ def ase_quantity(
         quantity_processors: Optional callbacks that extract result quantities.
         evaluator: Optional evaluation procedure. Defaults to a single-point
             calculation.
+        workdir: Optional parent directory for isolated per-evaluation working
+            directories. The active path is available as ``ctx.temp.workdir``
+            to callbacks.
+        delete_temp_workdirs: Whether evaluation working directories are
+            deleted after successful evaluations.
+        keep_temp_workdir_after_crash: Whether failed evaluation working
+            directories are retained for inspection.
 
     Returns:
         An :class:`ASEComputer` for fluent calculator, evaluator, processor,
@@ -420,6 +433,15 @@ def ase_quantity(
         atoms_modifiers=atoms_modifiers,
         quantity_processors=quantity_processors,
         evaluator=evaluator,
+        evaluation_working_directory=(
+            None
+            if workdir is None
+            else EvaluationWorkingDirectory(
+                workdir,
+                delete_temp_workdirs=delete_temp_workdirs,
+                keep_temp_workdir_after_crash=keep_temp_workdir_after_crash,
+            )
+        ),
     )
 
 

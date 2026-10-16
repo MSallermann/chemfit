@@ -3,12 +3,15 @@ from __future__ import annotations
 import copy
 import functools
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Generic, Protocol, cast, runtime_checkable
 
+import numpy as np
 from ase import Atoms
 from ase.calculators.calculator import Calculator
 from ase.io import read
 from ase.optimize import BFGS
+from ase.optimize.optimize import Optimizer
 
 # Python 3.10's typing.Concatenate rejects the ellipsis used in our aliases.
 from typing_extensions import Concatenate, Self  # noqa: UP035
@@ -19,11 +22,13 @@ from chemfit.abstract_objective_function import (
     QuantitiesT_co,
     QuantityComputer,
 )
+from chemfit.evaluation_working_directory import EvaluationWorkingDirectory
 from chemfit.utils import check_protocol
+
+_OPTIMIZER_FILE_SETTINGS = ("logfile", "trajectory", "restart")
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
-    from pathlib import Path
 
 
 @runtime_checkable
@@ -183,12 +188,45 @@ def _minimize_evaluator(
     atoms: Atoms,
     _ctx: EvaluateContext,
     *,
+    optimizer: type[Optimizer],
+    optimizer_kwargs: dict[str, Any],
     fmax: float,
     max_steps: int,
+    allow_unconverged: bool,
 ) -> None:
-    """Relax ``atoms`` with ASE BFGS."""
-    optimizer = BFGS(atoms, logfile=None)
-    optimizer.run(fmax=fmax, steps=max_steps)
+    """Relax ``atoms`` with an ASE optimizer."""
+
+    optimizer_settings: dict[str, Any] = {"logfile": None, **optimizer_kwargs}
+    workdir = getattr(_ctx.temp, "workdir", None)
+    for name in _OPTIMIZER_FILE_SETTINGS:
+        value = optimizer_settings.get(name)
+        if isinstance(value, Path):
+            # ``minimize()`` uses Path as a marker for validated filenames.
+            # Resolve them here, after this evaluation's unique directory exists.
+            assert workdir is not None
+            output_path = workdir / value
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            # ASE distinguishes filenames from trajectory-like objects with
+            # ``isinstance(value, str)``, so pass resolved paths as strings.
+            optimizer_settings[name] = str(output_path)
+
+    dynamics = optimizer(atoms, **optimizer_settings)
+    converged = dynamics.run(fmax=fmax, steps=max_steps)
+    final_fmax = float(np.linalg.norm(atoms.get_forces(), axis=1).max(initial=0.0))
+    # Keep the diagnostic even when non-convergence raises below; unlike
+    # ``ctx.temp``, metadata survives in evaluation summaries and schedulers.
+    _ctx.meta["final_fmax"] = final_fmax
+    if converged:
+        return
+
+    msg = (
+        f"ASE {optimizer.__name__} did not converge within "
+        f"{max_steps} steps at fmax={fmax} (final fmax={final_fmax}). "
+        "Increase max_steps, relax fmax, "
+        "or pass allow_unconverged=True to process the unconverged structure."
+    )
+    if not allow_unconverged:
+        raise RuntimeError(msg)
 
 
 class ASEComputer(
@@ -205,6 +243,8 @@ class ASEComputer(
         atoms_modifiers: Iterable[AtomsModifier[ParametersT_contra]] | None = None,
         quantity_processors: Iterable[QuantityProcessor[QuantitiesT_co]] | None = None,
         evaluator: ASEEvaluator[ParametersT_contra] | None = None,
+        *,
+        evaluation_working_directory: EvaluationWorkingDirectory | None = None,
     ) -> None:
         """
         Initialize an ASE computer.
@@ -228,6 +268,8 @@ class ASEComputer(
                 returns calculator results and the atom count.
             evaluator: Evaluation procedure. Defaults to a single-point
                 calculator evaluation.
+            evaluation_working_directory: Optional configuration and lifecycle
+                policy for per-evaluation working directories.
 
         """
         super().__init__()
@@ -235,6 +277,15 @@ class ASEComputer(
         check_protocol(atoms_factory, AtomsFactory)
         check_protocol(calculator_factory, CalculatorFactory)
         check_protocol(evaluator, ASEEvaluator)
+
+        if evaluation_working_directory is not None and not isinstance(
+            evaluation_working_directory, EvaluationWorkingDirectory
+        ):
+            msg = (
+                "evaluation_working_directory must be an "
+                "EvaluationWorkingDirectory or None"
+            )
+            raise TypeError(msg)
 
         self.atoms_factory = atoms_factory
         self.calculator_factory = calculator_factory
@@ -256,6 +307,8 @@ class ASEComputer(
             if evaluator is None
             else evaluator
         )
+
+        self.evaluation_working_directory = evaluation_working_directory
 
         self._atoms: Atoms | None = None
         self._atoms_init_lock = threading.Lock()
@@ -384,19 +437,79 @@ class ASEComputer(
         )
         return new
 
-    def minimize(self, fmax: float = 1e-5, max_steps: int = 2000) -> Self:
+    def minimize(
+        self,
+        fmax: float = 1e-5,
+        max_steps: int = 2000,
+        *,
+        optimizer: type[Optimizer] = BFGS,
+        optimizer_kwargs: dict[str, Any] | None = None,
+        allow_unconverged: bool = False,
+    ) -> Self:
         """
-        Return a copy configured to relax atoms with ASE BFGS.
+        Return a copy configured to relax atoms with an ASE optimizer.
+
+        Every completed optimization records the final maximum atomic force
+        in ``ctx.meta["final_fmax"]``, including unconverged optimizations.
 
         Args:
-            fmax: Force convergence threshold passed to ``BFGS.run``.
-            max_steps: Maximum optimization steps passed to ``BFGS.run``.
+            fmax: Force convergence threshold passed to ``optimizer.run``.
+            max_steps: Maximum optimization steps passed to ``optimizer.run``.
+            optimizer: ASE optimizer class. Defaults to ``BFGS``.
+            optimizer_kwargs: Optional keyword arguments passed to the
+                optimizer constructor. Relative ``logfile``, ``trajectory``,
+                and ``restart`` paths are resolved inside the evaluation
+                working directory when one is configured.
+            allow_unconverged: Whether quantity processors may consume the
+                final structure when the optimizer reaches ``max_steps`` without
+                converging. Defaults to ``False``.
+
+        Raises:
+            ValueError: If ``fmax`` or ``max_steps`` is not positive.
+            RuntimeError: During evaluation if the optimizer does not converge
+                and ``allow_unconverged`` is ``False``.
 
         """
+        if fmax <= 0:
+            msg = "fmax must be greater than zero"
+            raise ValueError(msg)
+        if max_steps <= 0:
+            msg = "max_steps must be greater than zero"
+            raise ValueError(msg)
+
+        optimizer_kwargs = dict(optimizer_kwargs or {})
+        for name in _OPTIMIZER_FILE_SETTINGS:
+            value = optimizer_kwargs.get(name)
+            # ASE also accepts file-like and trajectory objects. Only filename
+            # values need isolation and path validation; preserve other objects.
+            if not isinstance(value, (Path, str)):
+                continue
+            # logfile='-' means stdout logging so we dont need workdir isolation
+            if name == "logfile" and value == "-":
+                continue
+            if self.evaluation_working_directory is None:
+                # A shared filename would let concurrent evaluations overwrite
+                # one another, so ChemFit only manages files in isolated workdirs.
+                msg = (
+                    f"optimizer_kwargs[{name!r}] requires an ASE evaluation working "
+                    "directory; configure evaluation_working_directory on "
+                    "ASEComputer or workdir in ase_quantity()"
+                )
+                raise ValueError(msg)
+            # Retaining a Path marks this as a validated filename. The evaluator
+            # will resolve it against the directory created for that invocation.
+            optimizer_kwargs[name] = self.evaluation_working_directory.relative_path(
+                value,
+                description=f"optimizer_kwargs[{name!r}]",
+            )
+
         return self.with_evaluator(
             _minimize_evaluator,
+            optimizer=optimizer,
+            optimizer_kwargs=optimizer_kwargs,
             fmax=fmax,
             max_steps=max_steps,
+            allow_unconverged=allow_unconverged,
         )
 
     def prepare_ctx(
@@ -440,6 +553,19 @@ class ASEComputer(
         ctx: EvaluateContext,
     ) -> QuantitiesT_co:
         """Prepare, evaluate, and extract quantities from an ASE calculation."""
+        if self.evaluation_working_directory is None:
+            return self._evaluate(parameters, ctx)
+
+        with self.evaluation_working_directory.isolated_workdir() as workdir:
+            ctx.temp.workdir = workdir
+            return self._evaluate(parameters, ctx)
+
+    def _evaluate(
+        self,
+        parameters: ParametersT_contra,
+        ctx: EvaluateContext,
+    ) -> QuantitiesT_co:
+        """Evaluate one ASE calculation inside its already-created workspace."""
         self.prepare_ctx(parameters, ctx)
         atoms = ctx.temp.atoms
         self.evaluator(parameters, atoms, ctx)

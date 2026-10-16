@@ -3,10 +3,8 @@ from __future__ import annotations
 import copy
 import functools
 import logging
-import shutil
 import subprocess
 import time
-import uuid
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from dataclasses import dataclass, field
@@ -23,6 +21,7 @@ from typing import (
 from typing_extensions import Self
 
 from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
+from chemfit.evaluation_working_directory import EvaluationWorkingDirectory
 
 logger = logging.getLogger(__name__)
 
@@ -65,52 +64,18 @@ class _ParserBinding(Generic[QuantitiesT]):
     files: tuple[Path, ...]
 
 
-def _is_safe_relative_path(path: str | Path) -> bool:
-    path = Path(path)
-
-    if path.is_absolute():
-        return False
-
-    depth = 0
-
-    for part in path.parts:
-        if part in ("", "."):
-            continue
-        if part == "..":
-            depth -= 1
-            if depth < 0:
-                return False
-        else:
-            depth += 1
-
-    return True
-
-
 def _relative_paths(output_files: tuple[Path | str, ...]) -> tuple[Path, ...]:
     """Convert str to Path and make sure that they are relative to the working directory."""
-
-    files = tuple(Path(output_file) for output_file in output_files)
-
-    if any(output_file.is_absolute() for output_file in files):
-        msg = "Output paths must be relative to the evaluation working directory."
-        raise ValueError(msg)
-
-    if not all(_is_safe_relative_path(f) for f in files):
-        msg = "Relative path is not safe because it leaves the current directory (too many `..`)."
-        raise ValueError(msg)
-
-    return files
+    return EvaluationWorkingDirectory.relative_paths(output_files)
 
 
 class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
     def __init__(
         self,
-        base_working_directory: Path | str,
+        evaluation_working_directory: EvaluationWorkingDirectory,
         wait_timeout: float | None = 500.0,
         poll_interval: float = 1,
-        delete_temp_workdirs: bool = True,
         write_dump_file_after_crash: bool = True,
-        keep_temp_workdir_after_crash: bool = True,
         try_parsing_after_exception: bool = False,
     ):
         """
@@ -122,22 +87,16 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
         files into a quantity dictionary.
 
         Args:
-            base_working_directory (Path):
-                Base directory under which temporary working directories
-                will be created, one per evaluation.
+            evaluation_working_directory: Configuration and lifecycle policy
+                for per-evaluation working directories.
             wait_timeout (float, optional):
                 Maximum time in seconds to wait for all output files to
                 appear. Defaults to 500.0 seconds.
             poll_interval (float, optional):
                 Interval in seconds between checks for output file creation.
                 Defaults to 1 second.
-            delete_temp_workdirs (bool, optional):
-                Whether to delete temporary working directories after each
-                evaluation. Defaults to True.
             write_dump_file_after_crash: Whether to write an evaluation-level
                 diagnostic dump when execution, output waiting, or parsing fails.
-            keep_temp_workdir_after_crash: Whether to keep the temporary
-                working directory for inspection after a failed evaluation.
             try_parsing_after_exception: Whether to continue waiting for and parsing
                 output files when ``subprocess.run`` raises
                 ``subprocess.CalledProcessError``. Defaults to False.
@@ -146,17 +105,19 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
 
         super().__init__()
 
+        if not isinstance(evaluation_working_directory, EvaluationWorkingDirectory):
+            msg = "evaluation_working_directory must be an EvaluationWorkingDirectory"
+            raise TypeError(msg)
+
         self._steps: tuple[_CommandStep[ParametersT] | _HookStep[ParametersT], ...] = ()
         self._parser_bindings: tuple[_ParserBinding[QuantitiesT], ...] = ()
         self._completion_files: tuple[Path, ...] = ()
-        self.base_working_directory = Path(base_working_directory)
+        self.evaluation_working_directory = evaluation_working_directory
         self.write_dump_file_after_crash = write_dump_file_after_crash
-        self.keep_temp_workdir_after_crash = keep_temp_workdir_after_crash
         self.try_parsing_after_exception = try_parsing_after_exception
 
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
-        self.delete_temp_workdirs = delete_temp_workdirs
         self.retries_output_parsing = 1
 
     def create_temp_workdir(self) -> Path:
@@ -168,10 +129,7 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
 
         """
 
-        name = str(uuid.uuid4())
-        temp_workdir = self.base_working_directory / name
-        temp_workdir.mkdir(exist_ok=False, parents=True)
-        return temp_workdir
+        return self.evaluation_working_directory.create()
 
     def with_parser(
         self,
@@ -381,9 +339,10 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
 
     def _write_crash_dump(self, ctx: EvaluateContext, exception: Exception) -> Path:
         """Write evaluation-level failure details and return the dump path."""
-        dump_path = (self.base_working_directory / ctx.temp.workdir.name).with_suffix(
-            ".dump"
-        )
+        dump_path = (
+            self.evaluation_working_directory.base_working_directory
+            / ctx.temp.workdir.name
+        ).with_suffix(".dump")
         with dump_path.open("w") as dump_file:
             dump_file.write(f"Exception type: {type(exception).__name__}\n")
             dump_file.write(f"Exception: {exception}\n")
@@ -403,20 +362,6 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             dump_file.write(pformat(vars(ctx.temp)))
             dump_file.write("\n")
         return dump_path
-
-    @staticmethod
-    def _cleanup_failed_workdir(workdir: Path) -> str:
-        """Best-effort cleanup that returns an exception-note suffix on failure."""
-        try:
-            shutil.rmtree(workdir)
-        except Exception as cleanup_exception:
-            cleanup_msg = (
-                f"Could not remove temporary workdir '{workdir}' after the "
-                f"evaluation failed: {cleanup_exception}."
-            )
-            logger.warning(cleanup_msg)
-            return f"\n{cleanup_msg}"
-        return ""
 
     def with_hook(
         self,
@@ -446,8 +391,12 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             A new computer containing the additional hook step.
 
         Example:
+            >>> from chemfit.evaluation_working_directory import (
+            ...     EvaluationWorkingDirectory,
+            ... )
             >>> from chemfit.external_computer import ExternalQuantityComputer
-            >>> computer = ExternalQuantityComputer(base_working_directory="workdir")
+            >>> workdir = EvaluationWorkingDirectory("workdir")
+            >>> computer = ExternalQuantityComputer(workdir)
             >>> def write_input(parameters, workdir, ctx, *, template_path):
             ...     ...
             >>> computer2 = computer.with_hook(
@@ -512,8 +461,12 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             A new computer containing the additional command step.
 
         Example:
+            >>> from chemfit.evaluation_working_directory import (
+            ...     EvaluationWorkingDirectory,
+            ... )
             >>> from chemfit.external_computer import ExternalQuantityComputer
-            >>> computer = ExternalQuantityComputer(base_working_directory="workdir")
+            >>> workdir = EvaluationWorkingDirectory("workdir")
+            >>> computer = ExternalQuantityComputer(workdir)
             >>> def command(parameters, workdir, ctx, *, executable):
             ...     return [executable, "input.dat"]
             >>> computer2 = computer.with_cmd(
@@ -697,66 +650,56 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
 
         """
 
-        # Create a temporary working directory
-        ctx.temp.workdir = self.create_temp_workdir()
+        with self.evaluation_working_directory.isolated_workdir() as workdir:
+            ctx.temp.workdir = workdir
+            try:
+                watched_files = self._watched_files()
+                ctx.temp.output_files = [
+                    workdir / output_file for output_file in watched_files
+                ]
+                self._execute_steps(parameters, ctx)
 
-        try:
-            watched_files = self._watched_files()
-            ctx.temp.output_files = [
-                ctx.temp.workdir / output_file for output_file in watched_files
-            ]
-            self._execute_steps(parameters, ctx)
+                self._wait_for_outputs(ctx.temp.output_files)
 
-            self._wait_for_outputs(ctx.temp.output_files)
-
-            res: dict[str, Any] = {}
-            for binding in self._parser_bindings:
-                parser_inputs = tuple(
-                    ctx.temp.workdir / output_file for output_file in binding.files
-                )
-                success = False
-                # First we perform the retries while silencing all exceptions
-                for _ in range(self.retries_output_parsing):
-                    try:
-                        res.update(binding.parser(*parser_inputs))
-                        success = True
-                        break
-                    except Exception as e:  # noqa: F841, S112
-                        continue
-
-                # If we have not succeeded so far, the (retries + 1)th (aka the last)
-                # attempt is made without a try block, so that we get to handle the actual exception
-                if not success:
-                    res.update(binding.parser(*parser_inputs))
-
-        except Exception as e:
-            msg = (
-                "Exception in `_run` of ExternalQuantityComputer.\n"
-                f"  ctx.temp = {ctx.temp}"
-            )
-
-            if self.write_dump_file_after_crash:
-                try:
-                    dump_path = self._write_crash_dump(ctx, e)
-                    msg += f"\nWrote dump file to `{dump_path}`."
-                except Exception as dump_exception:
-                    msg += (
-                        f"\nCould not write a crash dump because of {dump_exception}."
+                res: dict[str, Any] = {}
+                for binding in self._parser_bindings:
+                    parser_inputs = tuple(
+                        workdir / output_file for output_file in binding.files
                     )
+                    success = False
+                    # First we perform the retries while silencing all exceptions
+                    for _ in range(self.retries_output_parsing):
+                        try:
+                            res.update(binding.parser(*parser_inputs))
+                            success = True
+                            break
+                        except Exception as e:  # noqa: F841, S112
+                            continue
 
-            if self.delete_temp_workdirs and not self.keep_temp_workdir_after_crash:
-                msg += self._cleanup_failed_workdir(ctx.temp.workdir)
-            else:
-                msg += (
-                    f"\nKeeping temporary workdir '{ctx.temp.workdir}' for inspection"
+                    # The final attempt propagates its exception so the diagnostic
+                    # handler below can record the actual parser failure.
+                    if not success:
+                        res.update(binding.parser(*parser_inputs))
+
+            except Exception as e:
+                msg = (
+                    "Exception in `_run` of ExternalQuantityComputer.\n"
+                    f"  ctx.temp = {ctx.temp}"
                 )
 
-            if hasattr(e, "add_note"):  # we dont have `add_note` in 3.10
-                e.add_note(msg)
+                if self.write_dump_file_after_crash:
+                    try:
+                        dump_path = self._write_crash_dump(ctx, e)
+                        msg += f"\nWrote dump file to `{dump_path}`."
+                    except Exception as dump_exception:
+                        msg += (
+                            "\nCould not write a crash dump because of "
+                            f"{dump_exception}."
+                        )
 
-            raise
-        else:
-            if self.delete_temp_workdirs:
-                shutil.rmtree(ctx.temp.workdir)
+                if hasattr(e, "add_note"):  # we dont have `add_note` in 3.10
+                    e.add_note(msg)
+
+                raise
 
         return cast("QuantitiesT", res)

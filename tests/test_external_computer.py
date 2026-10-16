@@ -11,9 +11,11 @@ from typing import TYPE_CHECKING, Any, NoReturn
 import numpy as np
 import pytest
 
+import chemfit
 from chemfit.abstract_objective_function import (
     EvaluateContext,
 )
+from chemfit.evaluation_working_directory import EvaluationWorkingDirectory
 from chemfit.external_computer import ExternalQuantityComputer
 from chemfit.fitter import Fitter
 
@@ -21,11 +23,60 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
+def _external_computer(
+    base_working_directory: Path | str,
+    wait_timeout: float | None = 500.0,
+    poll_interval: float = 1.0,
+    delete_temp_workdirs: bool = True,
+    write_dump_file_after_crash: bool = True,
+    keep_temp_workdir_after_crash: bool = True,
+    try_parsing_after_exception: bool = False,
+) -> ExternalQuantityComputer[dict[str, Any], dict[str, Any]]:
+    """Construct the low-level computer from its working-directory object."""
+    return ExternalQuantityComputer(
+        EvaluationWorkingDirectory(
+            base_working_directory,
+            delete_temp_workdirs=delete_temp_workdirs,
+            keep_temp_workdir_after_crash=keep_temp_workdir_after_crash,
+        ),
+        wait_timeout=wait_timeout,
+        poll_interval=poll_interval,
+        write_dump_file_after_crash=write_dump_file_after_crash,
+        try_parsing_after_exception=try_parsing_after_exception,
+    )
+
+
 class MyParser:
     def __call__(self, output_file: Path) -> dict[str, Any]:
         """Parse an output file and retrieve its quantities."""
         data = np.loadtxt(output_file)
         return {"y": data[:, 0], "x": data[:, 1]}
+
+
+def test_external_computer_accepts_working_directory_configuration(tmp_path: Path):
+    workdir = EvaluationWorkingDirectory(
+        tmp_path,
+        delete_temp_workdirs=False,
+        keep_temp_workdir_after_crash=False,
+    )
+    computer = ExternalQuantityComputer(workdir)
+
+    assert computer.evaluation_working_directory is workdir
+
+
+def test_external_quantity_constructs_working_directory_configuration(
+    tmp_path: Path,
+):
+    computer = chemfit.external_quantity(
+        workdir=tmp_path,
+        delete_temp_workdirs=False,
+        keep_temp_workdir_after_crash=False,
+    )
+
+    workdir = computer.evaluation_working_directory
+    assert workdir.base_working_directory == tmp_path
+    assert not workdir.delete_temp_workdirs
+    assert not workdir.keep_temp_workdir_after_crash
 
 
 def loss_function(quantities: dict[str, Any], ref_y: Iterable[float]) -> float:
@@ -70,7 +121,7 @@ def test_squares_external():
     output_parser = MyParser()
 
     ob_func = (
-        ExternalQuantityComputer(
+        _external_computer(
             poll_interval=0.5,
             base_working_directory=test_dir / ".external_workdir",
             delete_temp_workdirs=True,
@@ -125,7 +176,7 @@ def test_parser_bindings_and_completion_files(
         }
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    original = ExternalQuantityComputer(base_working_directory=tmp_path)
+    original = _external_computer(base_working_directory=tmp_path)
     with_one_parser = original.with_parser(parse_a, "a.dat")
     with_parsers = with_one_parser.with_parser(parse_bc, "b.dat", "c.dat")
     computer = with_parsers.wait_for("task.done", "a.dat", "task.done").with_cmd(
@@ -200,7 +251,7 @@ def test_execution_steps_run_in_registration_order(
         return {"result": int(output.read_text(encoding="utf-8"))}
 
     monkeypatch.setattr(subprocess, "run", run_command)
-    base = ExternalQuantityComputer(base_working_directory=tmp_path)
+    base = _external_computer(base_working_directory=tmp_path)
     pipeline = (
         base.with_hook(hook, name="input")
         .with_cmd(command, executable="preprocess")
@@ -240,7 +291,7 @@ def test_execution_steps_run_in_registration_order(
 
 
 def test_subprocess_output_streams_to_workdir_by_default(tmp_path: Path):
-    computer = ExternalQuantityComputer(
+    computer = _external_computer(
         base_working_directory=tmp_path,
         delete_temp_workdirs=False,
     ).with_cmd(
@@ -278,7 +329,7 @@ def test_named_command_output_can_be_used_as_parser_input(tmp_path: Path):
         }
 
     computer = (
-        ExternalQuantityComputer(
+        _external_computer(
             base_working_directory=tmp_path,
             delete_temp_workdirs=False,
         )
@@ -310,7 +361,7 @@ def test_named_command_output_can_be_used_as_parser_input(tmp_path: Path):
 
 
 def test_failed_subprocess_keeps_streamed_output_for_diagnostics(tmp_path: Path):
-    computer = ExternalQuantityComputer(base_working_directory=tmp_path).with_cmd(
+    computer = _external_computer(base_working_directory=tmp_path).with_cmd(
         lambda _parameters, _workdir, _ctx: [
             sys.executable,
             "-c",
@@ -340,7 +391,7 @@ def test_explicit_subprocess_output_handling_is_preserved(
         assert "stderr" not in kwargs
 
     monkeypatch.setattr(subprocess, "run", fake_run)
-    computer = ExternalQuantityComputer(
+    computer = _external_computer(
         base_working_directory=tmp_path,
         delete_temp_workdirs=False,
     ).with_cmd(
@@ -355,7 +406,7 @@ def test_explicit_subprocess_output_handling_is_preserved(
 
 def test_named_command_output_rejects_subprocess_output_configuration(tmp_path: Path):
     with pytest.raises(ValueError, match="cannot be combined"):
-        ExternalQuantityComputer(base_working_directory=tmp_path).with_cmd(
+        _external_computer(base_working_directory=tmp_path).with_cmd(
             lambda _parameters, _workdir, _ctx: ["simulation"],
             stdout_file="simulation.out",
             subprocess_run_args={"capture_output": True},
@@ -373,7 +424,7 @@ def test_subprocess_run_args_are_command_specific(
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     computer = (
-        ExternalQuantityComputer(base_working_directory=tmp_path)
+        _external_computer(base_working_directory=tmp_path)
         .with_cmd(
             lambda _parameters, _workdir, _ctx: ["first"],
             subprocess_run_args={"timeout": 1.0},
@@ -394,7 +445,7 @@ def test_subprocess_run_args_reject_chemfit_managed_arguments(
     reserved_arg: str,
 ):
     with pytest.raises(ValueError, match="ChemFit manages"):
-        ExternalQuantityComputer(base_working_directory=tmp_path).with_cmd(
+        _external_computer(base_working_directory=tmp_path).with_cmd(
             lambda _parameters, _workdir, _ctx: ["simulation"],
             subprocess_run_args={reserved_arg: True},
         )
@@ -421,7 +472,7 @@ def test_hook_failure_stops_execution_pipeline(tmp_path: Path):
         return ["command"]
 
     computer = (
-        ExternalQuantityComputer(base_working_directory=tmp_path)
+        _external_computer(base_working_directory=tmp_path)
         .with_hook(lambda _parameters, _workdir, _ctx: events.append("first hook"))
         .with_hook(fail)
         .with_cmd(later_command)
@@ -459,8 +510,11 @@ def test_cleanup_failure_does_not_mask_evaluation_failure(
         msg = "cleanup failed"
         raise OSError(msg)
 
-    monkeypatch.setattr("chemfit.external_computer.shutil.rmtree", fail_cleanup)
-    computer = ExternalQuantityComputer(
+    monkeypatch.setattr(
+        "chemfit.evaluation_working_directory.shutil.rmtree",
+        fail_cleanup,
+    )
+    computer = _external_computer(
         base_working_directory=tmp_path,
         delete_temp_workdirs=True,
         keep_temp_workdir_after_crash=False,
@@ -497,7 +551,7 @@ def test_waits_synchronously_for_delayed_completion_file(
 
     monkeypatch.setattr(subprocess, "run", submit_job)
     computer = (
-        ExternalQuantityComputer(
+        _external_computer(
             base_working_directory=tmp_path,
             poll_interval=0.001,
             wait_timeout=1,
@@ -520,7 +574,7 @@ def test_output_wait_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: None)
     computer = (
-        ExternalQuantityComputer(
+        _external_computer(
             base_working_directory=tmp_path,
             poll_interval=0.001,
             wait_timeout=0.01,
@@ -554,7 +608,7 @@ def test_parser_retries_are_preserved(tmp_path: Path, monkeypatch: pytest.Monkey
 
     monkeypatch.setattr(subprocess, "run", fake_run)
     computer = (
-        ExternalQuantityComputer(base_working_directory=tmp_path)
+        _external_computer(base_working_directory=tmp_path)
         .with_cmd(lambda _parameters, _workdir, _ctx: ["simulation"])
         .with_parser(flaky_parser, "result.txt")
     )
@@ -564,7 +618,7 @@ def test_parser_retries_are_preserved(tmp_path: Path, monkeypatch: pytest.Monkey
 
 
 def test_parser_and_completion_file_validation(tmp_path: Path):
-    computer = ExternalQuantityComputer(base_working_directory=tmp_path)
+    computer = _external_computer(base_working_directory=tmp_path)
 
     with pytest.raises(TypeError, match="callable"):
         computer.with_parser(None, "result.txt")  # type: ignore[arg-type]
@@ -611,7 +665,7 @@ def test_try_parsing_after_subprocess_exception(
 
     monkeypatch.setattr(subprocess, "run", failing_run)
     computer = (
-        ExternalQuantityComputer(
+        _external_computer(
             base_working_directory=tmp_path,
             try_parsing_after_exception=True,
         )
@@ -646,7 +700,7 @@ def test_later_failure_dumps_recovered_command_failure(
 
     monkeypatch.setattr(subprocess, "run", failing_run)
     computer = (
-        ExternalQuantityComputer(
+        _external_computer(
             base_working_directory=tmp_path,
             poll_interval=0.001,
             wait_timeout=0.01,
@@ -704,7 +758,7 @@ def test_subprocess_exception_does_not_parse_by_default(
 
     monkeypatch.setattr(subprocess, "run", failing_run)
     computer = (
-        ExternalQuantityComputer(
+        _external_computer(
             base_working_directory=tmp_path,
             delete_temp_workdirs=True,
             keep_temp_workdir_after_crash=False,
@@ -735,15 +789,15 @@ def test_unsafe_relative_paths():
     unsafe_path = "../bla/../../out.txt"
 
     with pytest.raises(ValueError, match="Relative path"):
-        ExternalQuantityComputer(base_working_directory="workdir").wait_for(unsafe_path)
+        _external_computer(base_working_directory="workdir").wait_for(unsafe_path)
 
     with pytest.raises(ValueError, match="Relative path"):
-        ExternalQuantityComputer(base_working_directory="workdir").with_parser(
+        _external_computer(base_working_directory="workdir").with_parser(
             MyParser(), unsafe_path
         )
 
     with pytest.raises(ValueError, match="Relative path"):
-        ExternalQuantityComputer(base_working_directory="workdir").with_cmd(
+        _external_computer(base_working_directory="workdir").with_cmd(
             lambda _parameters, _workdir, _ctx: ["simulation"],
             stdout_file=unsafe_path,
         )

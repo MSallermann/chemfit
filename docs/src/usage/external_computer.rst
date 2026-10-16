@@ -328,7 +328,7 @@ This can then be attached to the computer:
 .. code-block:: python
 
    computer = (
-       ExternalQuantityComputer(base_working_directory=".")
+       chemfit.external_quantity(".")
        .with_hook(
            write_input,
            template_path=Path("template.in"),
@@ -397,8 +397,8 @@ For debugging, you can keep them:
 
 .. code-block:: python
 
-   computer = ExternalQuantityComputer(
-       base_working_directory="runs",
+   computer = chemfit.external_quantity(
+       "runs",
        keep_temp_workdir_after_crash=True,
    )
 
@@ -406,8 +406,8 @@ To inspect failures, enable evaluation-level dump files:
 
 .. code-block:: python
 
-   computer = ExternalQuantityComputer(
-       base_working_directory="runs",
+   computer = chemfit.external_quantity(
+       "runs",
        write_dump_file_after_crash=True,
    )
 
@@ -429,8 +429,8 @@ after ``subprocess.run`` raises ``subprocess.CalledProcessError``:
 
 .. code-block:: python
 
-   computer = ExternalQuantityComputer(
-       base_working_directory="runs",
+   computer = chemfit.external_quantity(
+       "runs",
        try_parsing_after_exception=True,
    )
 
@@ -460,15 +460,21 @@ During execution, useful information is stored in the context, including:
 Execution options
 -----------------
 
-The constructor exposes evaluation-wide options:
+The high-level ``external_quantity()`` helper exposes evaluation-wide options:
 
-- ``base_working_directory`` - where temporary directories are created
+- ``workdir`` - where temporary directories are created
 - ``wait_timeout`` - maximum time to wait for output files
 - ``poll_interval`` - how often file existence is checked
 - ``delete_temp_workdirs`` - whether to remove directories after success
 - ``write_dump_file_after_crash`` - whether to write evaluation diagnostics
 - ``keep_temp_workdir_after_crash`` - whether to retain failed work directories
 - ``try_parsing_after_exception`` - whether to parse output after a non-zero exit
+
+At the lower level, :class:`~chemfit.external_computer.ExternalQuantityComputer`
+accepts an
+:class:`~chemfit.evaluation_working_directory.EvaluationWorkingDirectory`
+containing the base directory and its cleanup configuration. The public helper
+constructs this object automatically.
 
 Execution options belong to the command that uses them:
 

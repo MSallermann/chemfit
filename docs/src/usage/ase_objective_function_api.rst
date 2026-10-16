@@ -198,11 +198,57 @@ evaluation state on the computer. If the evaluator raises an exception,
 processors are not run and the exception follows the enclosing objective's
 usual error handling.
 
+Evaluation working directories
+------------------------------
+
+Some ASE calculators and evaluators create input, output, restart, or log
+files. Give each evaluation an isolated directory by configuring
+``workdir``:
+
+.. code-block:: python
+
+   computer = chemfit.ase_quantity(
+       "geometry.xyz",
+       workdir="ase-runs",
+   ).with_calculator(make_calculator)
+
+ChemFit creates a uniquely named directory below ``ase-runs`` for each
+evaluation and stores its path in ``ctx.temp.workdir``. Calculator factories,
+evaluators, and processors can use it explicitly:
+
+.. code-block:: python
+
+   def make_calculator(parameters, atoms, ctx):
+       return FileBasedCalculator(
+           parameters=parameters,
+           directory=ctx.temp.workdir,
+       )
+
+ChemFit does not change the process-wide current directory, which would be
+unsafe when evaluations run concurrently. Each callback must therefore pass
+``ctx.temp.workdir`` to file-producing code.
+
+Working directories are deleted after successful evaluations by default. Set
+``delete_temp_workdirs=False`` to retain every directory. Failed evaluation
+directories are retained for inspection by default; set
+``keep_temp_workdir_after_crash=False`` to delete them too:
+
+.. code-block:: python
+
+   computer = chemfit.ase_quantity(
+       "geometry.xyz",
+       workdir="ase-runs",
+       keep_temp_workdir_after_crash=False,
+   )
+
+If ``workdir`` is not supplied, no directory is created and
+``ctx.temp.workdir`` is not set.
+
 Geometry minimization
 ---------------------
 
-Use :py:meth:`~chemfit.ase_objective_function.ASEComputer.minimize` for the
-common ASE BFGS workflow:
+Use :py:meth:`~chemfit.ase_objective_function.ASEComputer.minimize` for an ASE
+geometry-optimization workflow. It uses BFGS by default:
 
 .. code-block:: python
 
@@ -211,9 +257,68 @@ common ASE BFGS workflow:
        max_steps=2000,
    )
 
-``minimize()`` returns another ``ASEComputer`` configured with a BFGS evaluator;
-minimization is not represented by a separate subclass. Quantity processors run
-after optimization and therefore see the relaxed structure and its calculator.
+``minimize()`` returns another ``ASEComputer`` configured with an optimizer
+evaluator; minimization is not represented by a separate subclass. Quantity
+processors run after successful optimization and therefore see the relaxed
+structure and its calculator. If the optimizer reaches ``max_steps`` without
+satisfying ``fmax``, evaluation raises ``RuntimeError`` before any quantity
+processor runs. This prevents an unconverged structure from being treated as a
+successful calculation.
+
+Pass another ASE optimizer class and its constructor settings when BFGS is not
+appropriate:
+
+.. code-block:: python
+
+   from ase.optimize import FIRE
+
+   relaxed = computer.minimize(
+       optimizer=FIRE,
+       optimizer_kwargs={"dt": 0.05, "maxstep": 0.1},
+       fmax=1e-5,
+       max_steps=2000,
+   )
+
+Use ``optimizer_kwargs`` for optimizer-specific settings such as step sizes.
+ChemFit suppresses the optimizer's log output by default. With a
+``workdir`` configured, relative ``logfile``, ``trajectory``,
+and ``restart`` paths are resolved inside that evaluation's isolated directory:
+
+.. code-block:: python
+
+   computer = chemfit.ase_quantity(
+       "geometry.xyz",
+       workdir="ase-runs",
+       delete_temp_workdirs=False,
+   ).with_calculator(make_calculator)
+
+   relaxed = computer.minimize(
+       optimizer_kwargs={
+           "logfile": "optimization.log",
+           "trajectory": "optimization.traj",
+       },
+   )
+
+Parent directories are created as needed. Absolute paths and relative paths
+that escape the evaluation directory are rejected. File-backed optimizer
+settings also require ``workdir``; this prevents parallel
+evaluations from overwriting one another. Non-filename values supported by ASE,
+such as an open log stream or a trajectory object, are passed through unchanged.
+
+To intentionally process the last structure despite non-convergence, opt in
+explicitly:
+
+.. code-block:: python
+
+   relaxed = computer.minimize(
+       fmax=1e-5,
+       max_steps=2000,
+       allow_unconverged=True,
+   )
+
+The final maximum atomic force is recorded as ``ctx.meta["final_fmax"]`` for
+both converged and unconverged relaxations. The explicit escape hatch does not
+emit a warning. ``fmax`` and ``max_steps`` must both be positive.
 
 Both ``minimize()`` and ``with_evaluator()`` use copy-on-write configuration.
 The original computer retains its previous evaluator.
