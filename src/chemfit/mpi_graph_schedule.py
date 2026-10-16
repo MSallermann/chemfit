@@ -21,7 +21,14 @@ from collections import deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from mpi4py import MPI
+try:
+    from mpi4py import MPI
+except ImportError as e:
+    if hasattr(e, "add_note"):
+        e.add_note(
+            "Install ChemFit's MPI dependencies with `pip install chemfit[mpi]`."
+        )
+    raise
 
 from chemfit.abstract_objective_function import (
     Component,
