@@ -112,29 +112,50 @@ class QuantityProcessor(Protocol[QuantitiesT_co]):
 class PathAtomsFactory(AtomsFactory):
     """Atoms factory that reads a single structure from a filesystem path."""
 
-    def __init__(self, path: Path, index: int | None = None) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        index: int | slice | str | None = None,
+    ) -> None:
         """
         Initialize the factory.
 
         Args:
             path: Path to a structure file readable by ASE.
-            index: Optional ASE index selecting which image to read. The
-                selection must resolve to a single ``Atoms`` object.
+            index: Optional ASE index selecting which image to read, including
+                integer, slice, and ASE string forms. The selection must resolve
+                to exactly one ``Atoms`` object.
 
         """
-        self.path = path
+        self.path = Path(path)
         self.index = index
 
     def __call__(self) -> Atoms:
         """Read and return one atoms object."""
-        atoms = read(self.path, self.index, parallel=False)
+        if not self.path.exists():
+            msg = f"ASE structure file does not exist: {self.path}"
+            raise FileNotFoundError(msg)
+        if not self.path.is_file():
+            msg = f"ASE structure path is not a file: {self.path}"
+            raise ValueError(msg)
+
+        try:
+            atoms = read(self.path, self.index, parallel=False)
+        except Exception as exception:
+            msg = (
+                f"ASE could not read one structure from {self.path} "
+                f"with index {self.index!r}: {exception}"
+            )
+            raise ValueError(msg) from exception
 
         if isinstance(atoms, list):
+            if len(atoms) == 1:
+                return atoms[0]
             msg = (
-                f"Index {self.index} selects multiple images from path "
-                f"{self.path}. This is not compatible with AtomsFactory."
+                f"ASE index {self.index!r} selected {len(atoms)} structures "
+                f"from {self.path}; expected exactly one"
             )
-            raise Exception(msg)
+            raise ValueError(msg)
 
         return atoms
 

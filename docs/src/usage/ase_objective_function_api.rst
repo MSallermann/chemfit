@@ -405,8 +405,11 @@ single structure using ASE:
 
    atoms_factory = PathAtomsFactory("trajectory.xyz", index=0)
 
-If the selected ASE index resolves to multiple images, the factory rejects the
-selection because one ``ASEComputer`` requires one base structure.
+Paths are read lazily when the computer is first evaluated. Integer, slice, and
+ASE string indices are accepted. A one-item slice is unwrapped automatically;
+zero- or multi-item selections raise ``ValueError`` because one ``ASEComputer``
+requires exactly one base structure. Missing paths raise ``FileNotFoundError``,
+and other read errors report both the path and requested index.
 
 Use :py:meth:`~chemfit.ase_objective_function.ASEComputer.with_atoms_setup` for
 structure configuration that should happen once before the base atoms are

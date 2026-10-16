@@ -323,7 +323,7 @@ AtomsSource = Atoms | str | Path | Callable[[], Atoms]
 def ase_quantity(
     atoms: AtomsSource,
     *,
-    index: int | None = None,
+    index: int | slice | str | None = None,
     calculator_factory: CalculatorFactory[ParamsT] | None = None,
     atoms_setups: Iterable[AtomsSetup] | None = None,
     atoms_modifiers: Iterable[AtomsModifier[ParamsT]] | None = None,
@@ -344,8 +344,9 @@ def ase_quantity(
     Args:
         atoms: Atoms object, structure-file path, or zero-argument atoms
             factory.
-        index: ASE image index for a path input. It is invalid for an
-            ``Atoms`` object or callable source.
+        index: ASE image index for a path input, including integer, slice, and
+            ASE string forms. The selection must contain exactly one structure.
+            It is invalid for an ``Atoms`` object or callable source.
         calculator_factory: Optional callable that creates a fresh calculator
             for each evaluation.
         atoms_setups: Optional callbacks applied once to the cached base atoms.
