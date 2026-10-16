@@ -39,6 +39,32 @@ def get_ob_func(eps: float, sigma: float):
     )
 
 
+def test_ase_configuration_rejects_invalid_callbacks_immediately():
+    invalid: Any = None
+
+    with pytest.raises(
+        TypeError,
+        match=r"`atoms_factory` must implement AtomsFactory; got NoneType",
+    ):
+        ASEComputer(atoms_factory=invalid)
+
+    with pytest.raises(
+        TypeError,
+        match=r"`atoms_modifiers\[0\]` must implement AtomsModifier; got NoneType",
+    ):
+        ASEComputer(
+            atoms_factory=LJAtomsFactory(1.0),
+            atoms_modifiers=[invalid],
+        )
+
+    computer = ASEComputer(atoms_factory=LJAtomsFactory(1.0))
+    with pytest.raises(
+        TypeError,
+        match=r"`processor` must implement QuantityProcessor; got NoneType",
+    ):
+        computer.with_processor(invalid)
+
+
 class CountingLJAtomsFactory(LJAtomsFactory):
     def __init__(self, r: float) -> None:
         """Initialize a factory that records how often it is called."""

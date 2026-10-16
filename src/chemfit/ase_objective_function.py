@@ -295,9 +295,15 @@ class ASEComputer(
         """
         super().__init__()
 
-        check_protocol(atoms_factory, AtomsFactory)
-        check_protocol(calculator_factory, CalculatorFactory)
-        check_protocol(evaluator, ASEEvaluator)
+        check_protocol(atoms_factory, AtomsFactory, name="atoms_factory")
+        if calculator_factory is not None:
+            check_protocol(
+                calculator_factory,
+                CalculatorFactory,
+                name="calculator_factory",
+            )
+        if evaluator is not None:
+            check_protocol(evaluator, ASEEvaluator, name="evaluator")
 
         if evaluation_working_directory is not None and not isinstance(
             evaluation_working_directory, EvaluationWorkingDirectory
@@ -311,17 +317,25 @@ class ASEComputer(
         self.atoms_factory = atoms_factory
         self.calculator_factory = calculator_factory
         self.atoms_setups = tuple(atoms_setups or ())
-        for setup in self.atoms_setups:
-            check_protocol(setup, AtomsSetup)
+        for index, setup in enumerate(self.atoms_setups):
+            check_protocol(setup, AtomsSetup, name=f"atoms_setups[{index}]")
 
         self.atoms_modifiers = tuple(atoms_modifiers or ())
-        for modifier in self.atoms_modifiers:
-            check_protocol(modifier, AtomsModifier)
+        for index, modifier in enumerate(self.atoms_modifiers):
+            check_protocol(
+                modifier,
+                AtomsModifier,
+                name=f"atoms_modifiers[{index}]",
+            )
 
         self.quantity_processors = tuple(quantity_processors or ())
 
-        for processor in self.quantity_processors:
-            check_protocol(processor, QuantityProcessor)
+        for index, processor in enumerate(self.quantity_processors):
+            check_protocol(
+                processor,
+                QuantityProcessor,
+                name=f"quantity_processors[{index}]",
+            )
 
         self.evaluator = (
             cast("ASEEvaluator[ParametersT_contra]", _single_point_evaluator)
@@ -353,7 +367,7 @@ class ASEComputer(
         returned computer starts with a fresh atoms cache and initialization
         lock. The source computer is unchanged.
         """
-        check_protocol(setup, AtomsSetup)
+        check_protocol(setup, AtomsSetup, name="setup")
         new = copy.copy(self)
         new.atoms_setups = (*self.atoms_setups, setup)
         new._atoms = None  # noqa: SLF001
@@ -376,7 +390,7 @@ class ASEComputer(
         calculator construction. This operation does not invalidate an
         initialized base-atoms cache.
         """
-        check_protocol(modifier, AtomsModifier)
+        check_protocol(modifier, AtomsModifier, name="modifier")
         bound_modifier = cast(
             "AtomsModifier[ParametersT_contra]",
             functools.partial(modifier, **kwargs),
@@ -399,7 +413,7 @@ class ASEComputer(
         Additional keyword-only arguments are bound to ``calculator``. This
         operation does not invalidate an initialized base-atoms cache.
         """
-        check_protocol(calculator, CalculatorFactory)
+        check_protocol(calculator, CalculatorFactory, name="calculator")
         new = copy.copy(self)
         new.calculator_factory = cast(
             "CalculatorFactory[ParametersT_contra]",
@@ -423,7 +437,7 @@ class ASEComputer(
         the first explicit processor replaces the implicit default-processor
         fallback.
         """
-        check_protocol(processor, QuantityProcessor)
+        check_protocol(processor, QuantityProcessor, name="processor")
         bound_processor = cast(
             "QuantityProcessor[QuantitiesT_co]",
             functools.partial(processor, **kwargs),
@@ -450,7 +464,7 @@ class ASEComputer(
         one evaluator is active; this method replaces the previous evaluator
         without invalidating the base-atoms cache.
         """
-        check_protocol(evaluator, ASEEvaluator)
+        check_protocol(evaluator, ASEEvaluator, name="evaluator")
         new = copy.copy(self)
         new.evaluator = cast(
             "ASEEvaluator[ParametersT_contra]",

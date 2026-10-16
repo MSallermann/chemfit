@@ -12,10 +12,16 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-def check_protocol(obj: Any | None, prot: Any):
-    if obj is not None and not isinstance(obj, prot):
-        msg = f"{obj} does not implement the {prot} protocol"
-        raise Exception(msg)
+def check_protocol(
+    obj: Any,
+    protocol: type[Any],
+    *,
+    name: str = "value",
+) -> None:
+    """Raise ``TypeError`` if an object does not implement a runtime protocol."""
+    if not isinstance(obj, protocol):
+        msg = f"`{name}` must implement {protocol.__name__}; got {type(obj).__name__}"
+        raise TypeError(msg)
 
 
 def next_free_folder(base: Path) -> Path:

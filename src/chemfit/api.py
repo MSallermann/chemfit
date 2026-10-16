@@ -369,7 +369,8 @@ def ase_quantity(
 
     Raises:
         ValueError: If ``index`` is supplied for a non-path source.
-        TypeError: If ``atoms`` is not an accepted source.
+        TypeError: If ``atoms`` is not an accepted source or a configured
+            callback does not implement its required protocol.
 
     Examples:
         Configure a calculator and convert its energy into a loss term::
