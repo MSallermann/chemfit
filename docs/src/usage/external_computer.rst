@@ -185,6 +185,17 @@ to ``with_hook()`` or ``with_cmd()`` are bound to that callable. Every step in
 an evaluation receives the same context, so an earlier step can place data in
 ``ctx.temp`` for a later step to consume.
 
+By default, command output is streamed directly to files in the evaluation
+working directory instead of being accumulated in memory. A command at step
+``N`` writes to ``command-N.stdout`` and ``command-N.stderr``. The paths are
+also recorded in ``ctx.temp.command_output_files``. This keeps verbose external
+programs from consuming memory proportional to their output and leaves their
+logs beside the other evaluation files when the working directory is retained.
+
+Callers that explicitly pass ``capture_output``, ``stdout``, or ``stderr`` in
+``subprocess_run_args`` retain full control over output handling and disable
+the automatic file redirection.
+
 
 Parser inputs and completion files
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -356,10 +367,12 @@ To inspect failures, enable evaluation-level dump files:
    )
 
 A dump records the final exception, current execution step, commands executed
-so far, and the other temporary context state. When the final exception is a
-``subprocess.CalledProcessError``, its command, return code, standard
-output, and standard error are included when available. Hook, output-waiting,
-and parser failures therefore produce diagnostics as well as command failures.
+so far, the paths of the streamed command-output files, and the other temporary
+context state. When output capture is explicitly enabled and the final
+exception is a ``subprocess.CalledProcessError``, its command, return code,
+standard output, and standard error are also included when available. Hook,
+output-waiting, and parser failures therefore produce diagnostics as well as
+command failures.
 
 Parsing output from a failed command
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -394,6 +407,8 @@ During execution, useful information is stored in the context, including:
 - all executed commands, in ``ctx.temp.commands``
 - the current execution step during a failure
 - a recoverable command failure, when applicable
+- command standard-output and standard-error files, in
+  ``ctx.temp.command_output_files``
 - the output files
 
 
@@ -405,7 +420,9 @@ The constructor exposes additional options:
 - ``base_working_directory`` - where temporary directories are created
 - ``wait_timeout`` - maximum time to wait for output files
 - ``poll_interval`` - how often file existence is checked
-- ``subprocess_run_args`` - arguments passed to ``subprocess.run``
+- ``subprocess_run_args`` - arguments passed to ``subprocess.run``; explicit
+  ``capture_output``, ``stdout``, or ``stderr`` values override the default
+  per-command output files
 - ``delete_temp_workdirs`` - whether to remove directories after success
 - ``write_dump_file_after_crash`` - whether to write evaluation diagnostics
 - ``keep_temp_workdir_after_crash`` - whether to retain failed work directories

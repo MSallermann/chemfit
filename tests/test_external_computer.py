@@ -235,6 +235,76 @@ def test_execution_steps_run_in_registration_order(
     assert step_contexts == [ctx] * 6
 
 
+def test_subprocess_output_streams_to_workdir_by_default(tmp_path: Path):
+    computer = ExternalQuantityComputer(
+        base_working_directory=tmp_path,
+        delete_temp_workdirs=False,
+    ).with_cmd(
+        lambda _parameters, _workdir, _ctx: [
+            sys.executable,
+            "-c",
+            "import sys; print('standard output'); print('standard error', file=sys.stderr)",
+        ]
+    )
+    ctx = EvaluateContext()
+
+    assert computer({}, ctx) == {}
+
+    stdout_file = ctx.temp.workdir / "command-0.stdout"
+    stderr_file = ctx.temp.workdir / "command-0.stderr"
+    assert stdout_file.read_text(encoding="utf-8") == "standard output\n"
+    assert stderr_file.read_text(encoding="utf-8") == "standard error\n"
+    assert ctx.temp.command_output_files == [
+        {
+            "step_index": 0,
+            "stdout": stdout_file,
+            "stderr": stderr_file,
+        }
+    ]
+
+
+def test_failed_subprocess_keeps_streamed_output_for_diagnostics(tmp_path: Path):
+    computer = ExternalQuantityComputer(base_working_directory=tmp_path).with_cmd(
+        lambda _parameters, _workdir, _ctx: [
+            sys.executable,
+            "-c",
+            "import sys; print('before failure'); print('failure detail', file=sys.stderr); raise SystemExit(3)",
+        ]
+    )
+    ctx = EvaluateContext()
+
+    with pytest.raises(subprocess.CalledProcessError) as exception_info:
+        computer({}, ctx)
+
+    assert exception_info.value.returncode == 3
+    stdout_file = ctx.temp.command_failure["stdout_file"]
+    stderr_file = ctx.temp.command_failure["stderr_file"]
+    assert stdout_file.read_text(encoding="utf-8") == "before failure\n"
+    assert stderr_file.read_text(encoding="utf-8") == "failure detail\n"
+    assert ctx.temp.workdir.exists()
+
+
+def test_explicit_subprocess_output_handling_is_preserved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def fake_run(_cmd: list[str], **kwargs: Any) -> None:
+        assert kwargs["capture_output"] is True
+        assert "stdout" not in kwargs
+        assert "stderr" not in kwargs
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    computer = ExternalQuantityComputer(
+        base_working_directory=tmp_path,
+        subprocess_run_args={"capture_output": True},
+        delete_temp_workdirs=False,
+    ).with_cmd(lambda _parameters, _workdir, _ctx: ["simulation"])
+    ctx = EvaluateContext()
+
+    assert computer({}, ctx) == {}
+    assert ctx.temp.command_output_files == []
+
+
 def test_hook_failure_stops_execution_pipeline(tmp_path: Path):
     events: list[str] = []
 

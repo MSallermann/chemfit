@@ -8,6 +8,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from pprint import pformat
@@ -130,8 +131,11 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
                 Defaults to 1 second.
             subprocess_run_args (dict | None, optional):
                 Additional keyword arguments forwarded to
-                ``subprocess.run`` (e.g. ``capture_output=True``).
-                Defaults to None.
+                ``subprocess.run``. By default, each command streams standard
+                output and standard error to separate files in the evaluation
+                working directory. Supplying ``capture_output``, ``stdout``,
+                or ``stderr`` disables this automatic redirection and leaves
+                output handling to the caller. Defaults to None.
             delete_temp_workdirs (bool, optional):
                 Whether to delete temporary working directories after each
                 evaluation. Defaults to True.
@@ -155,10 +159,9 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
         self.keep_temp_workdir_after_crash = keep_temp_workdir_after_crash
         self.try_parsing_after_exception = try_parsing_after_exception
 
-        if subprocess_run_args is None:
-            self.subprocess_run_args: dict[str, Any] = {"capture_output": True}
-        else:
-            self.subprocess_run_args = subprocess_run_args
+        self.subprocess_run_args = (
+            {} if subprocess_run_args is None else subprocess_run_args
+        )
 
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
@@ -277,6 +280,7 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
     def _execute_steps(self, parameters: ParametersT, ctx: EvaluateContext) -> None:
         """Execute hooks and commands sequentially in registration order."""
         ctx.temp.commands = []
+        ctx.temp.command_output_files = []
         ctx.temp.command_failure = None
         ctx.temp.current_step_index = None
         ctx.temp.current_step_type = None
@@ -293,13 +297,38 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             cmd = step.command(parameters, ctx.temp.workdir, ctx)
             ctx.temp.commands.append(cmd)
 
+            run_args = dict(self.subprocess_run_args)
+            output_paths: dict[str, Path] | None = None
+            manages_subprocess_output = any(
+                option in run_args for option in ("capture_output", "stdout", "stderr")
+            )
+
             try:
-                subprocess.run(  # noqa: S603
-                    cmd,  # type: ignore
-                    check=True,
-                    cwd=ctx.temp.workdir,
-                    **self.subprocess_run_args,
-                )  # type: ignore
+                with ExitStack() as output_files:
+                    if not manages_subprocess_output:
+                        output_paths = {
+                            "stdout": ctx.temp.workdir / f"command-{step_index}.stdout",
+                            "stderr": ctx.temp.workdir / f"command-{step_index}.stderr",
+                        }
+                        run_args["stdout"] = output_files.enter_context(
+                            output_paths["stdout"].open("wb")
+                        )
+                        run_args["stderr"] = output_files.enter_context(
+                            output_paths["stderr"].open("wb")
+                        )
+                        ctx.temp.command_output_files.append(
+                            {
+                                "step_index": step_index,
+                                **output_paths,
+                            }
+                        )
+
+                    subprocess.run(  # noqa: S603
+                        cmd,  # type: ignore
+                        check=True,
+                        cwd=ctx.temp.workdir,
+                        **run_args,
+                    )  # type: ignore
             except subprocess.CalledProcessError as exception:
                 ctx.temp.command_failure = {
                     "step_index": step_index,
@@ -307,6 +336,12 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
                     "message": str(exception),
                     "cmd": exception.cmd,
                     "returncode": exception.returncode,
+                    "stdout_file": (
+                        None if output_paths is None else output_paths["stdout"]
+                    ),
+                    "stderr_file": (
+                        None if output_paths is None else output_paths["stderr"]
+                    ),
                     "stdout": (
                         None
                         if exception.stdout is None
@@ -571,8 +606,9 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
 
         - the final exception;
         - the current execution step and commands executed so far;
-        - captured subprocess diagnostics when the final exception is a
-          ``subprocess.CalledProcessError``;
+        - paths to the streamed subprocess output files;
+        - captured subprocess diagnostics, when output capture was explicitly
+          enabled and the final exception is a ``subprocess.CalledProcessError``;
         - any recoverable command failure recorded before a later failure;
         - the contents of ``ctx.temp`` at the time of failure
 
