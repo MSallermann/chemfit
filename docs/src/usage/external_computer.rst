@@ -192,9 +192,54 @@ also recorded in ``ctx.temp.command_output_files``. This keeps verbose external
 programs from consuming memory proportional to their output and leaves their
 logs beside the other evaluation files when the working directory is retained.
 
-Callers that explicitly pass ``capture_output``, ``stdout``, or ``stderr`` in
-``subprocess_run_args`` retain full control over output handling and disable
-the automatic file redirection.
+Use the keyword-only ``stdout_file`` and ``stderr_file`` arguments to select
+stable, command-specific paths. Named standard-output files can be registered
+as parser inputs in exactly the same way as any other command output:
+
+.. code-block:: python
+
+   computer = (
+       computer
+       .with_cmd(
+           run_simulation,
+           stdout_file="logs/simulation.out",
+           stderr_file="logs/simulation.err",
+       )
+       .with_parser(
+           parse_simulation_logs,
+           "logs/simulation.out",
+           "logs/simulation.err",
+       )
+   )
+
+The paths must be relative to the evaluation working directory. Parent
+directories are created automatically. Passing the same path for both streams
+combines standard output and standard error in one file.
+
+Each ``with_cmd()`` call can also receive command-specific
+``subprocess_run_args``. Callers that explicitly pass ``capture_output``,
+``stdout``, or ``stderr`` there retain full control over output handling and
+disable the automatic file redirection. Those options cannot be combined with
+that command's ``stdout_file`` or ``stderr_file``. ChemFit always controls
+``cwd`` and ``check``.
+
+To discard a command's output instead of creating files, use
+``subprocess.DEVNULL``:
+
+.. code-block:: python
+
+   import subprocess
+
+   computer = computer.with_cmd(
+       run_simulation,
+       subprocess_run_args={
+           "stdout": subprocess.DEVNULL,
+           "stderr": subprocess.DEVNULL,
+       },
+   )
+
+Pass ``None`` for ``stdout`` and ``stderr`` to inherit the parent process's
+streams, or use ``{"capture_output": True}`` to retain the output in memory.
 
 
 Parser inputs and completion files
@@ -415,18 +460,27 @@ During execution, useful information is stored in the context, including:
 Execution options
 -----------------
 
-The constructor exposes additional options:
+The constructor exposes evaluation-wide options:
 
 - ``base_working_directory`` - where temporary directories are created
 - ``wait_timeout`` - maximum time to wait for output files
 - ``poll_interval`` - how often file existence is checked
-- ``subprocess_run_args`` - arguments passed to ``subprocess.run``; explicit
-  ``capture_output``, ``stdout``, or ``stderr`` values override the default
-  per-command output files
 - ``delete_temp_workdirs`` - whether to remove directories after success
 - ``write_dump_file_after_crash`` - whether to write evaluation diagnostics
 - ``keep_temp_workdir_after_crash`` - whether to retain failed work directories
 - ``try_parsing_after_exception`` - whether to parse output after a non-zero exit
+
+Execution options belong to the command that uses them:
+
+.. code-block:: python
+
+   computer = computer.with_cmd(
+       run_simulation,
+       subprocess_run_args={"timeout": 3600, "env": simulation_environment},
+   )
+
+This permits separate commands in one pipeline to use different timeouts,
+environments, input streams, and other ``subprocess.run`` options.
 
 
 Command wrappers

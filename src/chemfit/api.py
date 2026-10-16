@@ -226,7 +226,6 @@ def external_quantity(
     *,
     wait_timeout: float | None = 500.0,
     poll_interval: float = 1.0,
-    subprocess_run_args: dict[str, Any] | None = None,
     delete_temp_workdirs: bool = True,
     write_dump_file_after_crash: bool = True,
     keep_temp_workdir_after_crash: bool = True,
@@ -252,9 +251,6 @@ def external_quantity(
         wait_timeout: Maximum time in seconds to wait for required output files
             after execution finishes. ``None`` disables the timeout.
         poll_interval: Time in seconds between checks for required output files.
-        subprocess_run_args: Additional keyword arguments forwarded to
-            :func:`subprocess.run`. If ``None``,
-            ``{"capture_output": True}`` is used.
         delete_temp_workdirs: Whether to remove evaluation working directories
             after successful evaluations and, subject to
             ``keep_temp_workdir_after_crash``, after failed evaluations.
@@ -279,13 +275,12 @@ def external_quantity(
                     "runs",
                     wait_timeout=None,
                     poll_interval=5.0,
-                    subprocess_run_args={
-                        "capture_output": True,
-                        "text": True,
-                    },
                 )
                 .with_hook(write_input)
-                .with_cmd(run_simulation)
+                .with_cmd(
+                    run_simulation,
+                    subprocess_run_args={"timeout": 3600},
+                )
                 .with_parser(parse_energy, "energy.dat")
                 .wait_for("done")
             )
@@ -312,7 +307,6 @@ def external_quantity(
         base_working_directory=workdir,
         wait_timeout=wait_timeout,
         poll_interval=poll_interval,
-        subprocess_run_args=subprocess_run_args,
         delete_temp_workdirs=delete_temp_workdirs,
         write_dump_file_after_crash=write_dump_file_after_crash,
         keep_temp_workdir_after_crash=keep_temp_workdir_after_crash,

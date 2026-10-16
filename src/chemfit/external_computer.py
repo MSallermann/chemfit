@@ -9,7 +9,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from pprint import pformat
 from typing import (
@@ -45,6 +45,9 @@ class _CommandStep(Generic[ParametersT]):
     """Build and execute one command in an external evaluation."""
 
     command: CommandType[ParametersT]
+    stdout_file: Path | None = None
+    stderr_file: Path | None = None
+    subprocess_run_args: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -105,7 +108,6 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
         base_working_directory: Path | str,
         wait_timeout: float | None = 500.0,
         poll_interval: float = 1,
-        subprocess_run_args: dict[str, Any] | None = None,
         delete_temp_workdirs: bool = True,
         write_dump_file_after_crash: bool = True,
         keep_temp_workdir_after_crash: bool = True,
@@ -129,13 +131,6 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             poll_interval (float, optional):
                 Interval in seconds between checks for output file creation.
                 Defaults to 1 second.
-            subprocess_run_args (dict | None, optional):
-                Additional keyword arguments forwarded to
-                ``subprocess.run``. By default, each command streams standard
-                output and standard error to separate files in the evaluation
-                working directory. Supplying ``capture_output``, ``stdout``,
-                or ``stderr`` disables this automatic redirection and leaves
-                output handling to the caller. Defaults to None.
             delete_temp_workdirs (bool, optional):
                 Whether to delete temporary working directories after each
                 evaluation. Defaults to True.
@@ -158,10 +153,6 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
         self.write_dump_file_after_crash = write_dump_file_after_crash
         self.keep_temp_workdir_after_crash = keep_temp_workdir_after_crash
         self.try_parsing_after_exception = try_parsing_after_exception
-
-        self.subprocess_run_args = (
-            {} if subprocess_run_args is None else subprocess_run_args
-        )
 
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
@@ -294,28 +285,48 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
                 continue
 
             ctx.temp.current_step_type = "command"
-            cmd = step.command(parameters, ctx.temp.workdir, ctx)
-            ctx.temp.commands.append(cmd)
-
-            run_args = dict(self.subprocess_run_args)
+            run_args = dict(step.subprocess_run_args)
             output_paths: dict[str, Path] | None = None
             manages_subprocess_output = any(
                 option in run_args for option in ("capture_output", "stdout", "stderr")
             )
+            if manages_subprocess_output and (
+                step.stdout_file is not None or step.stderr_file is not None
+            ):
+                msg = (
+                    "Command-specific stdout_file or stderr_file cannot be combined "
+                    "with capture_output, stdout, or stderr in subprocess_run_args."
+                )
+                raise ValueError(msg)
+
+            cmd = step.command(parameters, ctx.temp.workdir, ctx)
+            ctx.temp.commands.append(cmd)
 
             try:
                 with ExitStack() as output_files:
                     if not manages_subprocess_output:
+                        stdout_file = step.stdout_file or Path(
+                            f"command-{step_index}.stdout"
+                        )
+                        stderr_file = step.stderr_file or Path(
+                            f"command-{step_index}.stderr"
+                        )
                         output_paths = {
-                            "stdout": ctx.temp.workdir / f"command-{step_index}.stdout",
-                            "stderr": ctx.temp.workdir / f"command-{step_index}.stderr",
+                            "stdout": ctx.temp.workdir / stdout_file,
+                            "stderr": ctx.temp.workdir / stderr_file,
                         }
+                        for output_path in set(output_paths.values()):
+                            output_path.parent.mkdir(parents=True, exist_ok=True)
+
                         run_args["stdout"] = output_files.enter_context(
                             output_paths["stdout"].open("wb")
                         )
-                        run_args["stderr"] = output_files.enter_context(
-                            output_paths["stderr"].open("wb")
-                        )
+                        if output_paths["stderr"] == output_paths["stdout"]:
+                            run_args["stderr"] = run_args["stdout"]
+                        else:
+                            run_args["stderr"] = output_files.enter_context(
+                                output_paths["stderr"].open("wb")
+                            )
                         ctx.temp.command_output_files.append(
                             {
                                 "step_index": step_index,
@@ -393,6 +404,20 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             dump_file.write("\n")
         return dump_path
 
+    @staticmethod
+    def _cleanup_failed_workdir(workdir: Path) -> str:
+        """Best-effort cleanup that returns an exception-note suffix on failure."""
+        try:
+            shutil.rmtree(workdir)
+        except Exception as cleanup_exception:
+            cleanup_msg = (
+                f"Could not remove temporary workdir '{workdir}' after the "
+                f"evaluation failed: {cleanup_exception}."
+            )
+            logger.warning(cleanup_msg)
+            return f"\n{cleanup_msg}"
+        return ""
+
     def with_hook(
         self,
         hook: Callable[Concatenate[ParametersT, Path, EvaluateContext, ...], None],
@@ -448,6 +473,10 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             Concatenate[ParametersT, Path, EvaluateContext, ...], list[str]
         ],
         /,
+        *,
+        stdout_file: Path | str | None = None,
+        stderr_file: Path | str | None = None,
+        subprocess_run_args: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> Self:
         """
@@ -466,6 +495,17 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
                 ``(parameters: Mapping[str, object], workdir: Path,
                 ctx: EvaluateContext, ...)`` where any additional arguments
                 are keyword-only.
+            stdout_file: Relative path within the evaluation working directory
+                to which this command's standard output is streamed. Defaults
+                to ``command-N.stdout``, where ``N`` is the step index.
+            stderr_file: Relative path within the evaluation working directory
+                to which this command's standard error is streamed. Defaults
+                to ``command-N.stderr``, where ``N`` is the step index.
+            subprocess_run_args: Additional keyword arguments forwarded to
+                ``subprocess.run`` for this command. ``cwd`` and ``check`` are
+                managed by ChemFit and cannot be supplied. Explicit output
+                handling cannot be combined with ``stdout_file`` or
+                ``stderr_file``.
             **kwargs: Keyword arguments to bind to ``command``.
 
         Returns:
@@ -478,6 +518,9 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             ...     return [executable, "input.dat"]
             >>> computer2 = computer.with_cmd(
             ...     command,
+            ...     stdout_file="simulation.out",
+            ...     stderr_file="simulation.err",
+            ...     subprocess_run_args={"timeout": 3600},
             ...     executable="simulation",
             ... )
 
@@ -489,10 +532,34 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
         bound_command = cast(
             "CommandType[ParametersT]", functools.partial(command, **kwargs)
         )
+        stdout_path = (
+            None if stdout_file is None else _relative_paths((stdout_file,))[0]
+        )
+        stderr_path = (
+            None if stderr_file is None else _relative_paths((stderr_file,))[0]
+        )
+        run_args = {} if subprocess_run_args is None else dict(subprocess_run_args)
+        reserved_args = {"check", "cwd"}.intersection(run_args)
+        if reserved_args:
+            names = ", ".join(sorted(reserved_args))
+            msg = f"ChemFit manages these subprocess arguments: {names}."
+            raise ValueError(msg)
+        manages_subprocess_output = any(
+            option in run_args for option in ("capture_output", "stdout", "stderr")
+        )
+        if manages_subprocess_output and (
+            stdout_path is not None or stderr_path is not None
+        ):
+            msg = (
+                "Command-specific stdout_file or stderr_file cannot be combined "
+                "with capture_output, stdout, or stderr in subprocess_run_args."
+            )
+            raise ValueError(msg)
+
         new = copy.copy(self)
         new._steps = (  # noqa: SLF001
             *self._steps,
-            _CommandStep(bound_command),
+            _CommandStep(bound_command, stdout_path, stderr_path, run_args),
         )
         return new
 
@@ -678,7 +745,7 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
                     )
 
             if self.delete_temp_workdirs and not self.keep_temp_workdir_after_crash:
-                shutil.rmtree(ctx.temp.workdir)
+                msg += self._cleanup_failed_workdir(ctx.temp.workdir)
             else:
                 msg += (
                     f"\nKeeping temporary workdir '{ctx.temp.workdir}' for inspection"
