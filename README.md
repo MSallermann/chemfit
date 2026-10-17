@@ -1,5 +1,5 @@
 <p align="center">
-    <img src="logo/chemfit_logo_portable.svg" width="400"/>
+    <img src="https://raw.githubusercontent.com/MSallermann/chemfit/main/logo/chemfit_logo_portable.svg" width="400"/>
 </p>
 
 # About

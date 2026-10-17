@@ -23,7 +23,7 @@ jobs:
         run: pip install build wheel
 
       - name: Build distributions
-        run: python -m build --wheel
+        run: python -m build
 
       - name: Upload built artifacts
         uses: actions/upload-artifact@v4
@@ -31,28 +31,28 @@ jobs:
           name: dist_artifact
           path: dist/*
 
-      # The following step renames the wheel and puts the timestamp as a local version suffix.
-      # This allows us to avoid versions conflicts on test.pypi
-      # First we get the original version from pyproject.toml
-      # then we wipe the prvious dist/ folder
-      # then we build again
+      # The production distributions above retain the version from pyproject.toml.
+      # For TestPyPI, we append a timestamped development suffix to that version
+      # so repeated branch builds do not conflict with an already uploaded release.
+      # We then remove the production artifacts from dist/ and rebuild both the
+      # wheel and source distribution under this temporary TestPyPI version.
       - name: Inject temporary build number into pyproject.toml and rebuild
         id: set-test-version
         shell: bash
         run: |
-          orig_version=$(grep '^version =' pyproject.toml)
-          timestamp=$(date +%Y%m%d%H%M)
+          orig_version=$(sed -nE 's/^version = "([^"]+)"/\1/p' pyproject.toml)
+          timestamp=$(date +%Y%m%d%H%M%S)
 
-          version="2.1.0.dev${timestamp}"
+          version="${orig_version}.dev${timestamp}"
           echo "version=${version}" >> $GITHUB_ENV
           echo "version=${version}" >> $GITHUB_OUTPUT
 
           sed -i "s/^version = .*/version = \"${version}\"/" pyproject.toml
 
           rm -rf ./dist
-          python -m build --wheel
+          python -m build
 
-      # Then we upload the test artifact as well
+      # Upload the timestamped wheel and source distribution for TestPyPI.
       - name: Upload built artifacts test
         uses: actions/upload-artifact@v4
         with:
