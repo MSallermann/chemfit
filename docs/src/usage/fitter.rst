@@ -562,7 +562,7 @@ In some cases you may wish to configure or persist the contexts.
 This can, for example, be necessary if terms require special fields in the
 ``ctx.config``.
 
-For this reason both, :py:meth:`~chemfit.fitter.Fitter.fit_scipy` and
+For this reason, both :py:meth:`~chemfit.fitter.Fitter.fit_scipy` and
 :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad` support passing in
 external contexts as an argument.
 
@@ -574,12 +574,13 @@ For example:
 
     fitter = Fitter(...)
 
-    ctxs = [FitContext() for _ in range(NUM_WORKERS)]
+    batch_size = 4
+    ctxs = [FitContext() for _ in range(batch_size)]
 
     for ctx in ctxs:
         ctx.config.gandalf = "the white" # <-- make sure it's not the grey
 
-    fitter.fit_nevergrad(..., contexts=ctxs)
+    fitter.fit_nevergrad(..., batch_size=batch_size, contexts=ctxs)
 
 .. important::
 
@@ -588,13 +589,14 @@ For example:
 
 .. warning::
 
-    Beware of the **anti**- pattern:
+    Do not create the list by repeating one context instance:
 
     .. code-block:: python
 
-        ctxs = [FitContext()] * NUM_WORKERS # <-- bad
+        ctxs = [FitContext()] * batch_size  # incorrect: repeated references
 
-    This will create a list with ``NUM_WORKERS`` references to the **same** ``ctx``. Very bad!
+    This creates a list containing multiple references to the same context,
+    which is unsafe when candidate evaluations overlap.
 
 
 ----------------------------------

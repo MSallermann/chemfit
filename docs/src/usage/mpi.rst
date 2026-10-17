@@ -5,9 +5,10 @@ Running with MPI
 
 :class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` executes atomic component
 tasks on persistent MPI worker ranks. Rank zero expands input batches into
-tasks, distributes them round-robin across nonzero ranks, restores returned
-context state, and performs structural reductions. The same scheduler works
-for atomic and structural components.
+tasks, queues them for the nonzero ranks, restores returned context state, and
+performs structural reductions. Each idle rank receives at most one task at a
+time, and receives more work as it finishes. The same scheduler works for
+atomic and structural components.
 
 Requirements
 ------------
@@ -162,9 +163,10 @@ Hooks missing on workers
    Registration on rank zero does not modify worker-side objective instances.
 
 Poor scaling
-   Leaf tasks are assigned round-robin, without cost-aware placement. Large
-   differences in leaf cost can leave ranks idle. MPI overhead can also
-   dominate when individual leaves are cheap.
+   Leaf tasks are dispatched to idle ranks from a shared queue, without
+   cost-aware placement. Large differences in leaf cost can still leave ranks
+   idle near the end of a batch. MPI overhead can also dominate when individual
+   leaves are cheap.
 
 Single-rank launch
    With only rank zero in the communicator, the MPI schedule evaluates leaf

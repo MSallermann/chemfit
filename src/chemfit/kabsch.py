@@ -31,7 +31,7 @@ def kabsch(
 
     The algorithm:
 
-      1. Compute centroids of P and Q (weighted if `weights` provided).
+      1. Compute centroids of P and Q (weighted if ``weights`` is provided).
       2. Subtract centroids to get centered coordinates P0, Q0.
       3. Compute the cross-covariance matrix::
 
@@ -43,10 +43,11 @@ def kabsch(
 
       5. Compute rotation::
 
-             R = Vt.T @ U.T
+             R = U @ Vt
 
-         If `allow_reflection` is False and det(R) < 0, flip the sign of the last row
-         of Vt before recomputing R to ensure a proper rotation (det(R) = +1).
+         If ``allow_reflection`` is ``False`` and det(R) < 0, flip the sign of the
+         last column of U before recomputing R to ensure a proper rotation
+         (det(R) = +1).
 
       6. Compute translation::
 

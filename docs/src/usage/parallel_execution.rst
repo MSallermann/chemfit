@@ -148,9 +148,9 @@ structural scheduling semantics or graph diagnostics are required.
 
 ``evaluate_many`` yields
 :class:`~chemfit.scheduling.EvaluationResult` objects in completion order.
-Each result contains its original request index and either a numerical value or
-an ordinary evaluation exception. A prepared schedule is also callable:
-``schedule(input, ctx)`` handles one input synchronously and
+Each result contains its original request index and either the component's
+output or an ordinary evaluation exception. A prepared schedule is also
+callable: ``schedule(input, ctx)`` handles one input synchronously and
 raises its evaluation exception directly. The context is optional when its
 result state is not needed.
 

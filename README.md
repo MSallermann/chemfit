@@ -84,7 +84,7 @@ print(result.best_parameters)
 
 Each ASE calculation produces quantities, `with_loss()` turns those quantities into a scalar fitting term, and `chemfit.combine()` joins the independent terms into one objective.
 
-`chemfit.fit_nevergrad()` then optimizes the parameters and returns a `FitResult` containing the best parameters and loss, the optimizer recommendation, and the collected evaluation contexts.
+`chemfit.fit_nevergrad()` then optimizes the parameters and returns a `FitResult` containing the best parameters and loss, the optimizer recommendation, and one fitting context per candidate slot. Each context records its slot's current and best evaluation state; it is not a history of every evaluation.
 
 For more examples of constructing objectives, see the [common workflows](https://chemfit.readthedocs.io/en/latest/src/usage/public_api.html).
 

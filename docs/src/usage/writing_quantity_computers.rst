@@ -93,7 +93,7 @@ Let's fix the ``GoldenRuleViolator``:
     class GoodCitizen(Component):
         def _run(self, params, ctx):
             bad = params["x"]
-            ctx.meta["bad"] = bad # <-- no problemo
+            ctx.meta["bad"] = bad  # safe: metadata belongs to this evaluation
             return {"mojo" : bad}
 
     citizen = GoodCitizen()
@@ -509,7 +509,7 @@ cheap evaluation mode should be handled through ``ctx.config``.
 Summary
 ====================
 
-- ``ctx.meta``: write freely, per-evaluation diagnostic data (plus static meta data from the computer)
+- ``ctx.meta``: write freely, per-evaluation diagnostic data (plus static metadata from the computer)
 - ``ctx.config``: read-only, per-evaluation control of execution
 - ``ctx.shared``: shared state, use with care
 

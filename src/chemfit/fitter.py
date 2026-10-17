@@ -776,7 +776,9 @@ class Fitter(Generic[ParametersT]):
             ctx: Optional fitter evaluation context to reuse during the fit.
                 If ``None``, a new one is created.
             **kwargs: Additional keyword arguments forwarded to
-                ``scipy.optimize.minimize``.
+                ``scipy.optimize.minimize``. ``callback`` is reserved because
+                ChemFit installs its own callback to update fitter bookkeeping
+                and dispatch registered ChemFit callbacks.
 
         Returns:
             Dictionary of optimized parameter values.

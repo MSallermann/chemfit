@@ -96,7 +96,7 @@ def combine(
     combined.
 
     Args:
-        *args: Objective functors or callables supplied as positional terms,
+        *args: Objective components or callables supplied as positional terms,
             or one iterable of terms.
         weights: Non-negative weight for each term. All weights default to
             ``1.0``.
@@ -471,7 +471,7 @@ def evaluate_many(
     re-raised.
 
     Args:
-        objective: Objective functor or compatible one-argument callable.
+        objective: Objective component or compatible one-argument callable.
         parameters: Parameter mappings to evaluate, in desired result order.
         executor: Executor used through an :class:`ExecutorGraphScheduler`.
             The caller retains ownership and is responsible for shutting it
@@ -698,7 +698,7 @@ def fit_nevergrad(
     parameters, including choices, arrays, logarithmic scalars, or constants.
 
     Args:
-        objective: Objective functor, compatible callable, or prepared schedule
+        objective: Objective component, compatible callable, or prepared schedule
             to minimize. A prepared schedule cannot be combined with
             ``executor``, ``execution_workers``, or ``scheduler``.
         initial: Initial nested parameter mapping. Its structure is preserved

@@ -380,8 +380,9 @@ once complete, or use a separate completion flag file.
 Scheduler caveat
 ^^^^^^^^^^^^^^^^
 
-Some commands (e.g. ``srun`` or ``sbatch``) return before the computation
-has finished.
+Queueing submission commands such as ``sbatch``, ``qsub``, and ``bsub`` return
+before the computation has finished. An ordinary ``srun`` invocation is
+synchronous, but ``srun --async`` has the same early-return concern.
 
 In that case, the next pipeline step begins after the submission command
 returns; ChemFit does not wait for the remote job between steps. Express remote
@@ -395,18 +396,20 @@ A common solution is to write a ``done`` file and register it with
 Debugging and failure handling
 ------------------------------
 
-Temporary working directories are deleted after successful execution.
+Temporary working directories are deleted after successful execution by
+default. Failed working directories are retained by default.
 
-For debugging, you can keep them:
+To retain both successful and failed working directories for debugging, disable
+temporary-directory deletion:
 
 .. code-block:: python
 
    computer = chemfit.external_quantity(
        "runs",
-       keep_temp_workdir_after_crash=True,
+       delete_temp_workdirs=False,
    )
 
-To inspect failures, enable evaluation-level dump files:
+Evaluation-level dump files are also enabled by default. The explicit form is:
 
 .. code-block:: python
 

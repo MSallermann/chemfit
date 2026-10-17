@@ -82,7 +82,7 @@ class EvaluationResult(Generic[OutputT_co]):
 
     @property
     def success(self) -> bool:
-        """Whether the evaluation completed with a numerical value."""
+        """Whether the evaluation completed with a non-exception output."""
 
         return not isinstance(self.value, Exception)
 

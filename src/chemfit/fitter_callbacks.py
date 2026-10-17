@@ -140,7 +140,7 @@ class SaveMetaData:
                     skipkeys=True,
                 )
         except Exception:
-            logger.exception("Exception when trying to save meta data!")
+            logger.exception("Exception when trying to save metadata!")
 
 
 class CheckpointBestParameters:
@@ -150,10 +150,10 @@ class CheckpointBestParameters:
     Whenever a new best loss is detected across the provided
     ``FitContext`` instances, the corresponding parameters and
     metadata are written to disk. The file is overwritten whenever a
-    better solution is found (except if `dont_overwrite` is set to True).
+    better solution is found unless ``dont_overwrite`` is ``True``.
 
-    If `dont_overwrite` is set to True a number a new file is created by
-    inserting a counting suffix to `path`.
+    If ``dont_overwrite`` is ``True``, each new best solution is written to a
+    new file by inserting a numeric suffix into ``path``.
 
     This callback is useful for long-running optimizations, as it allows
     recovery of the best solution even if the optimization process
@@ -167,7 +167,10 @@ class CheckpointBestParameters:
 
         Args:
             path: File path where the best parameters will be written.
-                The file is overwritten whenever a better loss is found.
+                By default, the file is overwritten whenever a better loss is
+                found.
+            dont_overwrite: Whether to preserve earlier checkpoints by adding a
+                numeric suffix to each new checkpoint path.
 
         """
         self.path = Path(path)

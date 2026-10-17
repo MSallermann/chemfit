@@ -395,7 +395,7 @@ class WrappedComponent(
 
         The bound arguments are passed to the wrapped function in addition
         to the usual ChemFit arguments. Static metadata and registered hook
-        objects are retained, while the returned functor has independent hook
+        objects are retained, while the returned component has independent hook
         registration lists. Repeated calls append positional arguments and
         merge keyword arguments, with later keyword values taking precedence.
 

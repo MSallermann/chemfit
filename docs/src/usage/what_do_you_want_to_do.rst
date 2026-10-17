@@ -412,9 +412,11 @@ which is important when several evaluations run concurrently.
 ChemFit creates a context automatically when you call a component, so most
 users do not need to manage one. Pass your own context when directly calling a
 component if you want to inspect the completed record. During fitting, ChemFit
-retains the contexts for evaluated candidates; the high-level
-:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` helper returns them
-with its :class:`~chemfit.api.FitResult`.
+maintains one context per candidate slot. Each context is reused and records
+the slot's current and best evaluation state; it is not a history of every
+candidate evaluated. The high-level
+:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` helper returns these
+contexts with its :class:`~chemfit.api.FitResult`.
 
 Structural components produce a hierarchy of records: the outer context
 describes the pipeline, join, combined objective, or graph as a whole, and its
@@ -477,8 +479,8 @@ Should I use :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` or :cla
 Use :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` for an ordinary
 bounded derivative-free fit. It configures the scheduler and fitter and
 returns a result containing the recommendation, best observed parameters and
-loss, and evaluation contexts. The earlier concurrency example is the usual
-starting point.
+loss, and one fitting context per candidate slot. The earlier concurrency
+example is the usual starting point.
 
 Use :class:`~chemfit.fitter.Fitter` directly when you need SciPy, exception
 swallowing, supplied contexts, a prepared schedule that your application owns,

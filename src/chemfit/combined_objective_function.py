@@ -153,7 +153,7 @@ class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
         Generic callables are automatically wrapped as objective components.
 
         Args:
-            objective_functions: Sequence of objective functors or compatible
+            objective_functions: Sequence of objective components or compatible
                 callables.
             weights: Optional non-negative weight for each objective term. If
                 ``None``, all weights default to ``1.0``.
@@ -222,7 +222,7 @@ class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
         reduction: SimpleReducer | Reducer,
     ) -> Self:
         """
-        Return a copy using a simple reducer for weighted term values.
+        Return a copy using a reducer for weighted term values.
 
         Args:
             reduction: Callable that reduces the weighted values to one float.

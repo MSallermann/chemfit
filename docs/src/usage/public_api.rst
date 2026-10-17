@@ -233,13 +233,15 @@ The main fluent families are:
   callbacks, atoms modifiers, and processors append; calculator and evaluator
   configuration replace the previous value.
   :meth:`~chemfit.ase_objective_function.ASEComputer.minimize` replaces the
-  evaluator with the built-in BFGS workflow. See
+  evaluator with an ASE optimization workflow. It uses BFGS by default and
+  accepts another ASE optimizer class. See
   :ref:`ase_objective_function_api`.
 - :class:`~chemfit.external_computer.ExternalQuantityComputer` provides
   :meth:`~chemfit.external_computer.ExternalQuantityComputer.with_hook`,
   :meth:`~chemfit.external_computer.ExternalQuantityComputer.with_cmd`, and
-  :meth:`~chemfit.external_computer.ExternalQuantityComputer.with_parser`;
-  all append to the pipeline.
+  :meth:`~chemfit.external_computer.ExternalQuantityComputer.with_parser`.
+  Hooks and commands append ordered execution steps; parsers append to a
+  separate list that runs after all execution steps finish.
   :meth:`~chemfit.external_computer.ExternalQuantityComputer.wait_for` adds
   completion files. See :ref:`external_computer`.
 - Wrapped Python quantities and objectives provide
