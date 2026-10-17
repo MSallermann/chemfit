@@ -391,8 +391,11 @@ custom ones, register the default explicitly:
        .with_processor(extract_distance)
    )
 
-Processor results are merged in order with ``dict.update()``, so later
-processors can replace values produced by earlier processors.
+Processor results are merged in registration order. If multiple processors
+return the same quantity key, evaluation raises ``ValueError`` naming the
+duplicate key and processor index instead of silently replacing a value. Set
+``allow_quantity_overwrites=True`` in ``ase_quantity()`` when later processors
+should intentionally replace earlier values.
 
 Atoms factories, setup, and modifiers
 -------------------------------------

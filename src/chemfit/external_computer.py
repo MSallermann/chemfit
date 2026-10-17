@@ -22,6 +22,7 @@ from typing_extensions import Self
 
 from chemfit.abstract_objective_function import EvaluateContext, QuantityComputer
 from chemfit.evaluation_working_directory import EvaluationWorkingDirectory
+from chemfit.utils import merge_quantities
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
         poll_interval: float = 1,
         write_dump_file_after_crash: bool = True,
         try_parsing_after_exception: bool = False,
+        allow_quantity_overwrites: bool = False,
     ):
         """
         Initialize an external quantity computer.
@@ -100,6 +102,8 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
             try_parsing_after_exception: Whether to continue waiting for and parsing
                 output files when ``subprocess.run`` raises
                 ``subprocess.CalledProcessError``. Defaults to False.
+            allow_quantity_overwrites: Whether later output parsers may replace
+                keys returned by earlier parsers. Defaults to ``False``.
 
         """
 
@@ -115,6 +119,7 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
         self.evaluation_working_directory = evaluation_working_directory
         self.write_dump_file_after_crash = write_dump_file_after_crash
         self.try_parsing_after_exception = try_parsing_after_exception
+        self.allow_quantity_overwrites = allow_quantity_overwrites
 
         self.wait_timeout = wait_timeout
         self.poll_interval = poll_interval
@@ -662,24 +667,28 @@ class ExternalQuantityComputer(QuantityComputer[ParametersT, QuantitiesT]):
                 self._wait_for_outputs(ctx.temp.output_files)
 
                 res: dict[str, Any] = {}
-                for binding in self._parser_bindings:
+                for index, binding in enumerate(self._parser_bindings):
                     parser_inputs = tuple(
                         workdir / output_file for output_file in binding.files
                     )
-                    success = False
                     # First we perform the retries while silencing all exceptions
                     for _ in range(self.retries_output_parsing):
                         try:
-                            res.update(binding.parser(*parser_inputs))
-                            success = True
+                            parsed_quantities = binding.parser(*parser_inputs)
                             break
-                        except Exception as e:  # noqa: F841, S112
+                        except Exception:  # noqa: S112
                             continue
+                    else:
+                        # The final attempt propagates its exception so the
+                        # diagnostic handler records the actual parser failure.
+                        parsed_quantities = binding.parser(*parser_inputs)
 
-                    # The final attempt propagates its exception so the diagnostic
-                    # handler below can record the actual parser failure.
-                    if not success:
-                        res.update(binding.parser(*parser_inputs))
+                    merge_quantities(
+                        res,
+                        parsed_quantities,
+                        source=f"output parser {index}",
+                        allow_overwrites=self.allow_quantity_overwrites,
+                    )
 
             except Exception as e:
                 msg = (

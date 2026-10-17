@@ -231,6 +231,7 @@ def external_quantity(
     write_dump_file_after_crash: bool = True,
     keep_temp_workdir_after_crash: bool = True,
     try_parsing_after_exception: bool = False,
+    allow_quantity_overwrites: bool = False,
 ) -> ExternalQuantityComputer[dict[str, Any], dict[str, Any]]:
     """
     Create a quantity computer for an external program.
@@ -262,6 +263,8 @@ def external_quantity(
         try_parsing_after_exception: Whether to continue to output waiting and
             parsing when an external command raises
             :class:`subprocess.CalledProcessError`.
+        allow_quantity_overwrites: Whether later output parsers may replace
+            keys returned by earlier parsers. Defaults to ``False``.
 
     Returns:
         A configured :class:`ExternalQuantityComputer`. Hooks, commands,
@@ -314,6 +317,7 @@ def external_quantity(
         poll_interval=poll_interval,
         write_dump_file_after_crash=write_dump_file_after_crash,
         try_parsing_after_exception=try_parsing_after_exception,
+        allow_quantity_overwrites=allow_quantity_overwrites,
     )
 
 
@@ -332,6 +336,7 @@ def ase_quantity(
     workdir: Path | str | None = None,
     delete_temp_workdirs: bool = True,
     keep_temp_workdir_after_crash: bool = True,
+    allow_quantity_overwrites: bool = False,
 ) -> ASEComputer[ParamsT, QuantityT]:
     """
     Create an ASE-backed quantity computer from atoms or an atoms source.
@@ -362,6 +367,8 @@ def ase_quantity(
             deleted after successful evaluations.
         keep_temp_workdir_after_crash: Whether failed evaluation working
             directories are retained for inspection.
+        allow_quantity_overwrites: Whether later quantity processors may
+            replace keys returned by earlier processors. Defaults to ``False``.
 
     Returns:
         An :class:`ASEComputer` for fluent calculator, evaluator, processor,
@@ -444,6 +451,7 @@ def ase_quantity(
                 keep_temp_workdir_after_crash=keep_temp_workdir_after_crash,
             )
         ),
+        allow_quantity_overwrites=allow_quantity_overwrites,
     )
 
 

@@ -23,7 +23,7 @@ from chemfit.abstract_objective_function import (
     QuantityComputer,
 )
 from chemfit.evaluation_working_directory import EvaluationWorkingDirectory
-from chemfit.utils import check_protocol
+from chemfit.utils import check_protocol, merge_quantities
 
 _OPTIMIZER_FILE_SETTINGS = ("logfile", "trajectory", "restart")
 
@@ -266,6 +266,7 @@ class ASEComputer(
         evaluator: ASEEvaluator[ParametersT_contra] | None = None,
         *,
         evaluation_working_directory: EvaluationWorkingDirectory | None = None,
+        allow_quantity_overwrites: bool = False,
     ) -> None:
         """
         Initialize an ASE computer.
@@ -291,6 +292,9 @@ class ASEComputer(
                 calculator evaluation.
             evaluation_working_directory: Optional configuration and lifecycle
                 policy for per-evaluation working directories.
+            allow_quantity_overwrites: Whether later quantity processors may
+                replace keys returned by earlier processors. Defaults to
+                ``False``.
 
         """
         super().__init__()
@@ -344,6 +348,7 @@ class ASEComputer(
         )
 
         self.evaluation_working_directory = evaluation_working_directory
+        self.allow_quantity_overwrites = allow_quantity_overwrites
 
         self._atoms: Atoms | None = None
         self._atoms_init_lock = threading.Lock()
@@ -613,7 +618,12 @@ class ASEComputer(
         else:
             processors = self.quantity_processors
 
-        for proc in processors:
-            quantities.update(proc(atoms.calc, atoms, ctx))
+        for index, processor in enumerate(processors):
+            merge_quantities(
+                quantities,
+                processor(atoms.calc, atoms, ctx),
+                source=f"quantity processor {index}",
+                allow_overwrites=self.allow_quantity_overwrites,
+            )
 
         return cast("QuantitiesT_co", quantities)

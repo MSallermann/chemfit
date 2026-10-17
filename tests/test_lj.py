@@ -167,6 +167,33 @@ def test_custom_evaluator_replaces_single_point_and_shares_context():
     assert custom.evaluator is not base.evaluator
 
 
+def test_quantity_processors_reject_duplicate_keys():
+    processors = [
+        lambda _calc, _atoms, _ctx: {"energy": 1.0},
+        lambda _calc, _atoms, _ctx: {"energy": 2.0},
+    ]
+    computer = chemfit.ase_quantity(
+        LJAtomsFactory(1.0),
+        calculator_factory=construct_lj,
+        quantity_processors=processors,
+    )
+    parameters = {"epsilon": 1.0, "sigma": 1.0}
+
+    with pytest.raises(
+        ValueError,
+        match=r"quantity processor 1 returned duplicate quantity keys: 'energy'",
+    ):
+        computer(parameters)
+
+    overwriting = chemfit.ase_quantity(
+        LJAtomsFactory(1.0),
+        calculator_factory=construct_lj,
+        quantity_processors=processors,
+        allow_quantity_overwrites=True,
+    )
+    assert overwriting(parameters) == {"energy": 2.0}
+
+
 def test_atoms_modifiers_lifecycle_and_constructor_configuration():
     source = Atoms("Ar2", positions=[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
     events: list[tuple[str, float]] = []

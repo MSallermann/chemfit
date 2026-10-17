@@ -278,7 +278,11 @@ returns a dictionary of quantities:
 
    computer = computer.with_parser(parse_results, "run.log", "forces.dat")
 
-Parser results are merged in registration order.
+Parser results are merged in registration order. If multiple parsers return
+the same quantity key, evaluation raises ``ValueError`` naming the duplicate
+key and parser index instead of silently replacing a value. Set
+``allow_quantity_overwrites=True`` in ``external_quantity()`` when later
+parsers should intentionally replace earlier values.
 
 
 Hooks
@@ -469,6 +473,7 @@ The high-level ``external_quantity()`` helper exposes evaluation-wide options:
 - ``write_dump_file_after_crash`` - whether to write evaluation diagnostics
 - ``keep_temp_workdir_after_crash`` - whether to retain failed work directories
 - ``try_parsing_after_exception`` - whether to parse output after a non-zero exit
+- ``allow_quantity_overwrites`` - whether later parsers may replace earlier values
 
 At the lower level, :class:`~chemfit.external_computer.ExternalQuantityComputer`
 accepts an

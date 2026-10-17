@@ -24,6 +24,23 @@ def check_protocol(
         raise TypeError(msg)
 
 
+def merge_quantities(
+    quantities: dict[str, Any],
+    new_quantities: dict[str, Any],
+    *,
+    source: str,
+    allow_overwrites: bool,
+) -> None:
+    """Merge quantities, optionally rejecting keys from an earlier source."""
+    if not allow_overwrites:
+        duplicate_keys = quantities.keys() & new_quantities.keys()
+        if duplicate_keys:
+            formatted_keys = ", ".join(repr(key) for key in sorted(duplicate_keys))
+            msg = f"{source} returned duplicate quantity keys: {formatted_keys}"
+            raise ValueError(msg)
+    quantities.update(new_quantities)
+
+
 def next_free_folder(base: Path) -> Path:
     """If 'path/to/base' does not exist, return 'path/to/base'. Otherwise attempt 'path/to/base_0', 'path/to/base_1', etc. until finding a non-existent Path, then return that."""
     base = Path(base)

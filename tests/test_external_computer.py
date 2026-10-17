@@ -203,6 +203,36 @@ def test_parser_bindings_and_completion_files(
     ]
 
 
+def test_output_parsers_reject_duplicate_quantity_keys(tmp_path: Path):
+    def write_output(
+        _parameters: dict[str, Any],
+        workdir: Path,
+        _ctx: EvaluateContext,
+    ) -> None:
+        (workdir / "result.txt").touch()
+
+    def make_computer(
+        *, allow_overwrites: bool
+    ) -> ExternalQuantityComputer[dict[str, Any], dict[str, Any]]:
+        return (
+            chemfit.external_quantity(
+                tmp_path,
+                allow_quantity_overwrites=allow_overwrites,
+            )
+            .with_hook(write_output)
+            .with_parser(lambda _path: {"energy": 1.0}, "result.txt")
+            .with_parser(lambda _path: {"energy": 2.0}, "result.txt")
+        )
+
+    with pytest.raises(
+        ValueError,
+        match=r"output parser 1 returned duplicate quantity keys: 'energy'",
+    ):
+        make_computer(allow_overwrites=False)({})
+
+    assert make_computer(allow_overwrites=True)({}) == {"energy": 2.0}
+
+
 def test_execution_steps_run_in_registration_order(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
