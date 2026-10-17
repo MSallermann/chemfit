@@ -2,8 +2,10 @@ import json
 import logging
 from pathlib import Path
 
+import numpy as np
 import pytest
 
+from chemfit.abstract_objective_function import Skipped
 from chemfit.fitter import FitContext
 from chemfit.fitter_callbacks import CheckpointBestParameters, SaveMetaData
 
@@ -25,6 +27,28 @@ def test_save_metadata_includes_nested_summaries(tmp_path: Path):
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
     assert saved["children"][0]["meta"] == {"marker": "child"}
+
+
+def test_save_metadata_serializes_numpy_scalars_and_skipped_outputs(tmp_path: Path):
+    ctx = FitContext()
+    ctx.output = np.float32(1.25)
+    child = ctx.spawn_ctx()
+    child.output = (
+        np.int64(4),
+        Skipped(),
+        Skipped(reason=ValueError("unavailable")),
+    )
+    ctx.children.append(child)
+
+    SaveMetaData(tmp_path)(0, [ctx])
+
+    saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
+    assert saved["output"] == 1.25
+    assert saved["children"][0]["output"] == [
+        4,
+        {"skipped": True, "reason": None},
+        {"skipped": True, "reason": "ValueError: unavailable"},
+    ]
 
 
 def test_checkpoint_dont_overwrite_uses_next_available_path(tmp_path: Path):
@@ -61,7 +85,7 @@ def test_save_metadata_failure_preserves_previous_file(
     with caplog.at_level(logging.ERROR):
         callback(0, [ctx])
 
-    assert "Exception when trying to save meta data" in caplog.text
+    assert "Exception when trying to save metadata" in caplog.text
     assert output_path.read_text(encoding="utf-8") == original
     assert list(tmp_path.glob(".*.tmp")) == []
 

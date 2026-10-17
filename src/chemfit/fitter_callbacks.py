@@ -17,6 +17,7 @@ from typing import Any
 
 import numpy as np
 
+from chemfit.abstract_objective_function import Skipped
 from chemfit.evaluate_context import NoOutput
 from chemfit.fitter import FitContext
 
@@ -67,8 +68,12 @@ class NumpyEncoder(json.JSONEncoder):
     def default(self, o: Any):
         if isinstance(o, np.ndarray):
             return o.tolist()
+        if isinstance(o, np.generic):
+            return o.item()
         if isinstance(o, NoOutput):
             return None
+        if isinstance(o, Skipped):
+            return {"skipped": True, "reason": o.reason}
         if isinstance(o, BaseException):
             return f"{type(o).__name__}: {o}"
         return super().default(o)

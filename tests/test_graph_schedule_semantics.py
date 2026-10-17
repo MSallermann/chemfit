@@ -314,6 +314,44 @@ def test_failed_structural_begin_aborts_only_its_own_scope(scheduler):
     assert ctx.children[1].output == 5
 
 
+def test_child_context_creation_failure_matches_direct_call(scheduler):
+    class FailingSpawnContext(EvaluateContext):
+        def spawn_ctx(self):
+            msg = "child context failure"
+            raise ValueError(msg)
+
+    @component()
+    def identity(value):
+        return value
+
+    objective = PipelineComponent(identity, identity)
+    finalized_outputs = []
+    objective.register_eval_hook(post=lambda ctx: finalized_outputs.append(ctx.output))
+    direct_ctx = FailingSpawnContext()
+    graph_ctx = FailingSpawnContext()
+
+    with pytest.raises(ValueError, match="child context failure"):
+        objective(2, direct_ctx)
+
+    with prepare_schedule(scheduler, objective) as schedule:
+        with pytest.raises(ValueError, match="child context failure"):
+            schedule(2, graph_ctx)
+
+        # An evaluation failure is an ordinary graph outcome and must not
+        # poison the prepared schedule.
+        assert not schedule.closed
+        assert schedule(3) == 3
+
+    for ctx in (direct_ctx, graph_ctx):
+        assert isinstance(ctx.output, ValueError)
+        assert str(ctx.output) == "child context failure"
+        assert ctx.children == []
+    assert [str(output) for output in finalized_outputs[:2]] == [
+        "child context failure",
+        "child context failure",
+    ]
+
+
 def test_failed_input_skips_entire_nested_structural_component(scheduler):
     # Structural hooks run in the coordinator; a skipped scope invokes neither.
     calls = []

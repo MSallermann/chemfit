@@ -630,6 +630,11 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         super().__init__()
         self.graph = graph
 
+    def _create_context(self) -> EvaluateContext:
+        """Delegate default context creation to the graph's root component."""
+        root_component = self.graph.nodes[self.graph.root_id].objective
+        return root_component._create_context()  # noqa: SLF001
+
     def resolve_node_input(
         self,
         node_id: int,
@@ -720,9 +725,17 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
             run.state.complete_scope_early(node_id, pre_eval_result)
             return
 
-        # Allocate children only after begin succeeds. Consequently, an early
-        # structural result has no child contexts, matching direct evaluation.
-        child_ctxs = component._spawn_child_contexts(component_ctx)  # noqa: SLF001
+        # Allocate children only after begin succeeds. Context creation is part
+        # of the structural component body, so an ordinary failure here must
+        # still run the parent's end lifecycle just as a direct call does.
+        try:
+            child_ctxs = component._spawn_child_contexts(  # noqa: SLF001
+                component_ctx
+            )
+        except Exception as e:
+            run.state.complete_scope_early(node_id, e)
+            return
+
         for child_node_id, child_ctx in zip(
             node.contained_component_start_ids, child_ctxs, strict=True
         ):

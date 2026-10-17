@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from chemfit.abstract_objective_function import (
+    Component,
     EvaluateContext,
     PipelineComponent,
     component,
@@ -27,6 +28,19 @@ class FailingCloseSchedule(PreparedScheduleBase[object, object]):
         super().close()
         msg = "close failed"
         raise OSError(msg)
+
+
+class SpecializedContext(EvaluateContext):
+    pass
+
+
+class SpecializedContextComponent(Component[int, int]):
+    def _create_context(self) -> EvaluateContext:
+        return SpecializedContext()
+
+    def _run(self, value: int, /, ctx: EvaluateContext) -> int:
+        assert isinstance(ctx, SpecializedContext)
+        return 2 * value
 
 
 def test_owned_and_borrowed_executor_lifecycles():
@@ -116,6 +130,12 @@ def test_direct_and_serial_graph_schedulers_produce_the_same_result():
 
     assert [child.output for child in direct_ctx.children] == [6, 12]
     assert [child.output for child in graph_ctx.children] == [6, 12]
+
+
+@pytest.mark.parametrize("scheduler", [DirectScheduler(), SerialGraphScheduler()])
+def test_prepared_schedule_uses_component_default_context(scheduler):
+    with scheduler.prepare(SpecializedContextComponent()) as schedule:
+        assert schedule(3) == 6
 
 
 def test_repeated_batches_replace_context_hierarchy():

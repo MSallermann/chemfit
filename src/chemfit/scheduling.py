@@ -276,9 +276,13 @@ class PreparedScheduleBase(ABC, Generic[InputT, OutputT_co]):
         """
 
         if ctx is None:
-            ctx = EvaluateContext()
+            ctx = self._create_context()
 
         return self.evaluate(input, ctx)
+
+    def _create_context(self) -> EvaluateContext:
+        """Create the default context for a singleton evaluation."""
+        return EvaluateContext()
 
     def close(self) -> None:
         """
@@ -417,6 +421,10 @@ class DirectSchedule(
         """Initialize a schedule that invokes its component directly."""
         super().__init__()
         self.ob = ob
+
+    def _create_context(self) -> EvaluateContext:
+        """Delegate default context creation to the prepared component."""
+        return self.ob._create_context()  # noqa: SLF001
 
     def evaluate_many(
         self,
