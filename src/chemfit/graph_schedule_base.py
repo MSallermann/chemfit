@@ -107,9 +107,9 @@ class EvaluationState:
     seeded with zero-dependency nodes and receives a neighbor when its final
     dependency completes. This avoids rescanning the graph while allowing one
     prepared graph to serve many independent requests in a batch. Structural
-    lifecycle methods run on the coordinator and mutate this state directly;
-    backend workers only return atomic outcomes and serialized context result
-    state.
+    lifecycle methods run on the coordinator and mutate this state directly.
+    Backend workers return atomic outcomes and, when they do not share the
+    coordinator's context objects, serialized context result state.
 
     Args:
         graph: Compiled component graph evaluated by the schedule.
