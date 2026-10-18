@@ -39,7 +39,7 @@ class BatchState(SimpleNamespace):
     The graph driver deliberately treats this object as opaque. Concrete
     schedules may attach queues, futures, request handles, or other temporary
     resources to it in :meth:`GraphScheduleBase.submit_tasks` and consume them
-    in :meth:`GraphScheduleBase.next_completion`.
+    in :meth:`GraphScheduleBase.wait_for_completions`.
     """
 
 
@@ -98,7 +98,7 @@ class GraphScheduleError(RuntimeError):
     """
 
 
-@dataclass
+@dataclass(slots=True)
 class EvaluationState:
     """
     Track coordinator-side state for one traversal of a compiled call graph.
@@ -117,13 +117,21 @@ class EvaluationState:
 
     """
 
+    graph: CallGraph
     root_ctx: EvaluateContext
     contexts: list[EvaluateContext | None]
     node_slots: list[NodeSlot]
     remaining_dependencies: list[int]
     ready_nodes: deque[int]
 
-    def __init__(self, graph: CallGraph, root_ctx: EvaluateContext):
+    def __init__(
+        self,
+        graph: CallGraph,
+        root_ctx: EvaluateContext,
+        node_slots_template: Sequence[NodeSlot] | None = None,
+        dependency_template: Sequence[int] | None = None,
+        ready_nodes_template: Sequence[int] | None = None,
+    ):
         """
         Initialize every graph node as pending and attach the root context.
 
@@ -142,14 +150,28 @@ class EvaluationState:
         self.root_ctx = root_ctx
         self.contexts[graph.root_id] = root_ctx
 
-        self.node_slots = [PENDING] * len(graph.nodes)
+        # Prepared schedules pass immutable initial-state blueprints here. Each
+        # evaluation must copy them into private mutable containers: node slots
+        # change from PENDING to RUNNING and then to outcomes, dependency counts
+        # are decremented, and newly unlocked nodes are appended to ready_nodes.
+        # Sharing any of those containers would let concurrent evaluations
+        # corrupt one another. The fallbacks retain compatibility for callers
+        # that construct EvaluationState directly.
+        if node_slots_template is None:
+            node_slots_template = (PENDING,) * len(graph.nodes)
+        if dependency_template is None:
+            dependency_template = tuple(len(node.incoming) for node in graph.nodes)
+        if ready_nodes_template is None:
+            ready_nodes_template = tuple(
+                node_id
+                for node_id, remaining in enumerate(dependency_template)
+                if remaining == 0
+            )
+
+        self.node_slots = list(node_slots_template)
         self.graph = graph
-        self.remaining_dependencies = [len(node.incoming) for node in graph.nodes]
-        self.ready_nodes = deque(
-            node_id
-            for node_id, remaining in enumerate(self.remaining_dependencies)
-            if remaining == 0
-        )
+        self.remaining_dependencies = list(dependency_template)
+        self.ready_nodes = deque(ready_nodes_template)
 
     def assemble_node_inputs(self, node_id: int) -> tuple[Any, ...]:
         """
@@ -171,25 +193,25 @@ class EvaluationState:
             GraphScheduleError: If a referenced node has not completed.
 
         """
-        node = self.graph.nodes[node_id]
-        inputs = []
+        return tuple(
+            self.resolve_input_source(source)
+            for source in self.graph.nodes[node_id].inputs
+        )
 
-        for source in node.inputs:
-            if source is ROOT:
-                inputs.append(self.root_ctx.input)
-            elif isinstance(source, Skipped):
-                inputs.append(source)
-            else:
-                assert isinstance(source, int)
-                slot = self.node_slots[source]
+    def resolve_input_source(self, source: Any) -> Any:
+        """Resolve one declared node input without allocating a container."""
+        if source is ROOT:
+            return self.root_ctx.input
+        if isinstance(source, Skipped):
+            return source
 
-                if slot is PENDING or slot is RUNNING:
-                    msg = f"Input source {source} has not completed."
-                    raise GraphScheduleError(msg)
+        assert isinstance(source, int)
+        slot = self.node_slots[source]
+        if slot is PENDING or slot is RUNNING:
+            msg = f"Input source {source} has not completed."
+            raise GraphScheduleError(msg)
 
-                inputs.append(slot)
-
-        return tuple(inputs)
+        return slot
 
     def assemble_node_input(self, node_id: int) -> Any:
         """
@@ -526,7 +548,7 @@ class EvaluationState:
                 index += 1
 
 
-@dataclass
+@dataclass(slots=True)
 class EvaluationRun(Generic[InputT]):
     """
     Associate one batch request with its independent graph traversal.
@@ -547,7 +569,7 @@ class EvaluationRun(Generic[InputT]):
     yielded: bool = False
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NodeTask(Generic[InputT]):
     """
     Describe one atomic evaluation ready for backend submission.
@@ -570,7 +592,7 @@ class NodeTask(Generic[InputT]):
     ctx: EvaluateContext
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NodeCompletion:
     """
     Report one completed atomic evaluation independently of its backend.
@@ -629,6 +651,23 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         """
         super().__init__()
         self.graph = graph
+        # These immutable tuples are blueprints, not reusable EvaluationState
+        # objects. Graph topology does not change during a prepared schedule's
+        # lifetime, so dependency counts and initially ready node IDs can be
+        # computed once here instead of rediscovered by walking the graph for
+        # every request in every batch. EvaluationState copies the tuples into
+        # a list/list/deque because each traversal mutates all three. PENDING is
+        # an immutable singleton, so it is safe for every slot blueprint to
+        # reference the same object. Contexts are deliberately excluded: the
+        # root context belongs to a particular request, and child contexts must
+        # only be created when their structural lifecycle actually begins.
+        self._node_slots_template: tuple[NodeSlot, ...] = (PENDING,) * len(graph.nodes)
+        self._dependency_template = tuple(len(node.incoming) for node in graph.nodes)
+        self._ready_nodes_template = tuple(
+            node_id
+            for node_id, remaining in enumerate(self._dependency_template)
+            if remaining == 0
+        )
 
     def _create_context(self) -> EvaluateContext:
         """Delegate default context creation to the graph's root component."""
@@ -660,10 +699,17 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         """
 
         node = self.graph.nodes[node_id]
-        inputs = run.state.assemble_node_inputs(node_id)
 
         if node.parent is None:
+            # Root atomic nodes normally have one input. Resolve it directly so
+            # high-throughput singleton graphs do not allocate a one-item tuple
+            # for every task.
+            if len(node.inputs) == 1:
+                return run.state.resolve_input_source(node.inputs[0])
+            inputs = run.state.assemble_node_inputs(node_id)
             return inputs[0] if len(inputs) == 1 else inputs
+
+        inputs = run.state.assemble_node_inputs(node_id)
 
         parent = self.graph.nodes[node.parent]
         assert isinstance(parent, StartNode)
@@ -807,37 +853,59 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
         tasks: list[NodeTask] = []
 
         for run in runs:
-            while True:
-                node_id = run.state.pop_ready_node()
-                if node_id is None:
-                    break
+            tasks.extend(self.advance_run(run))
 
-                node = self.graph.nodes[node_id]
-                if isinstance(node, StartNode):
-                    self.execute_start_node(node_id, run)
-                    continue
+        return tasks
 
-                if isinstance(node, FinishNode):
-                    self.execute_finish_node(node_id, run)
-                    continue
+    def advance_run(self, run: EvaluationRun[InputT]) -> list[NodeTask]:
+        """
+        Advance only the run whose coordinator-visible state changed.
 
-                assert isinstance(node, AtomicNode)
-                task_input = self.resolve_node_input(node_id, run)
-                if isinstance(task_input, Skipped):
-                    run.state.skip(node_id, task_input)
-                    continue
+        This is the event-driven primitive used by :meth:`evaluate_many`.
+        Keeping the older sequence-oriented :meth:`collect_ready_tasks`
+        helper available preserves compatibility for diagnostic subclasses,
+        while the hot path no longer scans unrelated runs.
 
-                task_ctx = run.state.contexts[node_id]
-                assert task_ctx is not None
-                run.state.mark_node_running(node_id)
-                tasks.append(
-                    NodeTask(
-                        run_id=run.index,
-                        node_id=node_id,
-                        input=task_input,
-                        ctx=task_ctx,
-                    )
+        Args:
+            run: Evaluation whose ready queue should be drained.
+
+        Returns:
+            Newly runnable atomic tasks for the backend.
+
+        """
+        tasks: list[NodeTask] = []
+
+        while True:
+            node_id = run.state.pop_ready_node()
+            if node_id is None:
+                break
+
+            node = self.graph.nodes[node_id]
+            if isinstance(node, StartNode):
+                self.execute_start_node(node_id, run)
+                continue
+
+            if isinstance(node, FinishNode):
+                self.execute_finish_node(node_id, run)
+                continue
+
+            assert isinstance(node, AtomicNode)
+            task_input = self.resolve_node_input(node_id, run)
+            if isinstance(task_input, Skipped):
+                run.state.skip(node_id, task_input)
+                continue
+
+            task_ctx = run.state.contexts[node_id]
+            assert task_ctx is not None
+            run.state.mark_node_running(node_id)
+            tasks.append(
+                NodeTask(
+                    run_id=run.index,
+                    node_id=node_id,
+                    input=task_input,
+                    ctx=task_ctx,
                 )
+            )
 
         return tasks
 
@@ -879,7 +947,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         Backend implementations may attach any required handles to
         ``batch_state``. Every submitted task must eventually be returned by
-        :meth:`next_completion` unless the batch is aborted.
+        :meth:`wait_for_completions` unless the batch is aborted.
 
         Args:
             tasks: Newly runnable tasks, already marked as running.
@@ -903,6 +971,71 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
         """
         raise NotImplementedError
+
+    def wait_for_completions(
+        self,
+        batch_state: BatchState,
+    ) -> Sequence[NodeCompletion]:
+        """
+        Wait for at least one completion and return it.
+
+        Backends that can cheaply observe several completed tasks should
+        override this method and drain the completions already available.
+        The default preserves compatibility with implementations of the
+        original one-completion API.
+
+        Args:
+            batch_state: Mutable backend state scoped to this batch.
+
+        Returns:
+            A non-empty sequence of task completions.
+
+        """
+        return (self.next_completion(batch_state),)
+
+    def apply_completion(
+        self,
+        completion: NodeCompletion,
+        runs: Sequence[EvaluationRun[InputT]],
+    ) -> EvaluationRun[InputT]:
+        """
+        Apply one backend completion and return its changed evaluation run.
+
+        Worker-side context mutations are restored before the node outcome is
+        propagated, so newly runnable structural parents observe final child
+        state.
+
+        Args:
+            completion: Atomic completion produced by a backend.
+            runs: Evaluation runs in the current batch.
+
+        Returns:
+            Run whose ready queue may now contain downstream work.
+
+        Raises:
+            GraphScheduleError: If the completion identifies an unknown run or
+                graph node.
+
+        """
+        run_id = completion.run_id
+        if not 0 <= run_id < len(runs):
+            msg = f"Completion refers to unknown run {run_id}."
+            raise GraphScheduleError(msg)
+
+        run = runs[run_id]
+        node_id = completion.node_id
+        if not 0 <= node_id < len(self.graph.nodes):
+            msg = f"Completion refers to unknown node {node_id}."
+            raise GraphScheduleError(msg)
+
+        ctx = run.state.contexts[node_id]
+        assert ctx is not None
+
+        if completion.ctx_result_state is not None:
+            ctx.apply_result_state(completion.ctx_result_state)
+
+        run.state.complete(node_id, completion.outcome)
+        return run
 
     def abort_batch(self, batch_state: BatchState) -> None:
         """
@@ -955,59 +1088,65 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                 eval_state = EvaluationState(
                     self.graph,
                     root_ctx=req.ctx,
+                    node_slots_template=self._node_slots_template,
+                    dependency_template=self._dependency_template,
+                    ready_nodes_template=self._ready_nodes_template,
                 )
                 runs.append(EvaluationRun(index=idx, state=eval_state))
 
             tasks_in_flight = 0
-            while not all(run.yielded for run in runs):
-                # Drain every run's incremental ready queue. Host-side
-                # structural work executes immediately; atomic work is batched
-                # for the backend, which remains free to complete it in any
-                # order.
-                tasks = self.collect_ready_tasks(runs)
+            remaining_runs = len(runs)
 
-                if tasks:
-                    self.submit_tasks(tasks, batch_state)
-                    tasks_in_flight += len(tasks)
+            # Every run is initially dirty exactly once. After this pass, an
+            # atomic completion is the only event that can make more nodes
+            # runnable. The old driver instead revisited every run after every
+            # completion, making coordinator work grow with runs * completions.
+            initial_tasks: list[NodeTask] = []
+            for run in runs:
+                initial_tasks.extend(self.advance_run(run))
+                result = self.result_if_complete(run)
+                if result is not None:
+                    remaining_runs -= 1
+                    yield result
 
-                for run in runs:
-                    result = self.result_if_complete(run)
-                    if result is not None:
-                        yield result
+            if initial_tasks:
+                self.submit_tasks(initial_tasks, batch_state)
+                tasks_in_flight += len(initial_tasks)
 
-                if all(run.yielded for run in runs):
-                    break
-
-                # Consume one completion at a time so it can immediately expose
-                # downstream tasks instead of waiting for an entire wave.
-                if tasks_in_flight:
-                    completion = self.next_completion(batch_state)
-                    tasks_in_flight -= 1
-
-                    run_id = completion.run_id
-                    run = runs[run_id]
-                    node_id = completion.node_id
-
-                    ctx = runs[run_id].state.contexts[node_id]
-                    assert ctx is not None
-
-                    if completion.ctx_result_state is not None:
-                        ctx_result_state = completion.ctx_result_state
-                        ctx.apply_result_state(ctx_result_state)
-
-                    # Restore worker-side context mutations before structural
-                    # parents inspect child contexts or run post-hooks.
-                    run.state.complete(completion.node_id, completion.outcome)
-
-                    result = self.result_if_complete(run)
-                    if result is not None:
-                        yield result
-                elif not all(run.yielded for run in runs):
-                    # collect_ready_tasks() drained all host-side progress. With
-                    # no backend work left, an unfinished run is malformed or
-                    # cyclic rather than merely waiting for another queue pass.
+            while remaining_runs:
+                if not tasks_in_flight:
+                    # Every changed run has already had its ready queue drained.
+                    # With no backend work left, an unfinished graph is malformed
+                    # or cyclic rather than waiting for another batch-wide scan.
                     msg = "Graph evaluation stalled without runnable nodes."
                     raise GraphScheduleError(msg)
+
+                completions = self.wait_for_completions(batch_state)
+                if not completions:
+                    msg = "Backend returned no task completions."
+                    raise GraphScheduleError(msg)
+                if len(completions) > tasks_in_flight:
+                    msg = "Backend returned more completions than tasks in flight."
+                    raise GraphScheduleError(msg)
+
+                # A backend may amortize wake-up overhead by returning several
+                # ready completions. Process them in backend order, but advance
+                # each affected run immediately so batching does not postpone
+                # downstream submission or result emission. No unrelated run is
+                # inspected here.
+                for completion in completions:
+                    tasks_in_flight -= 1
+                    run = self.apply_completion(completion, runs)
+
+                    tasks = self.advance_run(run)
+                    if tasks:
+                        self.submit_tasks(tasks, batch_state)
+                        tasks_in_flight += len(tasks)
+
+                    result = self.result_if_complete(run)
+                    if result is not None:
+                        remaining_runs -= 1
+                        yield result
         except BaseException as exception:
             try:
                 self.abort_batch(batch_state)
@@ -1056,7 +1195,9 @@ class SerialGraphSchedule(GraphScheduleBase):
 
         """
         if not hasattr(batch_state, "tasks"):
-            batch_state.tasks = []
+            # popleft() is O(1); the former list.pop(0) shifted every remaining
+            # task and made wide serial batches unnecessarily quadratic.
+            batch_state.tasks = deque()
 
         batch_state.tasks.extend(tasks)
 
@@ -1080,7 +1221,7 @@ class SerialGraphSchedule(GraphScheduleBase):
 
         """
 
-        task = batch_state.tasks.pop(0)
+        task = batch_state.tasks.popleft()
         ctx = task.ctx
         node = self.graph.nodes[task.node_id]
 
