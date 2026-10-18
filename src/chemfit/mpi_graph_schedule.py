@@ -55,17 +55,17 @@ _COMMAND_TAG = 41001
 _RESULT_TAG = 41002
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _EvaluateRequest:
     task: NodeTask
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _Shutdown:
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _WorkerFailure:
     rank: int
     exception_type: str
@@ -125,11 +125,13 @@ class MPIGraphSchedule(GraphScheduleBase):
             msg = "Prepared MPI graph schedule is closed"
             raise RuntimeError(msg)
 
-    @staticmethod
-    def _ensure_batch_state(batch_state: BatchState) -> None:
+    def _ensure_batch_state(self, batch_state: BatchState) -> None:
         if not hasattr(batch_state, "pending_tasks"):
             batch_state.pending_tasks = deque()
             batch_state.in_flight = {}
+            # Rank availability changes only on dispatch and completion, so an
+            # explicit queue avoids scanning every rank on every refill.
+            batch_state.idle_workers = deque(range(1, self.size))
 
     def _evaluate_worker_task(
         self, task: NodeTask, *, capture_context_state: bool
@@ -156,13 +158,10 @@ class MPIGraphSchedule(GraphScheduleBase):
         """Assign at most one outstanding task to each idle worker."""
         queue: deque[NodeTask] = batch_state.pending_tasks
         in_flight: dict[int, NodeTask] = batch_state.in_flight
+        idle_workers: deque[int] = batch_state.idle_workers
 
-        for rank in range(1, self.size):
-            if not queue:
-                break
-            if rank in in_flight:
-                continue
-
+        while queue and idle_workers:
+            rank = idle_workers.popleft()
             task = queue.popleft()
             self.comm.send(_EvaluateRequest(task), dest=rank, tag=_COMMAND_TAG)
             in_flight[rank] = task
@@ -180,23 +179,9 @@ class MPIGraphSchedule(GraphScheduleBase):
         if self.size > 1:
             self._dispatch_available(batch_state)
 
-    def next_completion(self, batch_state: BatchState) -> NodeCompletion:
-        """Return one task completion, dispatching queued work as ranks free up."""
-        self._ensure_coordinator()
-        self._ensure_batch_state(batch_state)
-
-        if self.size == 1:
-            if not batch_state.pending_tasks:
-                msg = "No queued MPI tasks to complete"
-                raise MPIWorkerError(msg)
-            task = batch_state.pending_tasks.popleft()
-            return self._evaluate_worker_task(task, capture_context_state=False)
-
+    def _receive_worker_completion(self, batch_state: BatchState) -> NodeCompletion:
+        """Receive and validate one worker result, then reuse or idle its rank."""
         in_flight: dict[int, NodeTask] = batch_state.in_flight
-        if not in_flight:
-            msg = "No MPI tasks are in flight"
-            raise MPIWorkerError(msg)
-
         status = MPI.Status()
         message = self.comm.recv(
             source=MPI.ANY_SOURCE,
@@ -229,8 +214,62 @@ class MPIGraphSchedule(GraphScheduleBase):
             )
             raise MPIWorkerError(msg)
 
-        self._dispatch_available(batch_state)
+        queue: deque[NodeTask] = batch_state.pending_tasks
+        if queue:
+            # Refill the rank that just replied directly. Returning it to and
+            # immediately removing it from idle_workers would add bookkeeping
+            # without exposing any scheduling choice.
+            task = queue.popleft()
+            self.comm.send(_EvaluateRequest(task), dest=source, tag=_COMMAND_TAG)
+            in_flight[source] = task
+        else:
+            batch_state.idle_workers.append(source)
+
         return message
+
+    def wait_for_completions(
+        self,
+        batch_state: BatchState,
+    ) -> Sequence[NodeCompletion]:
+        """Block for one MPI result and drain other results already available."""
+        self._ensure_coordinator()
+        self._ensure_batch_state(batch_state)
+
+        if self.size == 1:
+            if not batch_state.pending_tasks:
+                msg = "No queued MPI tasks to complete"
+                raise MPIWorkerError(msg)
+            task = batch_state.pending_tasks.popleft()
+            return (self._evaluate_worker_task(task, capture_context_state=False),)
+
+        in_flight: dict[int, NodeTask] = batch_state.in_flight
+        if not in_flight:
+            msg = "No MPI tasks are in flight"
+            raise MPIWorkerError(msg)
+
+        # Bound draining by the number in flight at entry. Very short newly
+        # dispatched work must not keep the coordinator in an unbounded receive
+        # loop and delay graph dependency release.
+        drain_limit = len(in_flight)
+        completions = [self._receive_worker_completion(batch_state)]
+        while len(completions) < drain_limit and self.comm.Iprobe(
+            source=MPI.ANY_SOURCE,
+            tag=_RESULT_TAG,
+        ):
+            completions.append(self._receive_worker_completion(batch_state))
+
+        return completions
+
+    def next_completion(self, batch_state: BatchState) -> NodeCompletion:
+        """Return one task completion through the compatibility API."""
+        if not hasattr(batch_state, "completion_buffer"):
+            batch_state.completion_buffer = deque()
+
+        if not batch_state.completion_buffer:
+            completions = self.wait_for_completions(batch_state)
+            batch_state.completion_buffer.extend(completions)
+
+        return batch_state.completion_buffer.popleft()
 
     def _send_worker_result(self, result: NodeCompletion | _WorkerFailure) -> bool:
         """Send a result while allowing rank 0 to interrupt with shutdown."""

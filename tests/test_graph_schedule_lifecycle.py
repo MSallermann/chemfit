@@ -176,6 +176,32 @@ def test_thread_backend_executes_independent_nodes_concurrently():
         assert schedule(3) == 6
 
 
+def test_thread_batch_results_are_yielded_in_completion_order():
+    release_first = threading.Event()
+
+    @component()
+    def controlled(value):
+        if value == 0:
+            assert release_first.wait(timeout=2)
+        return value
+
+    requests = [EvaluationRequest(value, EvaluateContext()) for value in (0, 1)]
+    with ExecutorGraphScheduler(
+        executor_factory=lambda: ThreadPoolExecutor(max_workers=2)
+    ).prepare(controlled) as schedule:
+        results = schedule.evaluate_many(requests)
+
+        first = next(results)
+        assert (first.index, first.value) == (1, 1)
+
+        release_first.set()
+        second = next(results)
+        assert (second.index, second.value) == (0, 0)
+
+        with pytest.raises(StopIteration):
+            next(results)
+
+
 def test_catastrophic_worker_failure_closes_schedule_but_not_borrowed_executor():
     @component()
     def interrupt(_value):
