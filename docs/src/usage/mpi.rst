@@ -51,6 +51,11 @@ shutdown request to every worker. Worker contexts return inputs, outputs,
 child state, and metadata to rank zero; ``ctx.temp`` and ``ctx.shared`` are not
 part of the returned result state.
 
+Closing is synchronous: rank zero waits for every worker to finish any
+in-transit result send and acknowledge shutdown. A running atomic task is not
+interrupted, so leaving the context can wait for a slow leaf task to reach this
+safe point. This avoids discarding result messages during teardown.
+
 Fitting on rank zero
 --------------------
 
@@ -145,6 +150,10 @@ A failure in worker or MPI machinery is catastrophic. Rank zero raises
 :class:`~chemfit.mpi_graph_schedule.MPIWorkerError`, closes the prepared schedule,
 and requests worker shutdown. A catastrophically failed schedule cannot be
 reused.
+
+An interrupt raised on rank zero is re-raised after this cleanup. A worker-side
+interrupt is reported to rank zero through the same failure path as other fatal
+worker exceptions; the worker stays alive long enough to acknowledge shutdown.
 
 Common pitfalls
 ---------------
