@@ -1,5 +1,6 @@
 """Evaluation context semantics, independent of scheduling."""
 
+import copy
 import pickle
 from types import SimpleNamespace
 
@@ -58,6 +59,31 @@ def test_recursive_summary_contains_one_child_hierarchy():
     assert recursive["children"][0]["output"] == 2
     assert recursive["children"][0]["children"][0]["output"] == 3
     assert recursive["children"][0]["children"][0]["children"] == []
+
+
+def test_deepcopy_preserves_the_complete_evaluation_tree():
+    root = EvaluateContext()
+    root.input = {"x": [1]}
+    root.output = 5
+    root.meta["root"] = {"complete": True}
+    child = root.spawn_ctx()
+    child.meta["child"] = {"complete": True}
+    root.children.append(child)
+
+    copied = copy.deepcopy(root)
+    copied.input["x"].append(2)
+    copied.meta["root"]["complete"] = False
+    copied.children[0].meta["child"]["complete"] = False
+
+    assert copied is not root
+    assert copied.input == {"x": [1, 2]}
+    assert copied.output == 5
+    assert copied.meta == {"root": {"complete": False}}
+    assert copied.children[0].meta == {"child": {"complete": False}}
+    assert copied.children[0] is not child
+    assert root.input == {"x": [1]}
+    assert root.meta == {"root": {"complete": True}}
+    assert child.meta == {"child": {"complete": True}}
 
 
 def test_worker_input_pickle_does_not_transfer_children():

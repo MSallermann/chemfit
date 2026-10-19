@@ -49,15 +49,21 @@ def log_progress(step: int, ctxs: list[FitContext]):
     best_params: dict | None = {}
     best_loss: float | None = None
     for ictx, ctx in enumerate(ctxs):
+        opt_context = ctx.opt_context
         logger.info(f"  Context {ictx}")
-        logger.info(f"    Opt loss   = {ctx.opt_loss}")
-        logger.info(f"    Opt params = {ctx.opt_params}")
+        logger.info(f"    Opt loss   = {opt_context.loss if opt_context else None}")
+        logger.info(
+            f"    Opt params = {opt_context.parameters if opt_context else None}"
+        )
         logger.info(f"    Cur loss   = {ctx.loss}")
         logger.info(f"    Cur params = {ctx.parameters}")
 
-        if best_loss is None or (ctx.opt_loss is not None and best_loss > ctx.opt_loss):
-            best_loss = ctx.opt_loss
-            best_params = ctx.opt_params
+        if opt_context is not None and (
+            best_loss is None
+            or (opt_context.loss is not None and best_loss > opt_context.loss)
+        ):
+            best_loss = opt_context.loss
+            best_params = opt_context.parameters
 
     logger.info(f"  Opt loss (all contexts)   = {best_loss}")
     logger.info(f"  Opt params (all contexts) = {best_params}")
@@ -186,16 +192,25 @@ class CheckpointBestParameters:
 
     def __call__(self, step: int, ctxs: list[FitContext]):
         for ctx in ctxs:
-            if ctx.opt_loss is None:
+            opt_context = ctx.opt_context
+            if opt_context is None or opt_context.loss is None:
                 continue
 
-            if self.best_loss is None or ctx.opt_loss < self.best_loss:
+            if self.best_loss is None or opt_context.loss < self.best_loss:
                 data = {
                     "step": step,
-                    "loss": ctx.opt_loss,
-                    "parameters": ctx.opt_params,
-                    "meta": ctx.opt_meta,
-                    "quantities": ctx.opt_quantities,
+                    "loss": opt_context.loss,
+                    "parameters": opt_context.parameters,
+                    "meta": opt_context.meta,
+                    "quantities": (
+                        opt_context.output
+                        if isinstance(opt_context.output, dict)
+                        else None
+                    ),
+                    "children": [
+                        child.to_summary(recursive=True)
+                        for child in opt_context.children
+                    ],
                 }
 
                 write_out_path = self.path
@@ -221,5 +236,7 @@ class CheckpointBestParameters:
 
                 # Update in-memory state only after the durable checkpoint is
                 # published, so a failed write can be retried on the next call.
-                self.best_loss = ctx.opt_loss
-                logger.info(f"New best loss {ctx.opt_loss} written to {write_out_path}")
+                self.best_loss = opt_context.loss
+                logger.info(
+                    f"New best loss {opt_context.loss} written to {write_out_path}"
+                )

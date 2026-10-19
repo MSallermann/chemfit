@@ -41,17 +41,14 @@ class FitContext(EvaluateContext):
         Initialize fitter-specific evaluation state.
 
         This context extends ``EvaluateContext`` with optimization-specific
-        tracking fields that record the number of evaluations performed and
-        the best loss, parameters, and metadata observed so far during a fit.
+        tracking fields that record the number of evaluations performed and a
+        snapshot of the best evaluation observed so far during a fit.
         """
 
         super().__init__()
         self.loss: float | None = None
         self.n_evals: int = 0
-        self.opt_loss: float | None = None
-        self.opt_params: dict[str, Any] | None = None
-        self.opt_meta: dict[str, Any] | None = None
-        self.opt_quantities: dict[str, Any] | None = None
+        self.opt_context: FitContext | None = None
 
     @property
     def parameters(self) -> Any:
@@ -62,20 +59,19 @@ class FitContext(EvaluateContext):
         state = super().__getstate__()
         state["loss"] = self.loss
         state["n_evals"] = self.n_evals
-        state["opt_loss"] = self.opt_loss
-        state["opt_params"] = self.opt_params
-        state["opt_meta"] = self.opt_meta
-        state["opt_quantities"] = self.opt_quantities
+        state["opt_context"] = (
+            self.opt_context.to_result_state() if self.opt_context is not None else None
+        )
         return state
 
     def __setstate__(self, state: dict[str, Any]):
         super().__setstate__(state)
         self.loss = state["loss"]
         self.n_evals = state["n_evals"]
-        self.opt_loss = state["opt_loss"]
-        self.opt_params = state["opt_params"]
-        self.opt_meta = state["opt_meta"]
-        self.opt_quantities = state["opt_quantities"]
+        self.opt_context = None
+        if (opt_context_state := state["opt_context"]) is not None:
+            self.opt_context = FitContext()
+            self.opt_context.apply_result_state(opt_context_state)
 
     def to_result_state(self) -> dict[str, Any]:
         state = super().to_result_state()
@@ -83,10 +79,11 @@ class FitContext(EvaluateContext):
             {
                 "n_evals": self.n_evals,
                 "loss": self.loss,
-                "opt_loss": self.opt_loss,
-                "opt_params": self.opt_params,
-                "opt_meta": self.opt_meta,
-                "opt_quantities": self.opt_quantities,
+                "opt_context": (
+                    self.opt_context.to_result_state()
+                    if self.opt_context is not None
+                    else None
+                ),
             }
         )
         return state
@@ -95,10 +92,10 @@ class FitContext(EvaluateContext):
         super().apply_result_state(state)
         self.loss = state["loss"]
         self.n_evals = state["n_evals"]
-        self.opt_loss = state["opt_loss"]
-        self.opt_params = state["opt_params"]
-        self.opt_meta = state["opt_meta"]
-        self.opt_quantities = state["opt_quantities"]
+        self.opt_context = None
+        if (opt_context_state := state["opt_context"]) is not None:
+            self.opt_context = FitContext()
+            self.opt_context.apply_result_state(opt_context_state)
 
 
 CallbackT = Callable[[int, list[FitContext]], None]
@@ -190,6 +187,9 @@ class Fitter(Generic[ParametersT]):
             msg = "initial_params must be a mapping"
             raise TypeError(msg)
 
+        # Optimizers read this public starting point when each fit begins.
+        # Keeping it mutable lets callers warm-start a later optimization stage
+        # from the recommendation of an earlier one without rebuilding Fitter.
         self.initial_parameters = cast(
             "ParametersT", copy.deepcopy(dict(initial_params))
         )
@@ -256,16 +256,28 @@ class Fitter(Generic[ParametersT]):
         ctx.loss = loss
         ctx.n_evals += 1
 
-        if ctx.opt_loss is None or loss < ctx.opt_loss:
-            ctx.opt_loss = loss
-            # Some supported leaves (for example NumPy arrays) are mutable.
-            # Keep the incumbent as a true snapshot of the evaluated values.
-
-            ctx.opt_params = copy.deepcopy(dict(parameters))
-            ctx.opt_meta = copy.deepcopy(ctx.meta)
-            ctx.opt_quantities = (
-                copy.deepcopy(ctx.output) if isinstance(ctx.output, dict) else None
-            )
+        if (
+            ctx.opt_context is None
+            or ctx.opt_context.loss is None
+            or loss < ctx.opt_context.loss
+        ):
+            # Candidate slots are reused.  A full context copy preserves the
+            # incumbent's inputs, outputs, metadata, and nested child tree
+            # before the next candidate overwrites this live context.
+            # Temporarily detach the prior snapshot so copies do not retain a
+            # growing history of earlier incumbents.
+            prior_opt_context = ctx.opt_context
+            ctx.opt_context = None
+            try:
+                opt_context = copy.deepcopy(ctx)
+                # Initial observations do not pass through the objective, so
+                # their live context has no input.  The snapshot always keeps
+                # the parameter mapping associated with its recorded loss.
+                opt_context.input = copy.deepcopy(dict(parameters))
+                ctx.opt_context = opt_context
+            except BaseException:
+                ctx.opt_context = prior_opt_context
+                raise
 
         return loss
 
@@ -531,13 +543,16 @@ class Fitter(Generic[ParametersT]):
         """
 
         if opt_params is None:
-            evaluated = [ctx for ctx in self.contexts if ctx.opt_loss is not None]
+            evaluated = [
+                ctx.opt_context
+                for ctx in self.contexts
+                if ctx.opt_context is not None and ctx.opt_context.loss is not None
+            ]
             if not evaluated:
                 msg = "cannot finish before evaluating a candidate"
                 raise RuntimeError(msg)
-            best_context = min(evaluated, key=lambda ctx: cast("float", ctx.opt_loss))
-            assert best_context.opt_params is not None
-            opt_params = cast("ParametersT", copy.deepcopy(best_context.opt_params))
+            best_context = min(evaluated, key=lambda ctx: cast("float", ctx.loss))
+            opt_params = cast("ParametersT", copy.deepcopy(best_context.parameters))
 
         try:
             self._hook_post_fit(opt_params)

@@ -103,6 +103,25 @@ controls are needed:
     opt_params = fitter.fit_nevergrad(budget=100)
 
 ----------------------------------
+Staged optimization
+----------------------------------
+
+Reuse a ``Fitter`` to combine optimizers. Each call to ``fit_scipy`` or
+``fit_nevergrad`` starts a fresh optimization session from the current
+``initial_parameters``. Assigning a previous recommendation therefore provides
+a simple warm start for the next stage:
+
+.. code-block:: python
+
+    global_params = fitter.fit_nevergrad(budget=100, batch_size=1)
+    fitter.initial_parameters = global_params
+    local_params = fitter.fit_scipy()
+
+The parameter mapping must retain the structure expected by the fitter's
+bounds and objective. Optimizer-specific internal state and fitter contexts
+are not carried between stages; only the updated starting parameters are.
+
+----------------------------------
 Objective interface
 ----------------------------------
 
@@ -254,10 +273,8 @@ During optimization, ChemFit uses
 with optimization-specific fields:
 
 - ``n_evals``: number of evaluations
-- ``opt_loss``: best loss seen so far
-- ``opt_params``: best parameters seen so far
-- ``opt_meta``: metadata associated with the best evaluation
-- ``opt_quantities``: quantities associated with the best evaluation
+- ``opt_context``: a deep-copied snapshot of the complete best evaluation,
+  including its inputs, outputs, metadata, and recursive child contexts.
 
 For SciPy, a single context is used for the entire optimization.
 For Nevergrad, one context is used per candidate slot.
@@ -285,8 +302,8 @@ on its requested interval.
 .. code-block:: python
 
     def print_progress(step, contexts):
-        best = contexts[0].opt_loss
-        print(step, best)
+        best = contexts[0].opt_context
+        print(step, best.loss if best is not None else None)
 
     fitter.register_callback(print_progress, n_steps=5)
 
@@ -352,6 +369,12 @@ stores only the best solution and is primarily intended for fault
 tolerance. Metadata and checkpoint JSON files are written through temporary
 files and published atomically, so an interrupted write does not replace the
 previous complete file with partial JSON.
+
+Best-parameter checkpoints preserve the evaluation hierarchy of their
+incumbent. Alongside the root ``meta`` and ``quantities`` fields, their
+``children`` field contains recursive child summaries from the incumbent's
+``opt_context`` snapshot. This keeps metadata emitted by nested objective
+components associated with the saved best parameters.
 
 ----------------------------------
 SciPy backend

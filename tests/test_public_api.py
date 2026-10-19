@@ -86,8 +86,8 @@ def test_fit_nevergrad_records_best_evaluation_and_closes_internal_schedule():
         scheduler=scheduler,
     )
 
-    assert result.best_loss == result.best_context.opt_loss
-    assert result.best_parameters == result.best_context.opt_params
+    assert result.best_loss == result.best_context.loss
+    assert result.best_parameters == result.best_context.parameters
     assert scheduler.schedule is not None
     assert scheduler.schedule.closed
 

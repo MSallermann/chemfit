@@ -560,7 +560,7 @@ class FitResult(Generic[ParamsT]):
             print(result.recommendation)
             print(result.best_parameters)
             print(result.best_loss)
-            print(result.best_context.opt_meta)
+            print(result.best_context.meta)
 
     """
 
@@ -573,15 +573,18 @@ class FitResult(Generic[ParamsT]):
         Return the context containing the best successful evaluation.
 
         Returns:
-            The candidate-slot context with the smallest non-``None``
-            ``opt_loss``.
+            The frozen evaluation context with the lowest recorded loss.
 
         Raises:
             RuntimeError: If no successful optimizer-visible evaluation was
                 recorded.
 
         """
-        evaluated = [ctx for ctx in self.contexts if ctx.opt_loss is not None]
+        evaluated = [
+            ctx.opt_context
+            for ctx in self.contexts
+            if ctx.opt_context is not None and ctx.opt_context.loss is not None
+        ]
 
         if not evaluated:
             msg = "No successful evaluations were recorded."
@@ -589,7 +592,7 @@ class FitResult(Generic[ParamsT]):
 
         return min(
             evaluated,
-            key=lambda ctx: cast("float", ctx.opt_loss),
+            key=lambda ctx: cast("float", ctx.loss),
         )
 
     @property
@@ -598,13 +601,13 @@ class FitResult(Generic[ParamsT]):
         Return the lowest successful optimizer-visible loss.
 
         Returns:
-            The ``opt_loss`` stored by :attr:`best_context`.
+            The loss stored by :attr:`best_context`.
 
         Raises:
             RuntimeError: If no successful evaluation was recorded.
 
         """
-        loss = self.best_context.opt_loss
+        loss = self.best_context.loss
         assert loss is not None
         return loss
 
@@ -617,14 +620,13 @@ class FitResult(Generic[ParamsT]):
         Nevergrad's final :attr:`recommendation`.
 
         Returns:
-            The ``opt_params`` snapshot stored by :attr:`best_context`.
+            The parameter mapping stored by :attr:`best_context`.
 
         Raises:
             RuntimeError: If no successful evaluation was recorded.
 
         """
-        parameters = self.best_context.opt_params
-        assert parameters is not None
+        parameters = self.best_context.parameters
         return cast("ParamsT", parameters)
 
 

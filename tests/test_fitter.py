@@ -28,6 +28,26 @@ def test_scipy_converges_with_nested_parameters_and_bounds():
     assert result["outer"]["x"] == pytest.approx(2.0, abs=1e-5)
 
 
+def test_optimizer_stages_can_update_initial_parameters():
+    """A later optimizer starts from the preceding recommendation."""
+
+    evaluated: list[float] = []
+
+    def objective(parameters):
+        x = parameters["x"]
+        evaluated.append(x)
+        return (x - 2.0) ** 2
+
+    fitter = Fitter(objective, initial_params={"x": 0.0})
+    global_params = fitter.fit_nevergrad(budget=1, optimizer_str="OnePlusOne")
+
+    fitter.initial_parameters = global_params
+    evaluated.clear()
+    fitter.fit_scipy(options={"maxiter": 0})
+
+    assert evaluated[0] == pytest.approx(global_params["x"])
+
+
 def test_user_session_supports_batches_and_reuses_contexts_cleanly():
     @component()
     def double(parameters):
@@ -48,6 +68,39 @@ def test_user_session_supports_batches_and_reuses_contexts_cleanly():
     assert len(fitter.contexts[0].children) == 2
     assert fitter.contexts[0].n_evals == 2
     assert fitter.finish() == {"x": 1.0}
+
+
+def test_best_evaluation_preserves_nested_child_contexts():
+    @component(pass_ctx=True)
+    def read_parameter(parameters, *, ctx):
+        ctx.meta["candidate"] = parameters["x"]
+        return parameters["x"]
+
+    @component(pass_ctx=True)
+    def preserve_intermediate(value, *, ctx):
+        ctx.meta["intermediate"] = value
+        return value
+
+    @component(pass_ctx=True)
+    def loss(value, *, ctx):
+        ctx.meta["loss_input"] = value
+        return value**2
+
+    objective = PipelineComponent(
+        PipelineComponent(read_parameter, preserve_intermediate), loss
+    )
+    fitter = Fitter(objective, initial_params={"x": 1.0})
+    fitter.init()
+
+    assert fitter.evaluate({"x": 1.0}) == 1.0
+    assert fitter.evaluate({"x": 2.0}) == 4.0
+
+    opt_context = fitter.contexts[0].opt_context
+    assert opt_context is not None
+    best_children = opt_context.children
+    assert best_children[0].children[0].meta == {"candidate": 1.0}
+    assert best_children[0].children[1].meta == {"intermediate": 1.0}
+    assert best_children[1].meta == {"loss_input": 1.0}
 
 
 def test_internal_schedule_is_reprepared_and_closed_per_session():

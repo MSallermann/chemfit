@@ -110,6 +110,22 @@ class EvaluateContext:
         """Create a child-compatible context with copied configuration."""
         return EvaluateContext(config=copy.deepcopy(self.config), shared=self.shared)
 
+    def __deepcopy__(self, memo: dict[int, Any]) -> EvaluateContext:
+        """
+        Copy the complete context state, including its evaluation tree.
+
+        Worker transport intentionally uses :meth:`__getstate__`, which omits
+        outputs and children. A normal deep copy has different semantics: it
+        is an in-process snapshot, so it must retain every context attribute
+        and recursively copy the child hierarchy.
+        """
+
+        duplicate = type(self).__new__(type(self))
+        memo[id(self)] = duplicate
+        for name, value in vars(self).items():
+            setattr(duplicate, name, copy.deepcopy(value, memo))
+        return duplicate
+
     def __getstate__(self) -> dict[str, Any]:
         """
         Return the worker-input state for this context.

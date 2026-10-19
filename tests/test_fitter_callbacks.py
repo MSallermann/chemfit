@@ -1,3 +1,4 @@
+import copy
 import json
 import logging
 from pathlib import Path
@@ -12,8 +13,9 @@ from chemfit.fitter_callbacks import CheckpointBestParameters, SaveMetaData
 
 def make_context(loss: float, x: float) -> FitContext:
     ctx = FitContext()
-    ctx.opt_loss = loss
-    ctx.opt_params = {"x": x}
+    ctx.loss = loss
+    ctx.input = {"x": x}
+    ctx.opt_context = copy.deepcopy(ctx)
     return ctx
 
 
@@ -27,6 +29,30 @@ def test_save_metadata_includes_nested_summaries(tmp_path: Path):
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
     assert saved["children"][0]["meta"] == {"marker": "child"}
+
+
+def test_checkpoint_includes_nested_metadata_from_the_best_evaluation(
+    tmp_path: Path,
+):
+    ctx = make_context(loss=1.0, x=1.0)
+    child = ctx.spawn_ctx()
+    grandchild = child.spawn_ctx()
+    child.meta["stage"] = "quantity"
+    grandchild.meta["source"] = "simulation"
+    child.children.append(grandchild)
+    ctx.children = [child]
+    ctx.opt_context = copy.deepcopy(ctx)
+    ctx.loss = 99.0
+    ctx.input = {"x": 99.0}
+
+    path = tmp_path / "best.json"
+    CheckpointBestParameters(path)(0, [ctx])
+
+    saved = json.loads(path.read_text())
+    assert saved["loss"] == 1.0
+    assert saved["parameters"] == {"x": 1.0}
+    assert saved["children"][0]["meta"] == {"stage": "quantity"}
+    assert saved["children"][0]["children"][0]["meta"] == {"source": "simulation"}
 
 
 def test_save_metadata_serializes_numpy_scalars_and_skipped_outputs(tmp_path: Path):
@@ -96,7 +122,8 @@ def test_checkpoint_failure_preserves_previous_file_and_best_loss(tmp_path: Path
     callback(0, [make_context(loss=2.0, x=2.0)])
 
     unserializable = make_context(loss=1.0, x=1.0)
-    unserializable.opt_params = {"value": object()}
+    assert unserializable.opt_context is not None
+    unserializable.opt_context.input = {"value": object()}
     with pytest.raises(TypeError, match="JSON serializable"):
         callback(1, [unserializable])
 
