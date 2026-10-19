@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 _COMMAND_TAG = 41001
 _RESULT_TAG = 41002
+_CONTROL_TAG = 41003
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,11 @@ class _EvaluateRequest:
 @dataclass(frozen=True, slots=True)
 class _Shutdown:
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class _ShutdownAcknowledgement:
+    """Confirm that a worker has stopped receiving and evaluating tasks."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,28 +277,80 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         return batch_state.completion_buffer.popleft()
 
-    def _send_worker_result(self, result: NodeCompletion | _WorkerFailure) -> bool:
-        """Send a result while allowing rank 0 to interrupt with shutdown."""
+    def _send_worker_result(
+        self,
+        result: NodeCompletion | _WorkerFailure,
+        prefetched: deque[_EvaluateRequest] | None = None,
+    ) -> bool:
+        """
+        Send a result, returning false when shutdown was received.
+
+        MPI result sends must always finish. Cancelling a send that may already
+        be matched by rank 0 is fragile across MPI transports, and Open MPI's
+        OFI transport can crash in that path. During shutdown rank 0 continues
+        receiving result messages until every worker acknowledges the request.
+        """
         request = self.comm.isend(result, dest=0, tag=_RESULT_TAG)
+        shutdown_received = False
+        protocol_error: MPIWorkerError | None = None
         while not request.Test():
-            if not self.comm.Iprobe(source=0, tag=_COMMAND_TAG):
-                continue
+            if self.comm.Iprobe(source=0, tag=_CONTROL_TAG):
+                command = self.comm.recv(source=0, tag=_CONTROL_TAG)
+                if not isinstance(command, _Shutdown):
+                    msg = f"Worker {self.rank} received unknown control: {command!r}"
+                    protocol_error = MPIWorkerError(msg)
+                else:
+                    shutdown_received = True
 
-            command = self.comm.recv(source=0, tag=_COMMAND_TAG)
-            if not isinstance(command, _Shutdown):
-                request.Cancel()
-                request.Wait()
-                msg = (
-                    f"Worker {self.rank} received unexpected command while "
-                    f"sending a result: {command!r}"
-                )
-                raise MPIWorkerError(msg)
+            if (
+                not shutdown_received
+                and protocol_error is None
+                and prefetched is not None
+                and not prefetched
+                and self.comm.Iprobe(source=0, tag=_COMMAND_TAG)
+            ):
+                # Receiving while the result is still in flight prevents a
+                # blocking coordinator send from extending the inter-task gap.
+                # Queue depth two means there can be only one local prefetch.
+                command = self.comm.recv(source=0, tag=_COMMAND_TAG)
+                if not isinstance(command, _EvaluateRequest):
+                    msg = (
+                        f"Worker {self.rank} received unexpected task command: "
+                        f"{command!r}"
+                    )
+                    protocol_error = MPIWorkerError(msg)
+                else:
+                    prefetched.append(command)
 
-            request.Cancel()
-            request.Wait()
-            return False
+        if protocol_error is not None:
+            raise protocol_error
+        return not shutdown_received
 
-        return True
+    def _acknowledge_shutdown(self) -> None:
+        """Tell rank 0 it may finish closing after all result sends complete."""
+        self.comm.send(_ShutdownAcknowledgement(), dest=0, tag=_CONTROL_TAG)
+
+    def _report_worker_failure(self, exception: BaseException) -> bool:
+        """
+        Report a fatal worker failure and keep serving shutdown control.
+
+        This is intentionally used for every ``BaseException`` that escapes
+        worker protocol progress, not only exceptions raised by user tasks.
+        In particular, a signal delivered while a worker waits for a command
+        must not make it disappear before rank 0 can complete shutdown.
+        """
+        return self._send_worker_result(
+            _describe_worker_failure(self.rank, exception),
+        )
+
+    def _next_worker_command(self) -> object:
+        """Receive either an evaluation request or shutdown control."""
+        status = MPI.Status()
+        command = self.comm.recv(source=0, tag=MPI.ANY_TAG, status=status)
+        if status.Get_tag() not in {_COMMAND_TAG, _CONTROL_TAG}:
+            msg = f"Worker {self.rank} received message with unknown tag"
+            raise MPIWorkerError(msg)
+        return command
 
     def worker_loop(self) -> None:
         """Process tasks on a nonzero MPI rank until shutdown."""
@@ -302,50 +360,77 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         failed = False
         while True:
-            command = self.comm.recv(source=0, tag=_COMMAND_TAG)
+            try:
+                command = self._next_worker_command()
+            except BaseException as exception:
+                if not self._report_worker_failure(exception):
+                    self._acknowledge_shutdown()
+                    return
+                failed = True
+                continue
+
             if isinstance(command, _Shutdown):
+                self._acknowledge_shutdown()
                 return
             if failed:
                 # A fatal worker error poisons the prepared schedule.
                 # Keep receiving so the coordinator can still shut us down.
                 continue
 
-            if not isinstance(command, _EvaluateRequest):
-                exception = MPIWorkerError(
-                    f"Worker {self.rank} received unknown command: {command!r}"
-                )
-                if not self._send_worker_result(
-                    _describe_worker_failure(self.rank, exception)
-                ):
-                    return
-                failed = True
-                continue
-
             try:
+                if not isinstance(command, _EvaluateRequest):
+                    msg = f"Worker {self.rank} received unknown command: {command!r}"
+                    raise MPIWorkerError(msg)
                 result = self._evaluate_worker_task(
                     command.task,
                     capture_context_state=True,
                 )
                 sent = self._send_worker_result(result)
             except BaseException as exception:
-                failure = _describe_worker_failure(self.rank, exception)
-                if not self._send_worker_result(failure):
+                if not self._report_worker_failure(exception):
+                    self._acknowledge_shutdown()
                     return
                 failed = True
                 continue
 
             if not sent:
+                self._acknowledge_shutdown()
                 return
 
     def release_workers(self) -> None:
-        """Request shutdown from every persistent worker rank."""
+        """Request shutdown and wait until every worker has stopped safely."""
         if self.rank != 0 or self.size <= 1 or self._workers_released:
             return
 
         requests = [
-            self.comm.isend(_Shutdown(), dest=rank, tag=_COMMAND_TAG)
+            self.comm.isend(_Shutdown(), dest=rank, tag=_CONTROL_TAG)
             for rank in range(1, self.size)
         ]
+
+        # A worker may see shutdown while its previous result send is still
+        # active. Keep draining results until it confirms shutdown so that send
+        # can complete without MPI_Cancel. The acknowledgment also means close
+        # does not return while a worker can still evaluate a prefetched task.
+        waiting_for_ack = set(range(1, self.size))
+        while waiting_for_ack:
+            status = MPI.Status()
+            message = self.comm.recv(
+                source=MPI.ANY_SOURCE,
+                tag=MPI.ANY_TAG,
+                status=status,
+            )
+            source = status.Get_source()
+            tag = status.Get_tag()
+            if tag == _RESULT_TAG:
+                continue
+            if tag != _CONTROL_TAG or not isinstance(message, _ShutdownAcknowledgement):
+                msg = f"Unexpected MPI message while shutting down: {message!r}"
+                raise MPIWorkerError(msg)
+            if source not in waiting_for_ack:
+                msg = f"Unexpected shutdown acknowledgement from worker {source}"
+                raise MPIWorkerError(msg)
+            waiting_for_ack.remove(source)
+
         if requests:
             MPI.Request.Waitall(requests)
         self._workers_released = True

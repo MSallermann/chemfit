@@ -39,28 +39,18 @@ class CatastrophicLeaf(Component[Parameters, float]):
 
 
 class PendingRequest:
-    """Record cancellation of a send that never completes."""
+    """Complete a simulated result send after shutdown has been observed."""
 
     def __init__(self) -> None:
-        """Initialize an incomplete request."""
+        """Initialize a result request that needs one progress iteration."""
 
-        self.cancelled = False
-        self.waited = False
+        self.test_count = 0
 
     def Test(self) -> bool:  # noqa: N802
-        """Report that the simulated large send is still pending."""
+        """Report completion after the worker has handled one message."""
 
-        return False
-
-    def Cancel(self) -> None:  # noqa: N802
-        """Record best-effort cancellation."""
-
-        self.cancelled = True
-
-    def Wait(self) -> None:  # noqa: N802
-        """Record completion of the local cancellation."""
-
-        self.waited = True
+        self.test_count += 1
+        return self.test_count > 1
 
 
 class ShutdownComm:
@@ -70,6 +60,8 @@ class ShutdownComm:
         """Initialize the fake communicator and pending request."""
 
         self.request = PendingRequest()
+        self.shutdown_received = False
+        self.sent: list[tuple[object, int, int]] = []
 
     def isend(self, result: object, *, dest: int, tag: int) -> PendingRequest:
         """Start a send that remains pending."""
@@ -80,14 +72,20 @@ class ShutdownComm:
     def Iprobe(self, *, source: int, tag: int) -> bool:  # noqa: N802
         """Report a waiting coordinator command."""
 
-        del source, tag
-        return True
+        del source
+        return tag == mpi_schedule._CONTROL_TAG and not self.shutdown_received  # noqa: SLF001
 
     def recv(self, *, source: int, tag: int) -> object:
         """Return the queued shutdown command."""
 
         del source, tag
+        self.shutdown_received = True
         return mpi_schedule._Shutdown()  # noqa: SLF001
+
+    def send(self, message: object, *, dest: int, tag: int) -> None:
+        """Record the worker's shutdown acknowledgement."""
+
+        self.sent.append((message, dest, tag))
 
 
 def test_worker_failure_payload_does_not_pickle_original_exception() -> None:
@@ -105,8 +103,8 @@ def test_worker_failure_payload_does_not_pickle_original_exception() -> None:
     assert failure.message == "worker interrupted"
 
 
-def test_pending_worker_send_is_interrupted_by_shutdown() -> None:
-    """A worker can consume shutdown without completing its result send."""
+def test_shutdown_does_not_cancel_pending_worker_result() -> None:
+    """Regression: shutdown completes an in-transit result without MPI_Cancel."""
 
     schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
     schedule.comm = ShutdownComm()
@@ -118,8 +116,43 @@ def test_pending_worker_send_is_interrupted_by_shutdown() -> None:
     )
 
     assert not schedule._send_worker_result(failure)  # noqa: SLF001
-    assert schedule.comm.request.cancelled
-    assert schedule.comm.request.waited
+    schedule._acknowledge_shutdown()  # noqa: SLF001
+    assert schedule.comm.sent == [
+        (mpi_schedule._ShutdownAcknowledgement(), 0, mpi_schedule._CONTROL_TAG)  # noqa: SLF001
+    ]
+
+
+def test_worker_interrupt_is_reported_before_shutdown_acknowledgement() -> None:
+    """An interrupt while receiving work follows the normal failure protocol."""
+
+    schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
+    schedule.rank = 2
+    commands: list[object] = [KeyboardInterrupt("stop"), mpi_schedule._Shutdown()]  # noqa: SLF001
+    failures: list[object] = []
+    acknowledgements: list[None] = []
+
+    def next_command() -> object:
+        command = commands.pop(0)
+        if isinstance(command, BaseException):
+            raise command
+        return command
+
+    def report_failure(exception: BaseException) -> bool:
+        failures.append(exception)
+        return True
+
+    def acknowledge_shutdown() -> None:
+        acknowledgements.append(None)
+
+    schedule._next_worker_command = next_command  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._report_worker_failure = report_failure  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._acknowledge_shutdown = acknowledge_shutdown  # type: ignore[method-assign]  # noqa: SLF001
+
+    schedule.worker_loop()
+
+    assert len(failures) == 1
+    assert isinstance(failures[0], KeyboardInterrupt)
+    assert acknowledgements == [None]
 
 
 @pytest.mark.skipif(MPI.COMM_WORLD.Get_size() < 2, reason="requires MPI workers")
