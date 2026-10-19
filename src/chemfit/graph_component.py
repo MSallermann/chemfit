@@ -59,6 +59,7 @@ class GraphComponent(StructuralComponent[InputT_contra, OutputT_co]):
         self._component_dependencies = component_dependencies
         self._component_inputs = component_inputs
         self._combine_inputs = combine_inputs
+        self._refresh_structure_metadata_blueprint()
 
     def components(self) -> Sequence[Component[Any, Any]]:
         """Return the graph's child components in topological order."""

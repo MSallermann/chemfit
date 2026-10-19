@@ -488,6 +488,42 @@ SKIPPED = Skipped()
 InputSource: TypeAlias = int | ParentInput_[Any] | Skipped
 
 
+_StructureSourceBlueprint: TypeAlias = tuple[str, int | None]
+
+
+@dataclass(frozen=True, slots=True)
+class _StructureMetadataBlueprint:
+    """Immutable structural metadata retained by a component."""
+
+    children: tuple[tuple[int, str], ...]
+    inputs: tuple[tuple[_StructureSourceBlueprint, ...], ...]
+    dependencies: tuple[tuple[int, ...], ...]
+    outputs: tuple[_StructureSourceBlueprint, ...]
+
+    @staticmethod
+    def _materialize_source(
+        source: _StructureSourceBlueprint,
+    ) -> dict[str, Any]:
+        kind, index = source
+        if index is None:
+            return {"kind": kind}
+        return {"kind": kind, "index": index}
+
+    def materialize(self) -> dict[str, Any]:
+        """Return an independent mutable representation of the structure."""
+        return {
+            "children": [
+                {"index": index, "name": name} for index, name in self.children
+            ],
+            "inputs": [
+                [self._materialize_source(source) for source in sources]
+                for sources in self.inputs
+            ],
+            "dependencies": [list(dependencies) for dependencies in self.dependencies],
+            "outputs": [self._materialize_source(source) for source in self.outputs],
+        }
+
+
 class StructuralComponent(Component[InputT_contra, OutputT_co]):
     """
     Base class for components composed of other components.
@@ -504,40 +540,58 @@ class StructuralComponent(Component[InputT_contra, OutputT_co]):
     concurrently, but must preserve the same evaluation semantics.
     """
 
-    @staticmethod
-    def _describe_source(source: InputSource) -> dict[str, Any]:
-        """Return a description of one declared input source."""
-        if source is PARENT_INPUT:
-            return {"kind": "parent_input"}
-        if isinstance(source, Skipped):
-            return {"kind": "skipped"}
-        return {"kind": "child", "index": source}
+    def __init__(self) -> None:
+        """Initialize a structural component with no cached description."""
+        super().__init__()
+        self._structure_metadata_blueprint: _StructureMetadataBlueprint | None = None
 
-    def _structure_metadata(self) -> dict[str, Any]:
-        """Return a fresh description of this component's immediate structure."""
-        return {
-            "children": [
-                {
-                    "index": index,
-                    "name": getattr(
+    @staticmethod
+    def _blueprint_source(source: InputSource) -> _StructureSourceBlueprint:
+        """Encode one input source without retaining mutable containers."""
+        if source is PARENT_INPUT:
+            return ("parent_input", None)
+        if isinstance(source, Skipped):
+            return ("skipped", None)
+        return ("child", cast("int", source))
+
+    def _make_structure_metadata_blueprint(self) -> _StructureMetadataBlueprint:
+        """Capture this component's immutable structural declaration."""
+        return _StructureMetadataBlueprint(
+            children=tuple(
+                (
+                    index,
+                    getattr(
                         getattr(component, "func", None),
                         "__name__",
                         type(component).__name__,
                     ),
-                }
+                )
                 for index, component in enumerate(self.components())
-            ],
-            "inputs": [
-                [self._describe_source(source) for source in sources]
+            ),
+            inputs=tuple(
+                tuple(self._blueprint_source(source) for source in sources)
                 for sources in self.component_inputs()
-            ],
-            "dependencies": [
-                list(dependencies) for dependencies in self.component_dependencies()
-            ],
-            "outputs": [
-                self._describe_source(source) for source in self.combine_inputs()
-            ],
-        }
+            ),
+            dependencies=tuple(
+                tuple(dependencies) for dependencies in self.component_dependencies()
+            ),
+            outputs=tuple(
+                self._blueprint_source(source) for source in self.combine_inputs()
+            ),
+        )
+
+    def _refresh_structure_metadata_blueprint(self) -> None:
+        """Store the current immutable structural declaration."""
+        self._structure_metadata_blueprint = self._make_structure_metadata_blueprint()
+
+    def _structure_metadata(self) -> dict[str, Any]:
+        """Return a fresh description of this component's immediate structure."""
+        blueprint = self._structure_metadata_blueprint
+        if blueprint is None:
+            # Custom structural components may elect not to retain a blueprint.
+            # Build their metadata locally without mutating shared component state.
+            blueprint = self._make_structure_metadata_blueprint()
+        return blueprint.materialize()
 
     def _attach_context_metadata(self, ctx: EvaluateContext) -> None:
         """Attach this component's immediate structure to an evaluation context."""
@@ -769,6 +823,7 @@ class JoinedComponent(StructuralComponent[InputT_contra, OutputT_co]):
             raise ValueError(msg)
 
         self._components = components
+        self._refresh_structure_metadata_blueprint()
 
     def n_components(self) -> int:
         """Return the number of child components."""
@@ -828,6 +883,7 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
         """Initialize a pipeline containing two components."""
         super().__init__()
         self._components: list[Component[Any, Any]] = [first, second]
+        self._refresh_structure_metadata_blueprint()
 
     def then(
         self,
@@ -836,6 +892,7 @@ class PipelineComponent(StructuralComponent[InputT_contra, OutputT_co]):
         """Return a copy of the pipeline with an additional final component."""
         new = self.copy()
         new._components = [*self._components, next_component]  # noqa: SLF001
+        new._refresh_structure_metadata_blueprint()  # noqa: SLF001
         return cast("PipelineComponent[InputT_contra, NextT]", new)
 
     def components(self) -> Sequence[Component[Any, Any]]:

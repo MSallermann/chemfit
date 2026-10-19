@@ -151,14 +151,33 @@ def test_repeated_batches_replace_context_hierarchy():
     with SerialGraphScheduler().prepare(PipelineComponent(double, add_one)) as schedule:
         assert schedule(input=2, ctx=ctx) == 5
         first_children = tuple(ctx.children)
+        first_structure = ctx.meta["chemfit.structure"]
+        first_structure["children"][0]["name"] = "mutated"
         assert schedule(4, ctx) == 9
 
     assert ctx.output == 9
     assert [child.output for child in ctx.children] == [8, 9]
+    assert ctx.meta["chemfit.structure"] is not first_structure
+    assert ctx.meta["chemfit.structure"]["children"][0]["name"] == "double"
     assert all(
         current is not previous
         for current, previous in zip(ctx.children, first_children, strict=True)
     )
+
+
+def test_extending_pipeline_rebuilds_structure_metadata_blueprint():
+    @component()
+    def double(value):
+        return 2 * value
+
+    pipeline = PipelineComponent(double, double)
+    assert pipeline(2) == 8
+
+    extended = pipeline.then(double)
+    ctx = EvaluateContext()
+
+    assert extended(2, ctx) == 16
+    assert len(ctx.meta["chemfit.structure"]["children"]) == 3
 
 
 def test_thread_backend_executes_independent_nodes_concurrently():
