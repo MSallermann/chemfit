@@ -6,8 +6,8 @@ Running with MPI
 :class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` executes atomic component
 tasks on persistent MPI worker ranks. Rank zero expands input batches into
 tasks, queues them for the nonzero ranks, restores returned context state, and
-performs structural reductions. Each idle rank receives at most one task at a
-time, and receives more work as it finishes. The same scheduler works for
+performs structural reductions. Each idle rank receives one adaptive task batch
+at a time and receives more work as it finishes. The same scheduler works for
 atomic and structural components.
 
 Requirements
@@ -138,6 +138,27 @@ Set ``mpi_debug_log=True`` to wrap communicator methods with verbose logging:
 This is intended for diagnosing protocol problems and can produce substantial
 output.
 
+Task batching
+-------------
+
+MPI workers execute the tasks in each message sequentially and return their
+completions together. Broad ready queues use larger messages to reduce MPI
+message rate, while narrow queues and queue tails automatically shrink toward
+one task per message so dependent work is released promptly.
+
+The default policy limits messages to eight tasks and targets eight queued
+batches per worker. Both settings are configurable:
+
+.. code-block:: python
+
+   scheduler = MPIGraphScheduler(
+       max_tasks_per_message=8,
+       target_batches_per_worker=8,
+   )
+
+Set ``max_tasks_per_message=1`` to disable task batching. Both options must be
+positive integers.
+
 Failure behavior
 ----------------
 
@@ -172,10 +193,11 @@ Hooks missing on workers
    Registration on rank zero does not modify worker-side objective instances.
 
 Poor scaling
-   Leaf tasks are dispatched to idle ranks from a shared queue, without
+   Leaf task batches are dispatched to idle ranks from a shared queue, without
    cost-aware placement. Large differences in leaf cost can still leave ranks
-   idle near the end of a batch. MPI overhead can also dominate when individual
-   leaves are cheap.
+   idle near the end of a batch. For highly uneven task durations, lowering
+   ``max_tasks_per_message`` trades a higher MPI message rate for finer load
+   balancing.
 
 Single-rank launch
    With only rank zero in the communicator, the MPI schedule evaluates leaf
