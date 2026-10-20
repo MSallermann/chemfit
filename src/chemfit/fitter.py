@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
+from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
@@ -21,7 +22,6 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.scheduling import DirectScheduler, EvaluationRequest, PreparedSchedule
 from chemfit.utils import check_params_near_bounds
-from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
