@@ -3,8 +3,9 @@ MPI backend for ChemFit's graph scheduler.
 
 Rank 0 owns graph traversal and structural-component lifecycles. Other ranks
 run a persistent worker loop and evaluate only AtomicNode tasks. Tasks are
-queued on rank 0 and dispatched to idle workers one at a time, allowing new
-work to become available as earlier graph nodes finish.
+queued on rank 0 and dispatched to idle workers in adaptive batches, allowing
+new work to become available as earlier graph nodes finish without requiring a
+message round trip for every task in broad graphs.
 
 Ordinary component exceptions are returned in NodeCompletion. MPI/protocol
 failures are fatal to the prepared schedule and trigger worker shutdown.
@@ -17,7 +18,7 @@ after the final evaluation to release the workers.
 from __future__ import annotations
 
 import logging
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -57,8 +58,13 @@ _CONTROL_TAG = 41003
 
 
 @dataclass(frozen=True, slots=True)
-class _EvaluateRequest:
-    task: NodeTask
+class _EvaluateBatch:
+    tasks: tuple[NodeTask, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchCompletion:
+    completions: tuple[NodeCompletion, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +88,20 @@ class MPIWorkerError(RuntimeError):
     """Fatal MPI worker or scheduling protocol failure."""
 
 
+def _validate_batching_options(
+    *,
+    max_tasks_per_message: int,
+    target_batches_per_worker: int,
+) -> None:
+    """Reject batching settings that cannot produce a nonempty batch."""
+    if type(max_tasks_per_message) is not int or max_tasks_per_message < 1:
+        msg = "max_tasks_per_message must be a positive integer"
+        raise ValueError(msg)
+    if type(target_batches_per_worker) is not int or target_batches_per_worker < 1:
+        msg = "target_batches_per_worker must be a positive integer"
+        raise ValueError(msg)
+
+
 def _describe_worker_failure(rank: int, exception: BaseException) -> _WorkerFailure:
     try:
         message = str(exception)
@@ -103,13 +123,21 @@ class MPIGraphSchedule(GraphScheduleBase):
         graph: CallGraph,
         comm: Any,
         *,
+        max_tasks_per_message: int = 8,
+        target_batches_per_worker: int = 8,
         mpi_debug_log: bool = False,
     ) -> None:
         """Bind a call graph to an MPI communicator."""
         super().__init__(graph)
+        _validate_batching_options(
+            max_tasks_per_message=max_tasks_per_message,
+            target_batches_per_worker=target_batches_per_worker,
+        )
         self.comm = comm
         self.rank = comm.Get_rank()
         self.size = comm.Get_size()
+        self.max_tasks_per_message = max_tasks_per_message
+        self.target_batches_per_worker = target_batches_per_worker
         self._workers_released = False
 
         if mpi_debug_log:
@@ -166,19 +194,27 @@ class MPIGraphSchedule(GraphScheduleBase):
         )
 
     def _dispatch_available(self, batch_state: BatchState) -> None:
-        """Assign at most one outstanding task to each idle worker."""
+        """Assign one adaptive batch to each idle worker while work remains."""
         queue: deque[NodeTask] = batch_state.pending_tasks
-        in_flight: dict[int, NodeTask] = batch_state.in_flight
+        in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
         command_sends: dict[int, Any] = batch_state.command_sends
         idle_workers: deque[int] = batch_state.idle_workers
+        chunk_size = self._chunk_size(len(queue))
 
         while queue and idle_workers:
             rank = idle_workers.popleft()
-            task = queue.popleft()
+            tasks = tuple(queue.popleft() for _ in range(min(chunk_size, len(queue))))
             command_sends[rank] = self.comm.isend(
-                _EvaluateRequest(task), dest=rank, tag=_COMMAND_TAG
+                _EvaluateBatch(tasks), dest=rank, tag=_COMMAND_TAG
             )
-            in_flight[rank] = task
+            in_flight[rank] = tasks
+
+    def _chunk_size(self, queued_tasks: int) -> int:
+        """Choose a message size that preserves several batches per worker."""
+        worker_count = max(1, self.size - 1)
+        target_batch_count = worker_count * self.target_batches_per_worker
+        adaptive_size = (queued_tasks + target_batch_count - 1) // target_batch_count
+        return min(self.max_tasks_per_message, max(1, adaptive_size))
 
     def submit_tasks(
         self,
@@ -193,9 +229,11 @@ class MPIGraphSchedule(GraphScheduleBase):
         if self.size > 1:
             self._dispatch_available(batch_state)
 
-    def _receive_worker_completion(self, batch_state: BatchState) -> NodeCompletion:
-        """Receive and validate one worker result, then reuse or idle its rank."""
-        in_flight: dict[int, NodeTask] = batch_state.in_flight
+    def _receive_worker_completion(
+        self, batch_state: BatchState
+    ) -> tuple[NodeCompletion, ...]:
+        """Receive and validate one worker batch, then reuse or idle its rank."""
+        in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
         command_sends: dict[int, Any] = batch_state.command_sends
         status = MPI.Status()
         message = self.comm.recv(
@@ -212,46 +250,68 @@ class MPIGraphSchedule(GraphScheduleBase):
             )
             raise MPIWorkerError(msg)
 
-        expected_task = in_flight.pop(source, None)
-        if expected_task is None:
+        expected_tasks = in_flight.get(source)
+        if expected_tasks is None:
             msg = f"Unexpected completion from idle worker {source}"
             raise MPIWorkerError(msg)
-        if not isinstance(message, NodeCompletion):
+        if not isinstance(message, _BatchCompletion):
             msg = f"Unexpected MPI worker result: {message!r}"
             raise MPIWorkerError(msg)
-        if (message.run_id, message.node_id) != (
-            expected_task.run_id,
-            expected_task.node_id,
+        if not all(
+            isinstance(completion, NodeCompletion) for completion in message.completions
         ):
+            msg = f"Worker {source} returned a malformed completion batch"
+            raise MPIWorkerError(msg)
+
+        expected = Counter((task.run_id, task.node_id) for task in expected_tasks)
+        returned = Counter(
+            (completion.run_id, completion.node_id)
+            for completion in message.completions
+        )
+        duplicates = [identity for identity, count in returned.items() if count > 1]
+        if duplicates:
+            msg = (
+                f"Worker {source} returned duplicate completion for task "
+                f"{duplicates[0]}"
+            )
+            raise MPIWorkerError(msg)
+        unexpected = list(returned.keys() - expected.keys())
+        if unexpected:
             msg = (
                 f"Worker {source} returned completion for unexpected task "
-                f"({message.run_id}, {message.node_id})"
+                f"{unexpected[0]}"
             )
+            raise MPIWorkerError(msg)
+        missing = list(expected.keys() - returned.keys())
+        if missing:
+            msg = f"Worker {source} omitted completion for task {missing[0]}"
+            raise MPIWorkerError(msg)
+        if returned != expected:
+            msg = f"Worker {source} returned an invalid completion batch"
             raise MPIWorkerError(msg)
 
         # The matching result proves that the worker fully received this
         # command, so completing the retained send cannot wait on remote
         # progress.  Do this before replacing the per-rank request.
-        command_send = command_sends.pop(source, None)
+        command_send = command_sends.get(source)
         if command_send is None:
             msg = f"Missing command send for worker {source}"
             raise MPIWorkerError(msg)
         command_send.Wait()
+        del command_sends[source]
+        del in_flight[source]
 
         queue: deque[NodeTask] = batch_state.pending_tasks
         if queue:
             # Refill the rank that just replied directly. Returning it to and
             # immediately removing it from idle_workers would add bookkeeping
             # without exposing any scheduling choice.
-            task = queue.popleft()
-            command_sends[source] = self.comm.isend(
-                _EvaluateRequest(task), dest=source, tag=_COMMAND_TAG
-            )
-            in_flight[source] = task
+            batch_state.idle_workers.appendleft(source)
+            self._dispatch_available(batch_state)
         else:
             batch_state.idle_workers.append(source)
 
-        return message
+        return message.completions
 
     def wait_for_completions(
         self,
@@ -268,7 +328,7 @@ class MPIGraphSchedule(GraphScheduleBase):
             task = batch_state.pending_tasks.popleft()
             return (self._evaluate_worker_task(task, capture_context_state=False),)
 
-        in_flight: dict[int, NodeTask] = batch_state.in_flight
+        in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
         if not in_flight:
             msg = "No MPI tasks are in flight"
             raise MPIWorkerError(msg)
@@ -277,12 +337,14 @@ class MPIGraphSchedule(GraphScheduleBase):
         # dispatched work must not keep the coordinator in an unbounded receive
         # loop and delay graph dependency release.
         drain_limit = len(in_flight)
-        completions = [self._receive_worker_completion(batch_state)]
-        while len(completions) < drain_limit and self.comm.Iprobe(
+        completions = list(self._receive_worker_completion(batch_state))
+        received_batches = 1
+        while received_batches < drain_limit and self.comm.Iprobe(
             source=MPI.ANY_SOURCE,
             tag=_RESULT_TAG,
         ):
-            completions.append(self._receive_worker_completion(batch_state))
+            completions.extend(self._receive_worker_completion(batch_state))
+            received_batches += 1
 
         return completions
 
@@ -299,8 +361,8 @@ class MPIGraphSchedule(GraphScheduleBase):
 
     def _send_worker_result(
         self,
-        result: NodeCompletion | _WorkerFailure,
-        prefetched: deque[_EvaluateRequest] | None = None,
+        result: _BatchCompletion | _WorkerFailure,
+        prefetched: deque[_EvaluateBatch] | None = None,
     ) -> bool:
         """
         Send a result, returning false when shutdown was received.
@@ -333,7 +395,7 @@ class MPIGraphSchedule(GraphScheduleBase):
                 # blocking coordinator send from extending the inter-task gap.
                 # Queue depth two means there can be only one local prefetch.
                 command = self.comm.recv(source=0, tag=_COMMAND_TAG)
-                if not isinstance(command, _EvaluateRequest):
+                if not isinstance(command, _EvaluateBatch):
                     msg = (
                         f"Worker {self.rank} received unexpected task command: "
                         f"{command!r}"
@@ -378,7 +440,7 @@ class MPIGraphSchedule(GraphScheduleBase):
             msg = "worker_loop() cannot be called on MPI rank 0"
             raise RuntimeError(msg)
 
-        prefetched: deque[_EvaluateRequest] = deque()
+        prefetched: deque[_EvaluateBatch] = deque()
         failed = False
         while True:
             try:
@@ -401,12 +463,17 @@ class MPIGraphSchedule(GraphScheduleBase):
                 continue
 
             try:
-                if not isinstance(command, _EvaluateRequest):
+                if not isinstance(command, _EvaluateBatch):
                     msg = f"Worker {self.rank} received unknown command: {command!r}"
                     raise MPIWorkerError(msg)
-                result = self._evaluate_worker_task(
-                    command.task,
-                    capture_context_state=True,
+                result = _BatchCompletion(
+                    tuple(
+                        self._evaluate_worker_task(
+                            task,
+                            capture_context_state=True,
+                        )
+                        for task in command.tasks
+                    )
                 )
                 sent = self._send_worker_result(result, prefetched)
             except BaseException as exception:
@@ -488,11 +555,19 @@ class MPIGraphScheduler(Scheduler[MPIGraphSchedule]):
         self,
         comm: Any | None = None,
         *,
+        max_tasks_per_message: int = 8,
+        target_batches_per_worker: int = 8,
         mpi_debug_log: bool = False,
     ) -> None:
-        """Configure the communicator and optional protocol logging."""
+        """Configure the communicator, batching, and optional protocol logging."""
         super().__init__()
+        _validate_batching_options(
+            max_tasks_per_message=max_tasks_per_message,
+            target_batches_per_worker=target_batches_per_worker,
+        )
         self.comm = MPI.COMM_WORLD if comm is None else comm
+        self.max_tasks_per_message = max_tasks_per_message
+        self.target_batches_per_worker = target_batches_per_worker
         self.mpi_debug_log = mpi_debug_log
 
     def prepare(
@@ -504,5 +579,7 @@ class MPIGraphScheduler(Scheduler[MPIGraphSchedule]):
         return MPIGraphSchedule(
             graph=objective_to_call_graph(objective),
             comm=self.comm,
+            max_tasks_per_message=self.max_tasks_per_message,
+            target_batches_per_worker=self.target_batches_per_worker,
             mpi_debug_log=self.mpi_debug_log,
         )

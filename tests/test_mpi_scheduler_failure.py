@@ -140,19 +140,23 @@ def test_worker_failure_payload_does_not_pickle_original_exception() -> None:
     assert failure.message == "worker interrupted"
 
 
-def test_shutdown_does_not_cancel_pending_worker_result() -> None:
-    """Regression: shutdown completes an in-transit result without MPI_Cancel."""
+def test_shutdown_does_not_cancel_pending_worker_batch_result() -> None:
+    """Regression: shutdown completes an in-transit batch without MPI_Cancel."""
 
     schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
     schedule.comm = ShutdownComm()
     schedule.rank = 2
-    failure = mpi_schedule._WorkerFailure(  # noqa: SLF001
-        rank=2,
-        exception_type="KeyboardInterrupt",
-        message="stop",
+    result = mpi_schedule._BatchCompletion(  # noqa: SLF001
+        (
+            mpi_schedule.NodeCompletion(
+                run_id=0,
+                node_id=1,
+                outcome=2,
+            ),
+        )
     )
 
-    assert not schedule._send_worker_result(failure)  # noqa: SLF001
+    assert not schedule._send_worker_result(result)  # noqa: SLF001
     schedule._acknowledge_shutdown()  # noqa: SLF001
     assert schedule.comm.sent == [
         (mpi_schedule._ShutdownAcknowledgement(), 0, mpi_schedule._CONTROL_TAG)  # noqa: SLF001
@@ -164,6 +168,9 @@ def test_task_dispatch_retains_nonblocking_command_send() -> None:
 
     schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
     schedule.comm = CommandComm()
+    schedule.size = 2
+    schedule.max_tasks_per_message = 8
+    schedule.target_batches_per_worker = 8
     task: Any = object()
     batch_state: Any = mpi_schedule.BatchState()
     batch_state.pending_tasks = mpi_schedule.deque([task])
@@ -174,10 +181,10 @@ def test_task_dispatch_retains_nonblocking_command_send() -> None:
     schedule._dispatch_available(batch_state)  # noqa: SLF001
 
     assert batch_state.pending_tasks == mpi_schedule.deque()
-    assert batch_state.in_flight == {1: task}
+    assert batch_state.in_flight == {1: (task,)}
     assert batch_state.command_sends == {1: schedule.comm.sent[0][3]}
     message, destination, tag, request = schedule.comm.sent[0]
-    assert message == mpi_schedule._EvaluateRequest(task)  # noqa: SLF001
+    assert message == mpi_schedule._EvaluateBatch((task,))  # noqa: SLF001
     assert destination == 1
     assert tag == mpi_schedule._COMMAND_TAG  # noqa: SLF001
     assert not request.waited
@@ -190,7 +197,7 @@ def test_worker_loop_consumes_task_prefetched_during_result_send() -> None:
     schedule.rank = 2
     first_task: Any = object()
     second_task: Any = object()
-    commands = [mpi_schedule._EvaluateRequest(first_task)]  # noqa: SLF001
+    commands = [mpi_schedule._EvaluateBatch((first_task,))]  # noqa: SLF001
     evaluated: list[object] = []
     acknowledgements: list[None] = []
 
@@ -204,8 +211,8 @@ def test_worker_loop_consumes_task_prefetched_during_result_send() -> None:
 
     def send_result(result: object, prefetched: Any = None) -> bool:
         assert prefetched is not None
-        if result is first_task:
-            prefetched.append(mpi_schedule._EvaluateRequest(second_task))  # noqa: SLF001
+        if result == mpi_schedule._BatchCompletion((first_task,)):  # noqa: SLF001
+            prefetched.append(mpi_schedule._EvaluateBatch((second_task,)))  # noqa: SLF001
             return True
         return False
 
