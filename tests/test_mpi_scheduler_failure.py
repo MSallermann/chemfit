@@ -122,6 +122,47 @@ def test_shutdown_does_not_cancel_pending_worker_result() -> None:
     ]
 
 
+def test_worker_loop_consumes_task_prefetched_during_result_send() -> None:
+    """A rendezvous result send can receive the coordinator's next task."""
+
+    schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
+    schedule.rank = 2
+    first_task: Any = object()
+    second_task: Any = object()
+    commands = [mpi_schedule._EvaluateRequest(first_task)]  # noqa: SLF001
+    evaluated: list[object] = []
+    acknowledgements: list[None] = []
+
+    def next_command() -> object:
+        return commands.pop(0)
+
+    def evaluate_task(task: object, *, capture_context_state: bool) -> object:
+        assert capture_context_state
+        evaluated.append(task)
+        return task
+
+    def send_result(result: object, prefetched: Any = None) -> bool:
+        assert prefetched is not None
+        if result is first_task:
+            prefetched.append(mpi_schedule._EvaluateRequest(second_task))  # noqa: SLF001
+            return True
+        return False
+
+    def acknowledge_shutdown() -> None:
+        acknowledgements.append(None)
+
+    schedule._next_worker_command = next_command  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._evaluate_worker_task = evaluate_task  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._send_worker_result = send_result  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._acknowledge_shutdown = acknowledge_shutdown  # type: ignore[method-assign]  # noqa: SLF001
+
+    schedule.worker_loop()
+
+    assert evaluated == [first_task, second_task]
+    assert commands == []
+    assert acknowledgements == [None]
+
+
 def test_worker_interrupt_is_reported_before_shutdown_acknowledgement() -> None:
     """An interrupt while receiving work follows the normal failure protocol."""
 
