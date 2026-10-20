@@ -88,6 +88,43 @@ class ShutdownComm:
         self.sent.append((message, dest, tag))
 
 
+class CommandRequest:
+    """Record whether a retained nonblocking task send was completed."""
+
+    def __init__(self) -> None:
+        """Initialize an incomplete request."""
+
+        self.waited = False
+
+    def Wait(self) -> None:  # noqa: N802
+        """Complete the simulated command send."""
+
+        self.waited = True
+
+
+class CommandComm:
+    """Reject blocking task sends and retain nonblocking requests."""
+
+    def __init__(self) -> None:
+        """Initialize the command-send log."""
+
+        self.sent: list[tuple[object, int, int, CommandRequest]] = []
+
+    def send(self, message: object, *, dest: int, tag: int) -> None:
+        """Fail if task dispatch uses a potentially blocking send."""
+
+        del message, dest, tag
+        msg = "task dispatch must be nonblocking"
+        raise AssertionError(msg)
+
+    def isend(self, message: object, *, dest: int, tag: int) -> CommandRequest:
+        """Return and retain a simulated nonblocking send request."""
+
+        request = CommandRequest()
+        self.sent.append((message, dest, tag, request))
+        return request
+
+
 def test_worker_failure_payload_does_not_pickle_original_exception() -> None:
     """Only primitive failure details cross the communicator."""
 
@@ -120,6 +157,30 @@ def test_shutdown_does_not_cancel_pending_worker_result() -> None:
     assert schedule.comm.sent == [
         (mpi_schedule._ShutdownAcknowledgement(), 0, mpi_schedule._CONTROL_TAG)  # noqa: SLF001
     ]
+
+
+def test_task_dispatch_retains_nonblocking_command_send() -> None:
+    """Large task dispatch must not block against a worker result send."""
+
+    schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
+    schedule.comm = CommandComm()
+    task: Any = object()
+    batch_state: Any = mpi_schedule.BatchState()
+    batch_state.pending_tasks = mpi_schedule.deque([task])
+    batch_state.in_flight = {}
+    batch_state.command_sends = {}
+    batch_state.idle_workers = mpi_schedule.deque([1])
+
+    schedule._dispatch_available(batch_state)  # noqa: SLF001
+
+    assert batch_state.pending_tasks == mpi_schedule.deque()
+    assert batch_state.in_flight == {1: task}
+    assert batch_state.command_sends == {1: schedule.comm.sent[0][3]}
+    message, destination, tag, request = schedule.comm.sent[0]
+    assert message == mpi_schedule._EvaluateRequest(task)  # noqa: SLF001
+    assert destination == 1
+    assert tag == mpi_schedule._COMMAND_TAG  # noqa: SLF001
+    assert not request.waited
 
 
 def test_worker_loop_consumes_task_prefetched_during_result_send() -> None:
