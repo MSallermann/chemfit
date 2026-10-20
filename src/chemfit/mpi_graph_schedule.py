@@ -358,10 +358,13 @@ class MPIGraphSchedule(GraphScheduleBase):
             msg = "worker_loop() cannot be called on MPI rank 0"
             raise RuntimeError(msg)
 
+        prefetched: deque[_EvaluateRequest] = deque()
         failed = False
         while True:
             try:
-                command = self._next_worker_command()
+                command = (
+                    prefetched.popleft() if prefetched else self._next_worker_command()
+                )
             except BaseException as exception:
                 if not self._report_worker_failure(exception):
                     self._acknowledge_shutdown()
@@ -385,7 +388,7 @@ class MPIGraphSchedule(GraphScheduleBase):
                     command.task,
                     capture_context_state=True,
                 )
-                sent = self._send_worker_result(result)
+                sent = self._send_worker_result(result, prefetched)
             except BaseException as exception:
                 if not self._report_worker_failure(exception):
                     self._acknowledge_shutdown()
