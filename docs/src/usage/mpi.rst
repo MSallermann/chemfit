@@ -143,11 +143,19 @@ Task batching
 
 MPI workers execute the tasks in each message sequentially and return their
 completions together. Broad ready queues use larger messages to reduce MPI
-message rate, while narrow queues and queue tails automatically shrink toward
-one task per message so dependent work is released promptly.
+message rate, while narrow ready queues use smaller messages so dependent work
+is released promptly. The scheduler chooses one batch size when a ready-work
+cohort enters an empty pending queue and keeps that size for all of its refills;
+only the cohort's final batch may be smaller. Tasks that become ready after the
+pending queue drains establish a new cohort and recalculate the batch size.
 
-The default policy limits messages to eight tasks and targets eight queued
-batches per worker. Both settings are configurable:
+When workers finish close together, rank zero drains every result already
+available before refilling the completed workers in one dispatch pass. It does
+not wait for workers that are still running, so this reduces self-generated
+completion bursts without introducing a global synchronization barrier.
+
+The default policy limits messages to eight tasks and targets eight batches per
+worker when selecting a cohort's batch size. Both settings are configurable:
 
 .. code-block:: python
 

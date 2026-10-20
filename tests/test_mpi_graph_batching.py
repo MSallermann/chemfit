@@ -45,6 +45,7 @@ class RecordingComm:
         self.size = size
         self.results = deque(results or ())
         self.sent: list[tuple[object, int, int, CompletedRequest]] = []
+        self.events: list[tuple[str, int]] = []
 
     def Get_rank(self) -> int:  # noqa: N802
         return 0
@@ -55,11 +56,13 @@ class RecordingComm:
     def isend(self, message: object, *, dest: int, tag: int) -> CompletedRequest:
         request = CompletedRequest()
         self.sent.append((message, dest, tag, request))
+        self.events.append(("send", dest))
         return request
 
     def recv(self, *, source: int, tag: int, status: Any) -> object:
         del source, tag
         result_source, message = self.results.popleft()
+        self.events.append(("recv", result_source))
         status.Set_source(result_source)
         return message
 
@@ -109,12 +112,14 @@ def make_batch_state(
     in_flight: dict[int, tuple[Any, ...]] | None = None,
     command_sends: dict[int, CompletedRequest] | None = None,
     idle_workers: tuple[int, ...] = (),
+    dispatch_batch_size: int | None = None,
 ) -> Any:
     state = BatchState()
     state.pending_tasks = deque(pending)
     state.in_flight = {} if in_flight is None else in_flight
     state.command_sends = {} if command_sends is None else command_sends
     state.idle_workers = deque(idle_workers)
+    state.dispatch_batch_size = dispatch_batch_size
     return state
 
 
@@ -134,6 +139,86 @@ def test_dispatch_builds_exact_batches_and_short_tail() -> None:
     assert batches == [tasks[:4], tasks[4:8], tasks[8:]]
     assert state.in_flight == {1: tasks[:4], 2: tasks[4:8], 3: tasks[8:]}
     assert not state.pending_tasks
+    assert state.dispatch_batch_size is None
+
+
+def test_refills_retain_original_cohort_batch_size() -> None:
+    comm = RecordingComm(size=3)
+    schedule = make_schedule(
+        comm,
+        max_tasks_per_message=16,
+        target_batches_per_worker=4,
+    )
+    tasks = tuple(make_task(index) for index in range(40))
+    state = make_batch_state(pending=tasks, idle_workers=(1, 2))
+
+    schedule._dispatch_available(state)  # noqa: SLF001
+    first_batch = state.in_flight[1]
+    assert len(first_batch) == 5
+    assert state.dispatch_batch_size == 5
+
+    comm.results.append(
+        (
+            1,
+            mpi_schedule._BatchCompletion(  # noqa: SLF001
+                tuple(make_completion(task) for task in first_batch)
+            ),
+        )
+    )
+    schedule.wait_for_completions(state)
+
+    assert [len(message.tasks) for message, _, _, _ in comm.sent] == [5, 5, 5]
+    assert state.dispatch_batch_size == 5
+
+
+def test_appending_to_pending_cohort_retains_batch_size() -> None:
+    comm = RecordingComm(size=2)
+    schedule = make_schedule(
+        comm,
+        max_tasks_per_message=16,
+        target_batches_per_worker=1,
+    )
+    original_tasks = tuple(make_task(index) for index in range(20))
+    state = make_batch_state(pending=original_tasks, idle_workers=(1,))
+
+    schedule._dispatch_available(state)  # noqa: SLF001
+    assert state.dispatch_batch_size == 16
+
+    added_tasks = tuple(make_task(index) for index in range(20, 40))
+    schedule.submit_tasks(added_tasks, state)
+
+    assert state.dispatch_batch_size == 16
+
+
+def test_new_cohort_recalculates_batch_size() -> None:
+    comm = RecordingComm(size=3)
+    schedule = make_schedule(comm)
+    first_cohort = tuple(make_task(index) for index in range(2))
+    state = make_batch_state(idle_workers=(1, 2))
+
+    schedule.submit_tasks(first_cohort, state)
+    assert [len(message.tasks) for message, _, _, _ in comm.sent] == [1, 1]
+    assert state.dispatch_batch_size is None
+
+    state.in_flight.clear()
+    state.command_sends.clear()
+    state.idle_workers.extend((1, 2))
+    second_cohort = tuple(make_task(index) for index in range(2, 34))
+    schedule.submit_tasks(second_cohort, state)
+
+    assert [len(message.tasks) for message, _, _, _ in comm.sent[-2:]] == [2, 2]
+    assert state.dispatch_batch_size == 2
+
+
+def test_large_cohort_uses_expected_stable_quantum() -> None:
+    comm = RecordingComm(size=1152)
+    schedule = make_schedule(
+        comm,
+        max_tasks_per_message=16,
+        target_batches_per_worker=4,
+    )
+
+    assert schedule._chunk_size(32_768) == 8  # noqa: SLF001
 
 
 def test_adaptive_policy_reduces_narrow_queue_to_single_tasks() -> None:
@@ -189,6 +274,80 @@ def test_one_worker_response_returns_multiple_completions() -> None:
     assert state.in_flight == {}
     assert state.command_sends == {}
     assert state.idle_workers == deque((1,))
+
+
+def test_all_available_results_are_drained_before_refill() -> None:
+    first_batch = (make_task(0), make_task(1))
+    second_batch = (make_task(2), make_task(3))
+    pending = tuple(make_task(index) for index in range(4, 8))
+    comm = RecordingComm(
+        size=3,
+        results=[
+            (
+                2,
+                mpi_schedule._BatchCompletion(  # noqa: SLF001
+                    tuple(make_completion(task) for task in second_batch)
+                ),
+            ),
+            (
+                1,
+                mpi_schedule._BatchCompletion(  # noqa: SLF001
+                    tuple(make_completion(task) for task in first_batch)
+                ),
+            ),
+        ],
+    )
+    schedule = make_schedule(comm)
+    state = make_batch_state(
+        pending=pending,
+        in_flight={1: first_batch, 2: second_batch},
+        command_sends={1: CompletedRequest(), 2: CompletedRequest()},
+        dispatch_batch_size=2,
+    )
+
+    completions = schedule.wait_for_completions(state)
+
+    assert len(completions) == 4
+    assert comm.events == [
+        ("recv", 2),
+        ("recv", 1),
+        ("send", 2),
+        ("send", 1),
+    ]
+    assert [destination for _, destination, _, _ in comm.sent] == [2, 1]
+    assert not state.pending_tasks
+
+
+def test_unavailable_worker_does_not_delay_refilling_completed_worker() -> None:
+    completed_batch = (make_task(0), make_task(1))
+    unavailable_batch = (make_task(2), make_task(3))
+    pending = tuple(make_task(index) for index in range(4, 8))
+    comm = RecordingComm(
+        size=3,
+        results=[
+            (
+                1,
+                mpi_schedule._BatchCompletion(  # noqa: SLF001
+                    tuple(make_completion(task) for task in completed_batch)
+                ),
+            )
+        ],
+    )
+    schedule = make_schedule(comm)
+    state = make_batch_state(
+        pending=pending,
+        in_flight={1: completed_batch, 2: unavailable_batch},
+        command_sends={1: CompletedRequest(), 2: CompletedRequest()},
+        dispatch_batch_size=2,
+    )
+
+    completions = schedule.wait_for_completions(state)
+
+    assert len(completions) == 2
+    assert comm.events == [("recv", 1), ("send", 1)]
+    assert state.in_flight[2] == unavailable_batch
+    assert state.in_flight[1] == pending[:2]
+    assert state.pending_tasks == deque(pending[2:])
 
 
 @pytest.mark.parametrize(
