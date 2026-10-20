@@ -135,6 +135,11 @@ class MPIGraphSchedule(GraphScheduleBase):
         if not hasattr(batch_state, "pending_tasks"):
             batch_state.pending_tasks = deque()
             batch_state.in_flight = {}
+            # Keep nonblocking command sends alive until the corresponding
+            # worker result proves that the command was received.  A blocking
+            # send here can deadlock with a worker's rendezvous result send
+            # when both task and result exceed the MPI eager limit.
+            batch_state.command_sends = {}
             # Rank availability changes only on dispatch and completion, so an
             # explicit queue avoids scanning every rank on every refill.
             batch_state.idle_workers = deque(range(1, self.size))
@@ -164,12 +169,15 @@ class MPIGraphSchedule(GraphScheduleBase):
         """Assign at most one outstanding task to each idle worker."""
         queue: deque[NodeTask] = batch_state.pending_tasks
         in_flight: dict[int, NodeTask] = batch_state.in_flight
+        command_sends: dict[int, Any] = batch_state.command_sends
         idle_workers: deque[int] = batch_state.idle_workers
 
         while queue and idle_workers:
             rank = idle_workers.popleft()
             task = queue.popleft()
-            self.comm.send(_EvaluateRequest(task), dest=rank, tag=_COMMAND_TAG)
+            command_sends[rank] = self.comm.isend(
+                _EvaluateRequest(task), dest=rank, tag=_COMMAND_TAG
+            )
             in_flight[rank] = task
 
     def submit_tasks(
@@ -188,6 +196,7 @@ class MPIGraphSchedule(GraphScheduleBase):
     def _receive_worker_completion(self, batch_state: BatchState) -> NodeCompletion:
         """Receive and validate one worker result, then reuse or idle its rank."""
         in_flight: dict[int, NodeTask] = batch_state.in_flight
+        command_sends: dict[int, Any] = batch_state.command_sends
         status = MPI.Status()
         message = self.comm.recv(
             source=MPI.ANY_SOURCE,
@@ -220,13 +229,24 @@ class MPIGraphSchedule(GraphScheduleBase):
             )
             raise MPIWorkerError(msg)
 
+        # The matching result proves that the worker fully received this
+        # command, so completing the retained send cannot wait on remote
+        # progress.  Do this before replacing the per-rank request.
+        command_send = command_sends.pop(source, None)
+        if command_send is None:
+            msg = f"Missing command send for worker {source}"
+            raise MPIWorkerError(msg)
+        command_send.Wait()
+
         queue: deque[NodeTask] = batch_state.pending_tasks
         if queue:
             # Refill the rank that just replied directly. Returning it to and
             # immediately removing it from idle_workers would add bookkeeping
             # without exposing any scheduling choice.
             task = queue.popleft()
-            self.comm.send(_EvaluateRequest(task), dest=source, tag=_COMMAND_TAG)
+            command_sends[source] = self.comm.isend(
+                _EvaluateRequest(task), dest=source, tag=_COMMAND_TAG
+            )
             in_flight[source] = task
         else:
             batch_state.idle_workers.append(source)
@@ -442,6 +462,13 @@ class MPIGraphSchedule(GraphScheduleBase):
         """Discard queued work and close the poisoned MPI schedule."""
         if hasattr(batch_state, "pending_tasks"):
             batch_state.pending_tasks.clear()
+        # Every dispatched worker receives at most one command at a time.  Its
+        # command receive was posted before it could evaluate or report a
+        # failure, so these sends can be completed safely before shutdown.
+        command_sends = getattr(batch_state, "command_sends", {})
+        if command_sends:
+            MPI.Request.Waitall(list(command_sends.values()))
+            command_sends.clear()
         self.close()
 
     def close(self) -> None:
