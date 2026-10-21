@@ -162,11 +162,12 @@ class MPIGraphSchedule(GraphScheduleBase):
     def _ensure_batch_state(self, batch_state: BatchState) -> None:
         if not hasattr(batch_state, "pending_tasks"):
             batch_state.pending_tasks = deque()
-            # A ready-work cohort keeps one dispatch quantum until its pending
-            # queue drains. Recomputing from the shrinking queue would create
-            # progressively smaller batches and increase the result-message
-            # rate precisely while a completion burst is under way.
+            # A ready-work cohort keeps one bulk dispatch quantum, then chooses
+            # one smaller quantum for its final worker wave. Recomputing after
+            # every refill would create progressively smaller batches and
+            # increase the result-message rate during a completion burst.
             batch_state.dispatch_batch_size = None
+            batch_state.dispatch_tail_started = False
             batch_state.in_flight = {}
             # Keep nonblocking command sends alive until the corresponding
             # worker result proves that the command was received.  A blocking
@@ -207,6 +208,7 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         if not queue:
             batch_state.dispatch_batch_size = None
+            batch_state.dispatch_tail_started = False
             return
 
         chunk_size: int | None = getattr(
@@ -218,6 +220,21 @@ class MPIGraphSchedule(GraphScheduleBase):
             chunk_size = self._chunk_size(len(queue))
             batch_state.dispatch_batch_size = chunk_size
 
+        # Keep the cohort quantum stable while there is more than one full
+        # worker wave queued. For the tail, spread the remaining tasks across
+        # the workers that are idle or still in flight instead of assigning
+        # full batches to only a subset and leaving the rest unused.
+        worker_slots = len(idle_workers) + len(in_flight)
+        tail_started = getattr(batch_state, "dispatch_tail_started", False)
+        if (
+            not tail_started
+            and worker_slots
+            and len(queue) <= chunk_size * worker_slots
+        ):
+            chunk_size = (len(queue) + worker_slots - 1) // worker_slots
+            batch_state.dispatch_batch_size = chunk_size
+            batch_state.dispatch_tail_started = True
+
         while queue and idle_workers:
             rank = idle_workers.popleft()
             tasks = tuple(queue.popleft() for _ in range(min(chunk_size, len(queue))))
@@ -228,6 +245,7 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         if not queue:
             batch_state.dispatch_batch_size = None
+            batch_state.dispatch_tail_started = False
 
     def _chunk_size(self, queued_tasks: int) -> int:
         """Choose a message size that preserves several batches per worker."""
@@ -251,6 +269,7 @@ class MPIGraphSchedule(GraphScheduleBase):
             batch_state.dispatch_batch_size = self._chunk_size(
                 len(batch_state.pending_tasks)
             )
+            batch_state.dispatch_tail_started = False
 
         if self.size > 1:
             self._dispatch_available(batch_state)
@@ -327,7 +346,16 @@ class MPIGraphSchedule(GraphScheduleBase):
         del command_sends[source]
         del in_flight[source]
 
-        batch_state.idle_workers.append(source)
+        queue: deque[NodeTask] = batch_state.pending_tasks
+        if queue:
+            # Refill the completed worker before receiving another result. At
+            # large rank counts, deferring all refills until the completion
+            # burst has been drained leaves every worker in that burst idle
+            # for the coordinator's aggregate receive/validation time.
+            batch_state.idle_workers.appendleft(source)
+            self._dispatch_available(batch_state)
+        else:
+            batch_state.idle_workers.append(source)
 
         return message.completions
 
@@ -346,6 +374,7 @@ class MPIGraphSchedule(GraphScheduleBase):
             task = batch_state.pending_tasks.popleft()
             if not batch_state.pending_tasks:
                 batch_state.dispatch_batch_size = None
+                batch_state.dispatch_tail_started = False
             return (self._evaluate_worker_task(task, capture_context_state=False),)
 
         in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
@@ -353,17 +382,19 @@ class MPIGraphSchedule(GraphScheduleBase):
             msg = "No MPI tasks are in flight"
             raise MPIWorkerError(msg)
 
+        # Bound draining by the number in flight at entry. Refilled work can
+        # finish quickly, but consuming those new results in this call could
+        # otherwise keep the coordinator in an unbounded receive loop and
+        # delay graph dependency release.
+        drain_limit = len(in_flight)
         completions = list(self._receive_worker_completion(batch_state))
-        while in_flight and self.comm.Iprobe(
+        received_batches = 1
+        while received_batches < drain_limit and self.comm.Iprobe(
             source=MPI.ANY_SOURCE,
             tag=_RESULT_TAG,
         ):
             completions.extend(self._receive_worker_completion(batch_state))
-
-        # Refill all workers that completed before generating another inbound
-        # burst. Workers whose results are not ready remain in flight and do
-        # not delay this dispatch pass.
-        self._dispatch_available(batch_state)
+            received_batches += 1
 
         return completions
 

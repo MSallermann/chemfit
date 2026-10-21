@@ -145,14 +145,16 @@ MPI workers execute the tasks in each message sequentially and return their
 completions together. Broad ready queues use larger messages to reduce MPI
 message rate, while narrow ready queues use smaller messages so dependent work
 is released promptly. The scheduler chooses one batch size when a ready-work
-cohort enters an empty pending queue and keeps that size for all of its refills;
-only the cohort's final batch may be smaller. Tasks that become ready after the
-pending queue drains establish a new cohort and recalculate the batch size.
+cohort enters an empty pending queue and keeps that size during its bulk
+refills. When no more than one full worker wave remains, it shrinks the batch
+size to spread the queue tail across the workers. Tasks that become ready after
+the pending queue drains establish a new cohort and recalculate the batch size.
 
-When workers finish close together, rank zero drains every result already
-available before refilling the completed workers in one dispatch pass. It does
-not wait for workers that are still running, so this reduces self-generated
-completion bursts without introducing a global synchronization barrier.
+When workers finish close together, rank zero drains the results already
+available but refills each completed worker before receiving the next result.
+The drain is bounded by the number of batches that were in flight when it
+started, so newly dispatched short work cannot indefinitely delay graph
+dependency release.
 
 The default policy limits messages to eight tasks and targets eight batches per
 worker when selecting a cohort's batch size. Both settings are configurable:

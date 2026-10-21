@@ -113,6 +113,7 @@ def make_batch_state(
     command_sends: dict[int, CompletedRequest] | None = None,
     idle_workers: tuple[int, ...] = (),
     dispatch_batch_size: int | None = None,
+    dispatch_tail_started: bool = False,
 ) -> Any:
     state = BatchState()
     state.pending_tasks = deque(pending)
@@ -120,6 +121,7 @@ def make_batch_state(
     state.command_sends = {} if command_sends is None else command_sends
     state.idle_workers = deque(idle_workers)
     state.dispatch_batch_size = dispatch_batch_size
+    state.dispatch_tail_started = dispatch_tail_started
     return state
 
 
@@ -221,6 +223,33 @@ def test_large_cohort_uses_expected_stable_quantum() -> None:
     assert schedule._chunk_size(32_768) == 8  # noqa: SLF001
 
 
+def test_final_worker_wave_shrinks_to_spread_queue_tail() -> None:
+    comm = RecordingComm(size=5)
+    schedule = make_schedule(
+        comm,
+        max_tasks_per_message=8,
+        target_batches_per_worker=1,
+    )
+    tasks = tuple(make_task(index) for index in range(10))
+    state = make_batch_state(
+        pending=tasks,
+        in_flight={
+            2: (make_task(20),),
+            3: (make_task(21),),
+            4: (make_task(22),),
+        },
+        idle_workers=(1,),
+        dispatch_batch_size=8,
+    )
+
+    schedule._dispatch_available(state)  # noqa: SLF001
+
+    assert len(comm.sent[0][0].tasks) == 3
+    assert state.dispatch_batch_size == 3
+    assert state.dispatch_tail_started
+    assert state.pending_tasks == deque(tasks[3:])
+
+
 def test_adaptive_policy_reduces_narrow_queue_to_single_tasks() -> None:
     comm = RecordingComm(size=4)
     schedule = make_schedule(comm)
@@ -276,7 +305,7 @@ def test_one_worker_response_returns_multiple_completions() -> None:
     assert state.idle_workers == deque((1,))
 
 
-def test_all_available_results_are_drained_before_refill() -> None:
+def test_each_available_worker_is_refilled_before_draining_next_result() -> None:
     first_batch = (make_task(0), make_task(1))
     second_batch = (make_task(2), make_task(3))
     pending = tuple(make_task(index) for index in range(4, 8))
@@ -310,8 +339,8 @@ def test_all_available_results_are_drained_before_refill() -> None:
     assert len(completions) == 4
     assert comm.events == [
         ("recv", 2),
-        ("recv", 1),
         ("send", 2),
+        ("recv", 1),
         ("send", 1),
     ]
     assert [destination for _, destination, _, _ in comm.sent] == [2, 1]
