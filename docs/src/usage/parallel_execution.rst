@@ -182,10 +182,13 @@ Python code normally needs a process executor for actual parallelism. Process
 execution adds serialization overhead, and components, hooks, inputs, and
 worker-input context state must be serializable.
 
-Executor and MPI schedules return result-bearing context state to the driver:
-input, output, nested child state, and metadata. ``ctx.temp`` is scratch state
-and ``ctx.shared`` is not transported back. Store results that must survive
-worker execution in ``ctx.meta`` or ``ctx.output``.
+A ``ThreadPoolExecutor`` operates on the coordinator's context objects
+directly because its workers share memory. Process-backed executor schedules
+and MPI schedules instead return result-bearing context state to the driver:
+input, output, nested child state, and metadata. For those remote-worker
+backends, ``ctx.temp`` is scratch state and ``ctx.shared`` is not transported
+back. Store results that must cross a process or MPI boundary in ``ctx.meta``
+or ``ctx.output``.
 
 Fitter batching and execution
 -----------------------------

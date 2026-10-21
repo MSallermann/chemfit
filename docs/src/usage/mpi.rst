@@ -6,8 +6,8 @@ Running with MPI
 :class:`~chemfit.mpi_graph_schedule.MPIGraphScheduler` executes atomic component
 tasks on persistent MPI worker ranks. Rank zero expands input batches into
 tasks, queues them for the nonzero ranks, restores returned context state, and
-performs structural reductions. Each idle rank receives at most one task at a
-time, and receives more work as it finishes. The same scheduler works for
+performs structural reductions. Each idle rank receives one adaptive task batch
+at a time and receives more work as it finishes. The same scheduler works for
 atomic and structural components.
 
 Requirements
@@ -50,6 +50,11 @@ schedule's worker loop:
 shutdown request to every worker. Worker contexts return inputs, outputs,
 child state, and metadata to rank zero; ``ctx.temp`` and ``ctx.shared`` are not
 part of the returned result state.
+
+Closing is synchronous: rank zero waits for every worker to finish any
+in-transit result send and acknowledge shutdown. A running atomic task is not
+interrupted, so leaving the context can wait for a slow leaf task to reach this
+safe point. This avoids discarding result messages during teardown.
 
 Fitting on rank zero
 --------------------
@@ -133,6 +138,37 @@ Set ``mpi_debug_log=True`` to wrap communicator methods with verbose logging:
 This is intended for diagnosing protocol problems and can produce substantial
 output.
 
+Task batching
+-------------
+
+MPI workers execute the tasks in each message sequentially and return their
+completions together. Broad ready queues use larger messages to reduce MPI
+message rate, while narrow ready queues use smaller messages so dependent work
+is released promptly. The scheduler chooses one batch size when a ready-work
+cohort enters an empty pending queue and keeps that size during its bulk
+refills. When no more than one full worker wave remains, it shrinks the batch
+size to spread the queue tail across the workers. Tasks that become ready after
+the pending queue drains establish a new cohort and recalculate the batch size.
+
+When workers finish close together, rank zero drains the results already
+available but refills each completed worker before receiving the next result.
+The drain is bounded by the number of batches that were in flight when it
+started, so newly dispatched short work cannot indefinitely delay graph
+dependency release.
+
+The default policy limits messages to eight tasks and targets eight batches per
+worker when selecting a cohort's batch size. Both settings are configurable:
+
+.. code-block:: python
+
+   scheduler = MPIGraphScheduler(
+       max_tasks_per_message=8,
+       target_batches_per_worker=8,
+   )
+
+Set ``max_tasks_per_message=1`` to disable task batching. Both options must be
+positive integers.
+
 Failure behavior
 ----------------
 
@@ -145,6 +181,10 @@ A failure in worker or MPI machinery is catastrophic. Rank zero raises
 :class:`~chemfit.mpi_graph_schedule.MPIWorkerError`, closes the prepared schedule,
 and requests worker shutdown. A catastrophically failed schedule cannot be
 reused.
+
+An interrupt raised on rank zero is re-raised after this cleanup. A worker-side
+interrupt is reported to rank zero through the same failure path as other fatal
+worker exceptions; the worker stays alive long enough to acknowledge shutdown.
 
 Common pitfalls
 ---------------
@@ -163,10 +203,11 @@ Hooks missing on workers
    Registration on rank zero does not modify worker-side objective instances.
 
 Poor scaling
-   Leaf tasks are dispatched to idle ranks from a shared queue, without
+   Leaf task batches are dispatched to idle ranks from a shared queue, without
    cost-aware placement. Large differences in leaf cost can still leave ranks
-   idle near the end of a batch. MPI overhead can also dominate when individual
-   leaves are cheap.
+   idle near the end of a batch. For highly uneven task durations, lowering
+   ``max_tasks_per_message`` trades a higher MPI message rate for finer load
+   balancing.
 
 Single-rank launch
    With only rank zero in the communicator, the MPI schedule evaluates leaf

@@ -151,14 +151,33 @@ def test_repeated_batches_replace_context_hierarchy():
     with SerialGraphScheduler().prepare(PipelineComponent(double, add_one)) as schedule:
         assert schedule(input=2, ctx=ctx) == 5
         first_children = tuple(ctx.children)
+        first_structure = ctx.meta["chemfit.structure"]
+        first_structure["children"][0]["name"] = "mutated"
         assert schedule(4, ctx) == 9
 
     assert ctx.output == 9
     assert [child.output for child in ctx.children] == [8, 9]
+    assert ctx.meta["chemfit.structure"] is not first_structure
+    assert ctx.meta["chemfit.structure"]["children"][0]["name"] == "double"
     assert all(
         current is not previous
         for current, previous in zip(ctx.children, first_children, strict=True)
     )
+
+
+def test_extending_pipeline_rebuilds_structure_metadata_blueprint():
+    @component()
+    def double(value):
+        return 2 * value
+
+    pipeline = PipelineComponent(double, double)
+    assert pipeline(2) == 8
+
+    extended = pipeline.then(double)
+    ctx = EvaluateContext()
+
+    assert extended(2, ctx) == 16
+    assert len(ctx.meta["chemfit.structure"]["children"]) == 3
 
 
 def test_thread_backend_executes_independent_nodes_concurrently():
@@ -174,6 +193,32 @@ def test_thread_backend_executes_independent_nodes_concurrently():
         executor_factory=lambda: ThreadPoolExecutor(max_workers=2)
     ).prepare(objective) as schedule:
         assert schedule(3) == 6
+
+
+def test_thread_batch_results_are_yielded_in_completion_order():
+    release_first = threading.Event()
+
+    @component()
+    def controlled(value):
+        if value == 0:
+            assert release_first.wait(timeout=2)
+        return value
+
+    requests = [EvaluationRequest(value, EvaluateContext()) for value in (0, 1)]
+    with ExecutorGraphScheduler(
+        executor_factory=lambda: ThreadPoolExecutor(max_workers=2)
+    ).prepare(controlled) as schedule:
+        results = schedule.evaluate_many(requests)
+
+        first = next(results)
+        assert (first.index, first.value) == (1, 1)
+
+        release_first.set()
+        second = next(results)
+        assert (second.index, second.value) == (0, 0)
+
+        with pytest.raises(StopIteration):
+            next(results)
 
 
 def test_catastrophic_worker_failure_closes_schedule_but_not_borrowed_executor():
