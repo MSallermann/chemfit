@@ -38,6 +38,7 @@ def tests_mpi(session):  # noqa: ANN001
         "-vv",
         "-s",
         "tests/test_graph_schedule_semantics.py",
+        "tests/test_mpi_graph_batching.py",
         "tests/test_mpi_scheduler_failure.py",
         external=True,
     )
