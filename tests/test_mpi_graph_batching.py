@@ -13,12 +13,15 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.api import join
 from chemfit.graph_schedule_base import BatchState, NodeCompletion
+from chemfit.scheduling import EvaluationRequest
 
 MPI = pytest.importorskip("mpi4py.MPI", reason="Missing mpi4py")
 mpi_schedule = pytest.importorskip(
     "chemfit.mpi_graph_schedule",
     reason="Missing mpi4py",
 )
+
+_LARGE_PAYLOAD_SIZE = 2 * 1024 * 1024
 
 
 class CompletedRequest:
@@ -69,6 +72,25 @@ class RecordingComm:
     def Iprobe(self, *, source: int, tag: int) -> bool:  # noqa: N802
         del source, tag
         return bool(self.results)
+
+
+class LiveRecordingComm:
+    """Delegate to a live communicator while recording dispatched batch sizes."""
+
+    def __init__(self, comm: Any) -> None:
+        """Wrap a live MPI communicator."""
+        self.comm = comm
+        self.batch_sizes: list[int] = []
+
+    def __getattr__(self, name: str) -> Any:
+        """Delegate communicator operations not customized by the test."""
+        return getattr(self.comm, name)
+
+    def isend(self, message: object, *, dest: int, tag: int) -> Any:
+        """Record task-batch sizes before starting the real nonblocking send."""
+        if isinstance(message, mpi_schedule._EvaluateBatch):  # noqa: SLF001
+            self.batch_sizes.append(len(message.tasks))
+        return self.comm.isend(message, dest=dest, tag=tag)
 
 
 def make_schedule(
@@ -536,9 +558,10 @@ def test_numerical_results_match_across_batch_sizes() -> None:
     results: list[int] = []
 
     for batch_size in (1, 2, 4, 8):
-        with mpi_schedule.MPIGraphScheduler(max_tasks_per_message=batch_size).prepare(
-            objective
-        ) as schedule:
+        with mpi_schedule.MPIGraphScheduler(
+            max_tasks_per_message=batch_size,
+            target_batches_per_worker=1,
+        ).prepare(objective) as schedule:
             if schedule.rank == 0:
                 results.append(schedule(4, EvaluateContext()))
             else:
@@ -546,3 +569,35 @@ def test_numerical_results_match_across_batch_sizes() -> None:
 
     if MPI.COMM_WORLD.Get_rank() == 0:
         assert results == [408] * 4
+
+
+@pytest.mark.skipif(MPI.COMM_WORLD.Get_size() < 4, reason="requires four MPI ranks")
+def test_large_payload_batches_refill_workers_and_preserve_results() -> None:
+    """Exercise live multi-task refills beyond typical MPI eager limits."""
+
+    @component()
+    def round_trip(item: tuple[int, bytes]) -> tuple[int, bytes]:
+        return item
+
+    comm = LiveRecordingComm(MPI.COMM_WORLD)
+    with mpi_schedule.MPIGraphScheduler(
+        comm=comm,
+        max_tasks_per_message=2,
+        target_batches_per_worker=2,
+    ).prepare(round_trip) as schedule:
+        if schedule.rank != 0:
+            schedule.worker_loop()
+            return
+
+        payloads = [bytes([index]) * _LARGE_PAYLOAD_SIZE for index in range(12)]
+        requests = [
+            EvaluationRequest((index, payload), EvaluateContext())
+            for index, payload in enumerate(payloads)
+        ]
+        results = list(schedule.evaluate_many(requests))
+
+    by_index = {result.index: result.value for result in results}
+    assert by_index == {
+        index: (index, payload) for index, payload in enumerate(payloads)
+    }
+    assert comm.batch_sizes == [2] * 6

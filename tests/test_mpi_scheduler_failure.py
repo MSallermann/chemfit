@@ -1,12 +1,14 @@
 """Tests for catastrophic MPI worker failure handling."""
 
 import pickle
+from time import sleep
 from typing import Any
 
 import pytest
 
-from chemfit.abstract_objective_function import Component, EvaluateContext
+from chemfit.abstract_objective_function import Component, EvaluateContext, component
 from chemfit.combined_objective_function import CombinedObjectiveFunction
+from chemfit.scheduling import EvaluationRequest
 
 MPI = pytest.importorskip("mpi4py.MPI", reason="Missing mpi4py")
 mpi_schedule = pytest.importorskip(
@@ -15,6 +17,7 @@ mpi_schedule = pytest.importorskip(
 )
 
 Parameters = dict[str, float]
+_LARGE_PAYLOAD_SIZE = 16 * 1024 * 1024
 
 
 class UnpickleableInterrupt(KeyboardInterrupt):
@@ -277,5 +280,41 @@ def test_unpickleable_worker_failure_reaches_rank_zero_as_mpi_error() -> None:
         expected = "Worker rank 1 failed with UnpickleableInterrupt: remote catastrophe"
         with pytest.raises(mpi_schedule.MPIWorkerError, match=expected):
             schedule.evaluate({"x": 1.0}, EvaluateContext())
+
+        assert schedule.closed
+
+
+@pytest.mark.skipif(MPI.COMM_WORLD.Get_size() < 4, reason="requires four MPI ranks")
+def test_shutdown_drains_large_worker_results_after_fatal_failure() -> None:
+    """Complete rendezvous result sends before workers acknowledge shutdown."""
+
+    @component()
+    def fail_or_return(item: tuple[str, bytes]) -> bytes:
+        mode, payload = item
+        if mode == "fail":
+            msg = "live large-payload failure"
+            raise KeyboardInterrupt(msg)
+        sleep(0.25)
+        return payload
+
+    with mpi_schedule.MPIGraphScheduler(max_tasks_per_message=1).prepare(
+        fail_or_return
+    ) as schedule:
+        if schedule.rank != 0:
+            schedule.worker_loop()
+            return
+
+        payload = b"x" * _LARGE_PAYLOAD_SIZE
+        requests = [
+            # Deliver the fatal command eagerly. The other command sends still
+            # have to complete before abort can initiate shutdown, ensuring the
+            # slow workers are evaluating when the control messages arrive.
+            EvaluationRequest(("fail", b""), EvaluateContext()),
+            EvaluationRequest(("slow", payload), EvaluateContext()),
+            EvaluationRequest(("slow", payload), EvaluateContext()),
+        ]
+        expected = "live large-payload failure"
+        with pytest.raises(mpi_schedule.MPIWorkerError, match=expected):
+            list(schedule.evaluate_many(requests))
 
         assert schedule.closed
