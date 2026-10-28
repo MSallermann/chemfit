@@ -586,7 +586,7 @@ class StructuralComponent(Component[InputT_contra, OutputT_co]):
 
     def _structure_metadata(self) -> dict[str, Any]:
         """Return a fresh description of this component's immediate structure."""
-        blueprint = self._structure_metadata_blueprint
+        blueprint = getattr(self, "_structure_metadata_blueprint", None)
         if blueprint is None:
             # Custom structural components may elect not to retain a blueprint.
             # Build their metadata locally without mutating shared component state.
