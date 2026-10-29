@@ -1,7 +1,7 @@
 [project]
 name = "chemfit"
 description = "A framework for concurrent simulation-based parameter optimization in computational chemistry and physics."
-version = "3.1.1"
+version = "4.0.0"
 readme = "README.md"
 dependencies = [
     "numpy < 2.4.0",     # Nevergrad is not compatible with the newest numpy deprecations (see https://github.com/facebookresearch/nevergrad/issues/1707)
