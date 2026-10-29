@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 try:
@@ -48,7 +48,7 @@ from chemfit.graph_schedule_base import (
 from chemfit.scheduling import Scheduler
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterator, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -59,17 +59,53 @@ _CONTROL_TAG = 41003
 
 @dataclass(frozen=True, slots=True)
 class _EvaluateBatch:
+    """
+    Carry one coordinator command to a worker.
+
+    Attributes:
+        tasks:
+            Atomic graph tasks owned by the destination worker until it
+            returns the matching completion batch.
+        sequence:
+            Per-worker command number. It increases by one for every dispatch
+            and lets shutdown name the final command a worker must consume.
+
+    """
+
     tasks: tuple[NodeTask, ...]
+    sequence: int
 
 
 @dataclass(frozen=True, slots=True)
 class _BatchCompletion:
+    """
+    Return all outcomes for one evaluation command.
+
+    Attributes:
+        completions:
+            One completion for each task in the corresponding
+            :class:`_EvaluateBatch`; the coordinator validates their task
+            identities before releasing the worker.
+
+    """
+
     completions: tuple[NodeCompletion, ...]
 
 
 @dataclass(frozen=True, slots=True)
 class _Shutdown:
-    pass
+    """
+    Tell a worker to stop after consuming every dispatched command.
+
+    Attributes:
+        last_command_sequence:
+            Per-worker command fence captured by the coordinator. A worker
+            must consume or retire every command through this number before
+            acknowledging shutdown.
+
+    """
+
+    last_command_sequence: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,9 +115,58 @@ class _ShutdownAcknowledgement:
 
 @dataclass(frozen=True, slots=True)
 class _WorkerFailure:
+    """
+    Describe a fatal worker or protocol failure without serializing it.
+
+    Attributes:
+        rank:
+            Rank reporting the failure. The coordinator verifies that it
+            matches the MPI message source.
+        exception_type:
+            Qualified name of the original exception type.
+        message:
+            Best-effort string form of the original exception.
+
+    """
+
     rank: int
     exception_type: str
     message: str
+
+
+@dataclass(slots=True)
+class _WorkerProtocolState:
+    """
+    Track command consumption and the single worker shutdown transition.
+
+    Attributes:
+        prefetched:
+            A received evaluation batch waiting to run. Protocol progress may
+            receive at most one batch while a result send is pending.
+        last_command_sequence:
+            Sequence number of the most recently consumed evaluation command,
+            whether that command was evaluated, prefetched, or retired.
+        shutdown_sequence:
+            Final command sequence announced by the coordinator at shutdown.
+            The worker cannot acknowledge shutdown until it has consumed every
+            command through this sequence. ``None`` means shutdown has not
+            started.
+        failed:
+            Whether a fatal task or protocol error has poisoned this worker.
+            A failed worker consumes later commands but does not evaluate them.
+        failure_reported:
+            Whether the worker has already attempted its single failure report.
+        shutdown_acknowledged:
+            Whether the worker has sent its single shutdown acknowledgement.
+
+    """
+
+    prefetched: deque[_EvaluateBatch] = field(default_factory=deque)
+    last_command_sequence: int = 0
+    shutdown_sequence: int | None = None
+    failed: bool = False
+    failure_reported: bool = False
+    shutdown_acknowledged: bool = False
 
 
 class MPIWorkerError(RuntimeError):
@@ -116,7 +201,39 @@ def _describe_worker_failure(rank: int, exception: BaseException) -> _WorkerFail
 
 
 class MPIGraphSchedule(GraphScheduleBase):
-    """Prepared graph schedule using persistent MPI workers."""
+    """
+    Prepared graph schedule using persistent MPI workers.
+
+    The communicator must be dedicated to one live ``MPIGraphSchedule``. The
+    protocol uses fixed tags and deliberately does not multiplex independent
+    schedules on one communicator.
+
+    Attributes:
+        comm:
+            Communicator used exclusively by this schedule's protocol.
+        rank:
+            This process's rank in ``comm``. Rank zero owns graph traversal.
+        size:
+            Number of ranks in ``comm``, including the coordinator.
+        max_tasks_per_message:
+            Hard upper bound on tasks placed in one evaluation command.
+        target_batches_per_worker:
+            Number of command batches the adaptive chunker aims to preserve
+            per worker when enough work is available.
+        _workers_released:
+            Whether every worker has acknowledged shutdown. Once true, no
+            worker can still evaluate or wait for protocol messages.
+        _evaluation_active:
+            Reentrancy guard set while one ``evaluate_many()`` iterator is
+            active on the coordinator.
+        _poisoned:
+            Whether an aborted evaluation made this schedule permanently
+            unusable for further evaluation.
+        _last_command_sequence:
+            Latest sequence dispatched to each worker rank. Shutdown snapshots
+            these values as the command-consumption fences.
+
+    """
 
     def __init__(
         self,
@@ -139,6 +256,9 @@ class MPIGraphSchedule(GraphScheduleBase):
         self.max_tasks_per_message = max_tasks_per_message
         self.target_batches_per_worker = target_batches_per_worker
         self._workers_released = False
+        self._evaluation_active = False
+        self._poisoned = False
+        self._last_command_sequence = dict.fromkeys(range(1, self.size), 0)
 
         if mpi_debug_log:
             self.comm = log_all_methods(
@@ -152,35 +272,73 @@ class MPIGraphSchedule(GraphScheduleBase):
         logger.warning("[Rank %s] %s", self.rank, message)
 
     def _ensure_coordinator(self) -> None:
+        """Raises unless we are on rank 0."""
+
         if self.rank != 0:
             msg = "Graph evaluation is only supported on MPI rank 0"
             raise RuntimeError(msg)
         if self.closed:
             msg = "Prepared MPI graph schedule is closed"
             raise RuntimeError(msg)
+        if self._poisoned:
+            msg = "Prepared MPI graph schedule is poisoned"
+            raise RuntimeError(msg)
 
     def _ensure_batch_state(self, batch_state: BatchState) -> None:
+        """Construct default fields on batch_state if needed and assert their properties."""
         if not hasattr(batch_state, "pending_tasks"):
+            # Tasks ready for dispatch but not yet owned by a worker.
             batch_state.pending_tasks = deque()
             # A ready-work cohort keeps one bulk dispatch quantum, then chooses
             # one smaller quantum for its final worker wave. Recomputing after
             # every refill would create progressively smaller batches and
             # increase the result-message rate during a completion burst.
+            # None means there is no current ready-work cohort.
             batch_state.dispatch_batch_size = None
+            # True after the current cohort has made its single tail-size
+            # adjustment; it prevents repeated shrinking on later refills.
             batch_state.dispatch_tail_started = False
+            # Worker rank -> exact tasks assigned by its outstanding command.
+            # These tasks stay here until their validated result is received.
             batch_state.in_flight = {}
             # Keep nonblocking command sends alive until the corresponding
             # worker result proves that the command was received.  A blocking
             # send here can deadlock with a worker's rendezvous result send
             # when both task and result exceed the MPI eager limit.
+            # Its keys must always equal the keys of in_flight.
             batch_state.command_sends = {}
             # Rank availability changes only on dispatch and completion, so an
-            # explicit queue avoids scanning every rank on every refill.
+            # explicit queue avoids scanning every rank on every refill. It is
+            # disjoint from in_flight, and together they contain every worker.
             batch_state.idle_workers = deque(range(1, self.size))
+        self._assert_batch_state(batch_state)
+
+    def _assert_batch_state(self, batch_state: BatchState) -> None:
+        """Check the one-command-per-worker ownership invariant."""
+        idle_workers = tuple(batch_state.idle_workers)
+        idle = set(idle_workers)
+        in_flight = set(batch_state.in_flight)
+        command_sends = set(batch_state.command_sends)
+        workers = set(range(1, self.size))
+
+        assert len(idle) == len(idle_workers), "idle worker ranks must be unique"
+        assert idle.isdisjoint(in_flight), "workers cannot be idle and in flight"
+        assert idle | in_flight == workers, "every worker must have one owner state"
+        assert command_sends == in_flight, "command sends must match in-flight work"
+
+        task_ids = [(task.run_id, task.node_id) for task in batch_state.pending_tasks]
+        task_ids.extend(
+            (task.run_id, task.node_id)
+            for tasks in batch_state.in_flight.values()
+            for task in tasks
+        )
+        assert len(task_ids) == len(set(task_ids)), "each task must have one owner"
 
     def _evaluate_worker_task(
         self, task: NodeTask, *, capture_context_state: bool
     ) -> NodeCompletion:
+        """Evaluate an AtomicNode task and return a NodeCompletion."""
+
         node = self.graph.nodes[task.node_id]
         if not isinstance(node, AtomicNode):
             msg = f"MPI worker received non-atomic node {task.node_id}"
@@ -201,6 +359,7 @@ class MPIGraphSchedule(GraphScheduleBase):
 
     def _dispatch_available(self, batch_state: BatchState) -> None:
         """Assign one adaptive batch to each idle worker while work remains."""
+        self._assert_batch_state(batch_state)
         queue: deque[NodeTask] = batch_state.pending_tasks
         in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
         command_sends: dict[int, Any] = batch_state.command_sends
@@ -238,14 +397,18 @@ class MPIGraphSchedule(GraphScheduleBase):
         while queue and idle_workers:
             rank = idle_workers.popleft()
             tasks = tuple(queue.popleft() for _ in range(min(chunk_size, len(queue))))
-            command_sends[rank] = self.comm.isend(
-                _EvaluateBatch(tasks), dest=rank, tag=_COMMAND_TAG
+            sequence = self._last_command_sequence[rank] + 1
+            command_send = self.comm.isend(
+                _EvaluateBatch(tasks, sequence), dest=rank, tag=_COMMAND_TAG
             )
+            self._last_command_sequence[rank] = sequence
+            command_sends[rank] = command_send
             in_flight[rank] = tasks
 
         if not queue:
             batch_state.dispatch_batch_size = None
             batch_state.dispatch_tail_started = False
+        self._assert_batch_state(batch_state)
 
     def _chunk_size(self, queued_tasks: int) -> int:
         """Choose a message size that preserves several batches per worker."""
@@ -273,11 +436,14 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         if self.size > 1:
             self._dispatch_available(batch_state)
+        else:
+            self._assert_batch_state(batch_state)
 
-    def _receive_worker_completion(
+    def _receive_worker_completion(  # noqa: PLR0915
         self, batch_state: BatchState
     ) -> tuple[NodeCompletion, ...]:
         """Receive and validate one worker batch, then reuse or idle its rank."""
+        self._assert_batch_state(batch_state)
         in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
         command_sends: dict[int, Any] = batch_state.command_sends
         status = MPI.Status()
@@ -289,6 +455,12 @@ class MPIGraphSchedule(GraphScheduleBase):
         source = status.Get_source()
 
         if isinstance(message, _WorkerFailure):
+            if message.rank != source:
+                msg = (
+                    f"Worker failure rank {message.rank} does not match "
+                    f"message source {source}"
+                )
+                raise MPIWorkerError(msg)
             msg = (
                 f"Worker rank {message.rank} failed with "
                 f"{message.exception_type}: {message.message}"
@@ -337,7 +509,7 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         # The matching result proves that the worker fully received this
         # command, so completing the retained send cannot wait on remote
-        # progress.  Do this before replacing the per-rank request.
+        # progress. Do this before replacing the per-rank request.
         command_send = command_sends.get(source)
         if command_send is None:
             msg = f"Missing command send for worker {source}"
@@ -357,6 +529,7 @@ class MPIGraphSchedule(GraphScheduleBase):
         else:
             batch_state.idle_workers.append(source)
 
+        self._assert_batch_state(batch_state)
         return message.completions
 
     def wait_for_completions(
@@ -375,7 +548,9 @@ class MPIGraphSchedule(GraphScheduleBase):
             if not batch_state.pending_tasks:
                 batch_state.dispatch_batch_size = None
                 batch_state.dispatch_tail_started = False
-            return (self._evaluate_worker_task(task, capture_context_state=False),)
+            completion = self._evaluate_worker_task(task, capture_context_state=False)
+            self._assert_batch_state(batch_state)
+            return (completion,)
 
         in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
         if not in_flight:
@@ -401,6 +576,9 @@ class MPIGraphSchedule(GraphScheduleBase):
     def next_completion(self, batch_state: BatchState) -> NodeCompletion:
         """Return one task completion through the compatibility API."""
         if not hasattr(batch_state, "completion_buffer"):
+            # A worker command may return several completions at once. Keep
+            # those not yet exposed through this one-at-a-time compatibility
+            # method in arrival order.
             batch_state.completion_buffer = deque()
 
         if not batch_state.completion_buffer:
@@ -409,13 +587,26 @@ class MPIGraphSchedule(GraphScheduleBase):
 
         return batch_state.completion_buffer.popleft()
 
+    def evaluate_many(self, requests: Sequence[Any]) -> Iterator[Any]:
+        """Evaluate one batch, rejecting overlapping use of this schedule."""
+        self._ensure_coordinator()
+        if self._evaluation_active:
+            msg = "Concurrent evaluation on one MPI schedule is not supported"
+            raise RuntimeError(msg)
+
+        self._evaluation_active = True
+        try:
+            yield from super().evaluate_many(requests)
+        finally:
+            self._evaluation_active = False
+
     def _send_worker_result(
         self,
         result: _BatchCompletion | _WorkerFailure,
-        prefetched: deque[_EvaluateBatch] | None = None,
-    ) -> bool:
+        state: _WorkerProtocolState,
+    ) -> None:
         """
-        Send a result, returning false when shutdown was received.
+        Send a result while progressing command receipt and shutdown control.
 
         MPI result sends must always finish. Cancelling a send that may already
         be matched by rank 0 is fragile across MPI transports, and Open MPI's
@@ -423,46 +614,112 @@ class MPIGraphSchedule(GraphScheduleBase):
         receiving result messages until every worker acknowledges the request.
         """
         request = self.comm.isend(result, dest=0, tag=_RESULT_TAG)
-        shutdown_received = False
         protocol_error: MPIWorkerError | None = None
         while not request.Test():
             if self.comm.Iprobe(source=0, tag=_CONTROL_TAG):
                 command = self.comm.recv(source=0, tag=_CONTROL_TAG)
-                if not isinstance(command, _Shutdown):
-                    msg = f"Worker {self.rank} received unknown control: {command!r}"
-                    protocol_error = MPIWorkerError(msg)
-                else:
-                    shutdown_received = True
+                try:
+                    self._record_worker_shutdown(state, command)
+                except MPIWorkerError as exception:
+                    protocol_error = protocol_error or exception
 
             if (
-                not shutdown_received
-                and protocol_error is None
-                and prefetched is not None
-                and not prefetched
-                and self.comm.Iprobe(source=0, tag=_COMMAND_TAG)
-            ):
-                # Receiving while the result is still in flight prevents a
-                # blocking coordinator send from extending the inter-task gap.
-                # Queue depth two means there can be only one local prefetch.
+                (
+                    state.shutdown_sequence is not None
+                    and state.last_command_sequence < state.shutdown_sequence
+                )
+                or (
+                    state.shutdown_sequence is None
+                    and protocol_error is None
+                    and not state.failed
+                    and not state.prefetched
+                )
+            ) and self.comm.Iprobe(source=0, tag=_COMMAND_TAG):
                 command = self.comm.recv(source=0, tag=_COMMAND_TAG)
-                if not isinstance(command, _EvaluateBatch):
-                    msg = (
-                        f"Worker {self.rank} received unexpected task command: "
-                        f"{command!r}"
+                try:
+                    self._record_worker_batch(
+                        state,
+                        command,
+                        prefetch=state.shutdown_sequence is None,
                     )
-                    protocol_error = MPIWorkerError(msg)
-                else:
-                    prefetched.append(command)
+                except MPIWorkerError as exception:
+                    protocol_error = protocol_error or exception
 
         if protocol_error is not None:
             raise protocol_error
-        return not shutdown_received
+
+    def _record_worker_batch(
+        self,
+        state: _WorkerProtocolState,
+        command: object,
+        *,
+        prefetch: bool,
+    ) -> _EvaluateBatch:
+        """Validate one command sequence and optionally retain it for execution."""
+        if not isinstance(command, _EvaluateBatch):
+            msg = f"Worker {self.rank} received unexpected task command: {command!r}"
+            raise MPIWorkerError(msg)
+
+        expected = state.last_command_sequence + 1
+        if command.sequence != expected:
+            msg = (
+                f"Worker {self.rank} received command sequence {command.sequence}; "
+                f"expected {expected}"
+            )
+            raise MPIWorkerError(msg)
+
+        state.last_command_sequence = command.sequence
+        if prefetch and not state.failed:
+            state.prefetched.append(command)
+        return command
+
+    def _record_worker_shutdown(
+        self,
+        state: _WorkerProtocolState,
+        command: object,
+    ) -> None:
+        """Enter shutdown while retaining the command-consumption fence."""
+        if not isinstance(command, _Shutdown):
+            msg = f"Worker {self.rank} received unknown control: {command!r}"
+            raise MPIWorkerError(msg)
+        if state.shutdown_sequence is not None:
+            msg = f"Worker {self.rank} received duplicate shutdown control"
+            raise MPIWorkerError(msg)
+
+        state.shutdown_sequence = command.last_command_sequence
+        if state.shutdown_sequence < state.last_command_sequence:
+            msg = (
+                f"Worker {self.rank} received stale shutdown fence "
+                f"{state.shutdown_sequence} after command "
+                f"{state.last_command_sequence}"
+            )
+            state.shutdown_sequence = state.last_command_sequence
+            raise MPIWorkerError(msg)
+
+    def _retire_commands_before_shutdown(self, state: _WorkerProtocolState) -> None:
+        """Consume every command covered by shutdown without evaluating it."""
+        assert state.shutdown_sequence is not None
+        state.prefetched.clear()
+        while state.last_command_sequence < state.shutdown_sequence:
+            command = self.comm.recv(source=0, tag=_COMMAND_TAG)
+            self._record_worker_batch(state, command, prefetch=False)
+
+    def _finish_worker_shutdown(self, state: _WorkerProtocolState) -> None:
+        """Send the worker's sole shutdown acknowledgement."""
+        if state.shutdown_acknowledged:
+            return
+        state.shutdown_acknowledged = True
+        self._acknowledge_shutdown()
 
     def _acknowledge_shutdown(self) -> None:
         """Tell rank 0 it may finish closing after all result sends complete."""
         self.comm.send(_ShutdownAcknowledgement(), dest=0, tag=_CONTROL_TAG)
 
-    def _report_worker_failure(self, exception: BaseException) -> bool:
+    def _report_worker_failure(
+        self,
+        exception: BaseException,
+        state: _WorkerProtocolState,
+    ) -> None:
         """
         Report a fatal worker failure and keep serving shutdown control.
 
@@ -471,16 +728,24 @@ class MPIGraphSchedule(GraphScheduleBase):
         In particular, a signal delivered while a worker waits for a command
         must not make it disappear before rank 0 can complete shutdown.
         """
-        return self._send_worker_result(
-            _describe_worker_failure(self.rank, exception),
-        )
+        if state.failure_reported:
+            return
+        state.failure_reported = True
+        self._send_worker_result(_describe_worker_failure(self.rank, exception), state)
 
     def _next_worker_command(self) -> object:
         """Receive either an evaluation request or shutdown control."""
         status = MPI.Status()
         command = self.comm.recv(source=0, tag=MPI.ANY_TAG, status=status)
-        if status.Get_tag() not in {_COMMAND_TAG, _CONTROL_TAG}:
+        tag = status.Get_tag()
+        if tag not in {_COMMAND_TAG, _CONTROL_TAG}:
             msg = f"Worker {self.rank} received message with unknown tag"
+            raise MPIWorkerError(msg)
+        if tag == _COMMAND_TAG and not isinstance(command, _EvaluateBatch):
+            msg = f"Worker {self.rank} received unknown task command: {command!r}"
+            raise MPIWorkerError(msg)
+        if tag == _CONTROL_TAG and not isinstance(command, _Shutdown):
+            msg = f"Worker {self.rank} received unknown control: {command!r}"
             raise MPIWorkerError(msg)
         return command
 
@@ -490,32 +755,25 @@ class MPIGraphSchedule(GraphScheduleBase):
             msg = "worker_loop() cannot be called on MPI rank 0"
             raise RuntimeError(msg)
 
-        prefetched: deque[_EvaluateBatch] = deque()
-        failed = False
-        while True:
+        state = _WorkerProtocolState()
+        while state.shutdown_sequence is None:
             try:
-                command = (
-                    prefetched.popleft() if prefetched else self._next_worker_command()
-                )
-            except BaseException as exception:
-                if not self._report_worker_failure(exception):
-                    self._acknowledge_shutdown()
-                    return
-                failed = True
-                continue
+                if state.prefetched:
+                    command = state.prefetched.popleft()
+                else:
+                    command = self._next_worker_command()
+                    if isinstance(command, _Shutdown):
+                        self._record_worker_shutdown(state, command)
+                        continue
+                    command = self._record_worker_batch(
+                        state,
+                        command,
+                        prefetch=False,
+                    )
 
-            if isinstance(command, _Shutdown):
-                self._acknowledge_shutdown()
-                return
-            if failed:
-                # A fatal worker error poisons the prepared schedule.
-                # Keep receiving so the coordinator can still shut us down.
-                continue
+                if state.failed:
+                    continue
 
-            try:
-                if not isinstance(command, _EvaluateBatch):
-                    msg = f"Worker {self.rank} received unknown command: {command!r}"
-                    raise MPIWorkerError(msg)
                 result = _BatchCompletion(
                     tuple(
                         self._evaluate_worker_task(
@@ -525,17 +783,26 @@ class MPIGraphSchedule(GraphScheduleBase):
                         for task in command.tasks
                     )
                 )
-                sent = self._send_worker_result(result, prefetched)
+                self._send_worker_result(result, state)
             except BaseException as exception:
-                if not self._report_worker_failure(exception):
-                    self._acknowledge_shutdown()
-                    return
-                failed = True
-                continue
+                state.failed = True
+                try:
+                    self._report_worker_failure(exception, state)
+                except BaseException as report_exception:
+                    # Do not recursively report a failure of the failure path.
+                    # The worker still honors any shutdown already consumed.
+                    logger.error(
+                        "Worker %s could not report its protocol failure",
+                        self.rank,
+                        exc_info=(
+                            type(report_exception),
+                            report_exception,
+                            report_exception.__traceback__,
+                        ),
+                    )
 
-            if not sent:
-                self._acknowledge_shutdown()
-                return
+        self._retire_commands_before_shutdown(state)
+        self._finish_worker_shutdown(state)
 
     def release_workers(self) -> None:
         """Request shutdown and wait until every worker has stopped safely."""
@@ -543,7 +810,11 @@ class MPIGraphSchedule(GraphScheduleBase):
             return
 
         requests = [
-            self.comm.isend(_Shutdown(), dest=rank, tag=_CONTROL_TAG)
+            self.comm.isend(
+                _Shutdown(self._last_command_sequence[rank]),
+                dest=rank,
+                tag=_CONTROL_TAG,
+            )
             for rank in range(1, self.size)
         ]
 
@@ -552,6 +823,7 @@ class MPIGraphSchedule(GraphScheduleBase):
         # can complete without MPI_Cancel. The acknowledgment also means close
         # does not return while a worker can still evaluate a prefetched task.
         waiting_for_ack = set(range(1, self.size))
+        shutdown_error: MPIWorkerError | None = None
         while waiting_for_ack:
             status = MPI.Status()
             message = self.comm.recv(
@@ -562,31 +834,48 @@ class MPIGraphSchedule(GraphScheduleBase):
             source = status.Get_source()
             tag = status.Get_tag()
             if tag == _RESULT_TAG:
+                valid_result = (
+                    isinstance(message, _BatchCompletion)
+                    and all(
+                        isinstance(completion, NodeCompletion)
+                        for completion in message.completions
+                    )
+                ) or (isinstance(message, _WorkerFailure) and message.rank == source)
+                if source not in waiting_for_ack or not valid_result:
+                    msg = (
+                        f"Unexpected result from worker {source} while shutting "
+                        f"down: {message!r}"
+                    )
+                    shutdown_error = shutdown_error or MPIWorkerError(msg)
                 continue
             if tag != _CONTROL_TAG or not isinstance(message, _ShutdownAcknowledgement):
                 msg = f"Unexpected MPI message while shutting down: {message!r}"
-                raise MPIWorkerError(msg)
+                shutdown_error = shutdown_error or MPIWorkerError(msg)
+                continue
             if source not in waiting_for_ack:
                 msg = f"Unexpected shutdown acknowledgement from worker {source}"
-                raise MPIWorkerError(msg)
+                shutdown_error = shutdown_error or MPIWorkerError(msg)
+                continue
             waiting_for_ack.remove(source)
 
+        self._workers_released = True
         if requests:
             MPI.Request.Waitall(requests)
-        self._workers_released = True
+        if shutdown_error is not None:
+            raise shutdown_error
 
     def abort_batch(self, batch_state: BatchState) -> None:
-        """Discard queued work and close the poisoned MPI schedule."""
+        """Discard queued work and poison the schedule before common cleanup."""
+        self._poisoned = True
         if hasattr(batch_state, "pending_tasks"):
             batch_state.pending_tasks.clear()
-        # Every dispatched worker receives at most one command at a time.  Its
-        # command receive was posted before it could evaluate or report a
-        # failure, so these sends can be completed safely before shutdown.
+        # Release coordinator send buffers before shutdown. Completion is not
+        # treated as proof of delivery: the per-worker shutdown sequence fence
+        # separately requires every dispatched command to be consumed.
         command_sends = getattr(batch_state, "command_sends", {})
         if command_sends:
             MPI.Request.Waitall(list(command_sends.values()))
             command_sends.clear()
-        self.close()
 
     def close(self) -> None:
         """Release workers and permanently close the prepared schedule."""
@@ -594,7 +883,11 @@ class MPIGraphSchedule(GraphScheduleBase):
             return
         try:
             self.release_workers()
-        finally:
+        except BaseException:
+            if self._workers_released:
+                super().close()
+            raise
+        else:
             super().close()
 
 

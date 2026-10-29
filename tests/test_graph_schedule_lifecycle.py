@@ -5,9 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 
 from chemfit.abstract_objective_function import (
+    PARENT_INPUT,
     Component,
     EvaluateContext,
     PipelineComponent,
+    StructuralComponent,
     component,
 )
 from chemfit.combined_objective_function import CombinedObjectiveFunction
@@ -178,6 +180,34 @@ def test_extending_pipeline_rebuilds_structure_metadata_blueprint():
 
     assert extended(2, ctx) == 16
     assert len(ctx.meta["chemfit.structure"]["children"]) == 3
+
+
+def test_custom_structure_without_super_init_builds_metadata_on_demand():
+    @component()
+    def double(value):
+        return 2 * value
+
+    class CustomStructure(StructuralComponent[int, int]):
+        def __init__(self) -> None:
+            Component.__init__(self)
+
+        def components(self):
+            return (double,)
+
+        def component_dependencies(self):
+            return ((),)
+
+        def component_inputs(self):
+            return ((PARENT_INPUT,),)
+
+        def combine_outcomes(self, outcomes, ctx):
+            del ctx
+            return outcomes[0]
+
+    ctx = EvaluateContext()
+
+    assert CustomStructure()(3, ctx) == 6
+    assert ctx.meta["chemfit.structure"]["children"] == [{"index": 0, "name": "double"}]
 
 
 def test_thread_backend_executes_independent_nodes_concurrently():
