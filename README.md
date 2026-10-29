@@ -18,10 +18,10 @@ ChemFit can be used to:
 
 - fit model parameters simultaneously against energies, forces, structures, densities, or other observables;
 - combine reference data from different systems and simulation conditions into one objective;
-- use [ASE calculations and geometry optimizations](https://chemfit.readthedocs.io/en/latest/src/usage/ase_objective_function_api.html) as fitting terms;
-- build [external simulation workflows](https://chemfit.readthedocs.io/en/latest/src/usage/external_computer.html) that generate input, run programs, post-process output, and extract quantities;
-- evaluate independent calculations concurrently using [threads, processes, or custom schedulers](https://chemfit.readthedocs.io/en/latest/src/usage/parallel_execution.html), or distribute them using [MPI](https://chemfit.readthedocs.io/en/latest/src/usage/mpi.html);
-- compose [pipelines, joins, and arbitrary dependency graphs](https://chemfit.readthedocs.io/en/latest/src/usage/advanced_concepts.html), including nested components and shared intermediate computations;
+- use [ASE calculations and geometry optimizations](https://chemfit.readthedocs.io/en/main/src/usage/ase_objective_function_api.html) as fitting terms;
+- build [external simulation workflows](https://chemfit.readthedocs.io/en/main/src/usage/external_computer.html) that generate input, run programs, post-process output, and extract quantities;
+- evaluate independent calculations concurrently using [threads, processes, or custom schedulers](https://chemfit.readthedocs.io/en/main/src/usage/parallel_execution.html), or distribute them using [MPI](https://chemfit.readthedocs.io/en/main/src/usage/mpi.html);
+- compose [pipelines, joins, and arbitrary dependency graphs](https://chemfit.readthedocs.io/en/main/src/usage/advanced_concepts.html), including nested components and shared intermediate computations;
 - use Nevergrad, SciPy, or a custom optimization loop.
 
 # Installation
@@ -86,7 +86,7 @@ Each ASE calculation produces quantities, `with_loss()` turns those quantities i
 
 `chemfit.fit_nevergrad()` then optimizes the parameters and returns a `FitResult` containing the best parameters and loss, the optimizer recommendation, and one fitting context per candidate slot. Each context records its slot's current and best evaluation state; it is not a history of every evaluation.
 
-For more examples of constructing objectives, see the [common workflows](https://chemfit.readthedocs.io/en/latest/src/usage/public_api.html).
+For more examples of constructing objectives, see the [common workflows](https://chemfit.readthedocs.io/en/main/src/usage/public_api.html).
 
 ## From small examples to larger fitting problems
 
@@ -102,7 +102,7 @@ parameters ────├─ liquid / density ────── loss ─┼─
 
 The individual terms do not need to use the same simulation method. ASE calculations, external programs, and custom Python computations can participate in the same objective.
 
-Objectives can also be [nested and combined](https://chemfit.readthedocs.io/en/latest/src/usage/combined_objective_function.html) with weights, custom reductions, evaluation metadata, and exception handling.
+Objectives can also be [nested and combined](https://chemfit.readthedocs.io/en/main/src/usage/combined_objective_function.html) with weights, custom reductions, evaluation metadata, and exception handling.
 
 # External simulation workflows
 
@@ -126,7 +126,7 @@ An external workflow can contain Python hooks, commands, output parsers, and com
 
 This allows external simulation codes that can be launched and inspected from Python to participate in a ChemFit objective alongside native Python or ASE calculations.
 
-See the [external simulation documentation](https://chemfit.readthedocs.io/en/latest/src/usage/external_computer.html) for details on commands, hooks, parsers, completion files, working directories, and failure handling.
+See the [external simulation documentation](https://chemfit.readthedocs.io/en/main/src/usage/external_computer.html) for details on commands, hooks, parsers, completion files, working directories, and failure handling.
 
 # Concurrent execution
 
@@ -151,7 +151,7 @@ An explicit `concurrent.futures`-compatible executor can also be supplied, for e
 
 The objective itself does not change.
 
-See [parallel execution](https://chemfit.readthedocs.io/en/latest/src/usage/parallel_execution.html) for executors, schedulers, batching, and lower-level control.
+See [parallel execution](https://chemfit.readthedocs.io/en/main/src/usage/parallel_execution.html) for executors, schedulers, batching, and lower-level control.
 
 ## MPI
 
@@ -187,7 +187,7 @@ Install the MPI dependencies with:
 pip install "chemfit[mpi]"
 ```
 
-See the [MPI documentation](https://chemfit.readthedocs.io/en/latest/src/usage/mpi.html) for setup and execution details.
+See the [MPI documentation](https://chemfit.readthedocs.io/en/main/src/usage/mpi.html) for setup and execution details.
 
 # Optimization
 
@@ -197,13 +197,13 @@ The high-level `chemfit.fit_nevergrad()` interface provides derivative-free opti
 
 The objective and its execution strategy can therefore be reused when changing optimization methods.
 
-See the [fitting documentation](https://chemfit.readthedocs.io/en/latest/src/usage/fitter.html) for the available fitting interfaces.
+See the [fitting documentation](https://chemfit.readthedocs.io/en/main/src/usage/fitter.html) for the available fitting interfaces.
 
 # Evaluation data and instrumentation
 
 ChemFit retains inputs, outputs, metadata, failures, and nested evaluations in evaluation contexts.
 
-[Evaluation hooks](https://chemfit.readthedocs.io/en/latest/src/usage/objective_hooks.html) can add instrumentation such as timing, unique evaluation IDs, logging, or application-specific diagnostics without changing the simulation or loss implementation.
+[Evaluation hooks](https://chemfit.readthedocs.io/en/main/src/usage/objective_hooks.html) can add instrumentation such as timing, unique evaluation IDs, logging, or application-specific diagnostics without changing the simulation or loss implementation.
 
 # Limitations and alternatives
 
