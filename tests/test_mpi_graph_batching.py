@@ -107,6 +107,12 @@ def make_schedule(
     schedule.size = comm.size
     schedule.max_tasks_per_message = max_tasks_per_message
     schedule.target_batches_per_worker = target_batches_per_worker
+    schedule._poisoned = False  # noqa: SLF001
+    schedule._evaluation_active = False  # noqa: SLF001
+    schedule._workers_released = False  # noqa: SLF001
+    schedule._last_command_sequence = dict.fromkeys(  # noqa: SLF001
+        range(1, schedule.size), 0
+    )
     return schedule
 
 
@@ -259,6 +265,11 @@ def test_final_worker_wave_shrinks_to_spread_queue_tail() -> None:
             2: (make_task(20),),
             3: (make_task(21),),
             4: (make_task(22),),
+        },
+        command_sends={
+            2: CompletedRequest(),
+            3: CompletedRequest(),
+            4: CompletedRequest(),
         },
         idle_workers=(1,),
         dispatch_batch_size=8,
@@ -444,8 +455,8 @@ def test_worker_returns_ordinary_exception_alongside_other_results() -> None:
     failure = ValueError("ordinary failure")
     commands = deque(
         (
-            mpi_schedule._EvaluateBatch(tasks),  # noqa: SLF001
-            mpi_schedule._Shutdown(),  # noqa: SLF001
+            mpi_schedule._EvaluateBatch(tasks, 1),  # noqa: SLF001
+            mpi_schedule._Shutdown(1),  # noqa: SLF001
         )
     )
     sent: list[object] = []
@@ -458,10 +469,8 @@ def test_worker_returns_ordinary_exception_alongside_other_results() -> None:
             failure if task is tasks[1] else task.input,
         )
 
-    def send(result: object, prefetched: object = None) -> bool:
-        assert prefetched is not None
+    def send(result: object, _state: object) -> None:
         sent.append(result)
-        return True
 
     schedule._next_worker_command = commands.popleft  # type: ignore[method-assign]  # noqa: SLF001
     schedule._evaluate_worker_task = evaluate  # type: ignore[method-assign]  # noqa: SLF001
@@ -492,8 +501,8 @@ def test_fatal_failure_aborts_rest_of_worker_batch() -> None:
     tasks = (make_task(0), make_task(1), make_task(2))
     commands = deque(
         (
-            mpi_schedule._EvaluateBatch(tasks),  # noqa: SLF001
-            mpi_schedule._Shutdown(),  # noqa: SLF001
+            mpi_schedule._EvaluateBatch(tasks, 1),  # noqa: SLF001
+            mpi_schedule._Shutdown(1),  # noqa: SLF001
         )
     )
     evaluated: list[Any] = []
@@ -511,7 +520,7 @@ def test_fatal_failure_aborts_rest_of_worker_batch() -> None:
     schedule._next_worker_command = commands.popleft  # type: ignore[method-assign]  # noqa: SLF001
     schedule._evaluate_worker_task = evaluate  # type: ignore[method-assign]  # noqa: SLF001
     schedule._report_worker_failure = (  # type: ignore[method-assign]  # noqa: SLF001
-        lambda exception: failures.append(exception) is None
+        lambda exception, _state: failures.append(exception)
     )
     schedule._acknowledge_shutdown = (  # type: ignore[method-assign]  # noqa: SLF001
         lambda: acknowledgements.append(None)
