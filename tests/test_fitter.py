@@ -158,8 +158,12 @@ def test_non_finite_or_non_numeric_results_use_the_penalty(value):
 
 def test_swallowed_exception_uses_the_penalty_and_counts_the_evaluation():
     def failing(_parameters):
-        msg = "bad parameters"
-        raise ValueError(msg)
+        try:
+            cause_msg = "invalid input"
+            raise LookupError(cause_msg)
+        except LookupError as cause:
+            msg = "bad parameters"
+            raise ValueError(msg) from cause
 
     fitter = Fitter(
         failing,
@@ -171,6 +175,17 @@ def test_swallowed_exception_uses_the_penalty_and_counts_the_evaluation():
 
     assert fitter.evaluate({"x": 1.0}) == 1e5
     assert fitter.contexts[0].n_evals == 1
+    exception = fitter.contexts[0].output
+    assert isinstance(exception, ValueError)
+    assert exception.__traceback__ is None
+    assert isinstance(exception.__cause__, LookupError)
+    assert exception.__cause__.__traceback__ is None
+    assert fitter.contexts[0].to_record()["root"]["output"] == {
+        "__type__": "exception",
+        "module": "builtins",
+        "class": "ValueError",
+        "message": "bad parameters",
+    }
 
 
 def test_nevergrad_accepts_partial_explicit_parameterization():
