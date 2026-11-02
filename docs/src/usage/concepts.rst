@@ -237,7 +237,7 @@ order and existing ``chemfit.structure`` metadata are preserved. A
 ``opt_context`` snapshot is intentionally omitted; serialize that context
 directly when a persistent record of the best evaluation is needed.
 
-Node status is derived from the stored output:
+An actual context's status is derived from its stored output:
 
 - ``normal`` means the output is any ordinary value, including ``None``.
 - ``exception`` means the output is an exception.
@@ -246,6 +246,17 @@ Node status is derived from the stored output:
 - ``no_output`` means the output is ``NO_OUTPUT``. Because skipped child
   outcomes are not always retained in contexts, this status may include
   skipped evaluations.
+- ``not_recorded`` is used only for synthetic placeholders when
+  ``chemfit.structure`` declares children but evaluation stopped before their
+  contexts were created.
+
+Structural components create all immediate child contexts in declaration
+order before running any child, so a failed child does not shift the paths of
+later children. If an entered structural scope has no child contexts at all,
+``to_record()`` uses its existing ``chemfit.structure`` declaration to add a
+placeholder for each known child position. Placeholders do not modify the
+runtime context and do not invent deeper descendants whose structure is
+unknown.
 
 The value converter preserves JSON-compatible scalar and mapping values and
 supports lists, tuples, NumPy scalars and arrays, exceptions, ``NO_OUTPUT``,
