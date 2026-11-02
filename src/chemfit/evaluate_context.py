@@ -123,9 +123,7 @@ class EvaluateContext:
 
         Context subclasses should override this method when they own state
         that belongs in ``to_record()``. Each mapping key becomes a top-level
-        section on that context node. Section values pass through the same
-        JSON-compatible conversion and cycle detection as the core context
-        fields, without requiring the serializer to know the subclass.
+        section on that context node.
 
         Overrides should preserve sections returned by ``super()`` so multiple
         levels of context specialization compose cleanly.
