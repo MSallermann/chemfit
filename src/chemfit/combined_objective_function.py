@@ -294,7 +294,7 @@ class CombinedObjectiveFunction(JoinedComponent[ParametersT, float]):
 
         """
 
-        outcomes_filtered: list[float | None | Exception | NoOutput] = list(outcomes)
+        outcomes_filtered: list[float | Exception | NoOutput | None] = list(outcomes)
 
         # apply exception handlers to outcomes
         for i in range(self.n_components()):
