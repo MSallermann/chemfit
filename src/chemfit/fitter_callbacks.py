@@ -108,7 +108,6 @@ def _write_json_atomic(
             json.dump(
                 data,
                 output_file,
-                indent=4,
                 cls=NumpyEncoder,
                 allow_nan=True,
             )
