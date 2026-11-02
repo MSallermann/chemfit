@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
 from pydictnest import flatten_dict
 
 if TYPE_CHECKING:
@@ -40,8 +41,12 @@ def merge_quantities(
     quantities.update(new_quantities)
 
 
-def next_free_folder(base: Path) -> Path:
-    """If 'path/to/base' does not exist, return 'path/to/base'. Otherwise attempt 'path/to/base_0', 'path/to/base_1', etc. until finding a non-existent Path, then return that."""
+def next_free_path(base: Path) -> Path:
+    """
+    If `path/to/base.ext` does not exist, return `path/to/base.ext`.
+
+    Otherwise, attempt `path/to/base_0.ext`, `path/to/base_1.ext`, etc. until finding a non-existent Path, then return that.
+    """
     base = Path(base)
 
     if not base.exists():
@@ -49,7 +54,7 @@ def next_free_folder(base: Path) -> Path:
 
     i = 0
     while True:
-        candidate = base.with_name(f"{base.name}_{i}")
+        candidate = base.with_name(f"{base.stem}_{i}{base.suffix}")
         if not candidate.exists():
             return candidate
         i += 1

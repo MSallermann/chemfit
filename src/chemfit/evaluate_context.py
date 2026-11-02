@@ -4,6 +4,7 @@ import copy
 
 # Keep Mapping available for runtime annotation introspection of the public API.
 from collections.abc import Mapping  # noqa: TC003
+from importlib import import_module
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,7 +17,15 @@ class NoOutput(CopyStableSentinel): ...
 NO_OUTPUT = NoOutput()
 
 # subclasses may not use any of these keys for their custom `record_sections``
-RESERVED_RECORD_SECTION_KEYS = ("input", "output", "meta", "status", "children", "path")
+RESERVED_RECORD_SECTION_KEYS = (
+    "input",
+    "output",
+    "meta",
+    "status",
+    "children",
+    "path",
+    "step",
+)
 
 
 class EvaluateContext:
@@ -115,9 +124,9 @@ class EvaluateContext:
         """
         # The serializer imports EvaluateContext for traversal, so defer this
         # reverse dependency until the method is called.
-        from chemfit.context_serialization import context_to_record
+        context_serialization = import_module("chemfit.context_serialization")
 
-        return context_to_record(self, strict=strict)
+        return context_serialization.context_to_record(self, strict=strict)
 
     def record_sections(self) -> Mapping[str, Any]:
         """
