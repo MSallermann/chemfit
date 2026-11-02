@@ -111,11 +111,53 @@ def serialize_context(
             )
             for k, v in record_sections.items()
         },
-        "children": [
-            serialize_context(child, path=[*path, str(idx)], strict=strict)
-            for idx, child in enumerate(context.children)
-        ],
+        "children": serialize_children(context, path, strict=strict),
     }
+
+
+def serialize_children(
+    context: EvaluateContext,
+    path: list[str],
+    *,
+    strict: bool,
+) -> list[dict[str, Any]]:
+    """Serialize recorded children or known, entirely missing declared slots."""
+    # Structural evaluation links all immediate children at once, in declaration
+    # order. A nonempty list is therefore already complete and positionally stable.
+    if context.children:
+        return [
+            serialize_context(child, path=[*path, str(index)], strict=strict)
+            for index, child in enumerate(context.children)
+        ]
+
+    structure = context.meta.get("chemfit.structure")
+    if not isinstance(structure, Mapping):
+        return []
+
+    declarations = structure.get("children")
+    if not isinstance(declarations, list):
+        return []
+
+    indices = []
+    for position, declaration in enumerate(declarations):
+        if not isinstance(declaration, Mapping):
+            return []
+        index = declaration.get("index")
+        if isinstance(index, bool) or not isinstance(index, int) or index != position:
+            return []
+        indices.append(index)
+
+    return [
+        {
+            "input": {_TYPE_TAG_KEY: "no_output"},
+            "output": {_TYPE_TAG_KEY: "no_output"},
+            "meta": {},
+            "status": "not_recorded",
+            "path": ".".join([*path, str(index)]),
+            "children": [],
+        }
+        for index in indices
+    ]
 
 
 def serialize_value(  # noqa: PLR0911, PLR0912

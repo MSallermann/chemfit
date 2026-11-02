@@ -1,15 +1,19 @@
 """Tests for persistent evaluation-context records."""
 
+import copy
 import json
 from importlib.metadata import version
 
 import numpy as np
 import pytest
 
-from chemfit.abstract_objective_function import Skipped
+from chemfit.abstract_objective_function import PipelineComponent, Skipped, component
+from chemfit.api import join
 from chemfit.context_serialization import ContextSerializationError
 from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext
 from chemfit.fitter import FitContext
+from chemfit.graph_schedule_base import SerialGraphScheduler
+from chemfit.scheduling import DirectScheduler
 
 
 class UnsupportedValue:
@@ -31,6 +35,18 @@ class InvalidCustomContext(EvaluateContext):
 
     def record_sections(self):
         return {"status": "custom"}
+
+
+@pytest.fixture(
+    params=[DirectScheduler(), SerialGraphScheduler()], ids=["direct", "graph"]
+)
+def structural_scheduler(request):
+    return request.param
+
+
+def evaluate(scheduler, objective, value, ctx):
+    with scheduler.prepare(objective) as schedule:
+        return schedule(value, ctx)
 
 
 def test_successful_context_produces_versioned_json_record():
@@ -82,6 +98,145 @@ def test_nested_contexts_have_stable_path_ids_and_preserve_order():
         "children": [{"index": 0}, {"index": 1}],
         "dependencies": [[], [0]],
     }
+
+
+def test_normal_structural_evaluation_preserves_declared_child_paths(
+    structural_scheduler,
+):
+    @component()
+    def add_one(value):
+        return value + 1
+
+    @component()
+    def double(value):
+        return value * 2
+
+    objective = PipelineComponent(add_one, double).then(add_one)
+    ctx = EvaluateContext()
+
+    assert evaluate(structural_scheduler, objective, 2, ctx) == 7
+    original_children = tuple(ctx.children)
+    original_meta = copy.deepcopy(ctx.meta)
+
+    root = ctx.to_record()["root"]
+
+    assert [child["path"] for child in root["children"]] == [
+        "root.0",
+        "root.1",
+        "root.2",
+    ]
+    assert [child["output"] for child in root["children"]] == [3, 6, 7]
+    assert [child["status"] for child in root["children"]] == ["normal"] * 3
+    assert tuple(ctx.children) == original_children
+    assert ctx.meta == original_meta
+
+
+def test_failed_child_does_not_shift_independent_sibling_paths(structural_scheduler):
+    @component()
+    def fail(_value):
+        msg = "failed child"
+        raise ValueError(msg)
+
+    @component()
+    def add_one(value):
+        return value + 1
+
+    @component()
+    def double(value):
+        return value * 2
+
+    objective = join(fail, add_one, double)
+    ctx = EvaluateContext()
+
+    result = evaluate(structural_scheduler, objective, 3, ctx)
+    assert isinstance(result[0], ValueError)
+    assert result[1:] == (4, 6)
+
+    children = ctx.to_record()["root"]["children"]
+    assert [child["path"] for child in children] == [
+        "root.0",
+        "root.1",
+        "root.2",
+    ]
+    assert [child["status"] for child in children] == [
+        "exception",
+        "normal",
+        "normal",
+    ]
+    assert [child["output"] for child in children[1:]] == [4, 6]
+
+
+def test_skipped_nested_scope_keeps_context_and_declared_descendants(
+    structural_scheduler,
+):
+    @component()
+    def fail(_value):
+        msg = "upstream failure"
+        raise ValueError(msg)
+
+    @component()
+    def must_not_run(_value):
+        msg = "skipped component ran"
+        raise AssertionError(msg)
+
+    nested = PipelineComponent(must_not_run, must_not_run)
+    objective = PipelineComponent(fail, nested)
+    ctx = EvaluateContext()
+
+    with pytest.raises(ValueError, match="upstream failure"):
+        evaluate(structural_scheduler, objective, 3, ctx)
+
+    root = ctx.to_record()["root"]
+    assert [child["path"] for child in root["children"]] == ["root.0", "root.1"]
+    assert [child["status"] for child in root["children"]] == [
+        "exception",
+        "no_output",
+    ]
+    assert [child["path"] for child in root["children"][1]["children"]] == [
+        "root.1.0",
+        "root.1.1",
+    ]
+    assert all(
+        child["status"] == "not_recorded" for child in root["children"][1]["children"]
+    )
+
+
+def test_failed_structural_begin_serializes_declared_child_placeholders(
+    structural_scheduler,
+):
+    @component()
+    def identity(value):
+        return value
+
+    objective = PipelineComponent(identity, identity).then(identity)
+
+    def fail_before_children(_ctx):
+        msg = "begin failure"
+        raise RuntimeError(msg)
+
+    objective.register_eval_hook(pre=fail_before_children)
+    ctx = EvaluateContext()
+
+    with pytest.raises(RuntimeError, match="begin failure"):
+        evaluate(structural_scheduler, objective, 3, ctx)
+
+    assert ctx.children == []
+    original_meta = copy.deepcopy(ctx.meta)
+    children = ctx.to_record()["root"]["children"]
+
+    assert children == [
+        {
+            "input": {"__type__": "no_output"},
+            "output": {"__type__": "no_output"},
+            "meta": {},
+            "status": "not_recorded",
+            "path": f"root.{index}",
+            "children": [],
+        }
+        for index in range(3)
+    ]
+    assert ctx.children == []
+    assert ctx.meta == original_meta
 
 
 def test_status_distinguishes_failure_none_and_no_output():
