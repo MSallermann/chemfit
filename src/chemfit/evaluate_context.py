@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import copy
+
+# Keep Mapping available for runtime annotation introspection of the public API.
+from collections.abc import Mapping  # noqa: TC003
 from types import SimpleNamespace
 from typing import Any
 
@@ -9,6 +12,9 @@ class NoOutput: ...
 
 
 NO_OUTPUT = NoOutput()
+
+# subclasses may not use any of these keys for their custom `record_sections``
+RESERVED_RECORD_SECTION_KEYS = ("input", "output", "meta", "status", "children", "path")
 
 
 class EvaluateContext:
@@ -86,6 +92,23 @@ class EvaluateContext:
                 child.to_summary(recursive=True) for child in self.children
             ]
         return summary
+
+    def record_sections(self) -> Mapping[str, Any]:
+        """
+        Return additional named sections for persistent serialization.
+
+        Context subclasses should override this method when they own state
+        that belongs in ``to_record()``. Each mapping key becomes a top-level
+        section on that context node. Section values pass through the same
+        JSON-compatible conversion and cycle detection as the core context
+        fields, without requiring the serializer to know the subclass.
+
+        Overrides should preserve sections returned by ``super()`` so multiple
+        levels of context specialization compose cleanly.
+
+        NOTE: None of the keys in RESERVED_RECORD_SECTIONS may be used.
+        """
+        return {}
 
     def _set_defaults(
         self, config: SimpleNamespace | None, shared: SimpleNamespace | None
