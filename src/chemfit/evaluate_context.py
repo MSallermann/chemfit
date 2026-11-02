@@ -7,8 +7,10 @@ from collections.abc import Mapping  # noqa: TC003
 from types import SimpleNamespace
 from typing import Any
 
+from chemfit.sentinel import CopyStableSentinel
 
-class NoOutput: ...
+
+class NoOutput(CopyStableSentinel): ...
 
 
 NO_OUTPUT = NoOutput()
@@ -113,7 +115,7 @@ class EvaluateContext:
         """
         # The serializer imports EvaluateContext for traversal, so defer this
         # reverse dependency until the method is called.
-        from chemfit.context_serialization import context_to_record  # noqa: PLC0415
+        from chemfit.context_serialization import context_to_record
 
         return context_to_record(self, strict=strict)
 
