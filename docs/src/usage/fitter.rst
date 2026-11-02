@@ -346,8 +346,38 @@ with the ``initial_observations`` argument of
 :func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` or
 :py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`.
 
-It allows evaluation results to be persisted and later reused to seed a
-new optimization:
+It writes one versioned :meth:`~chemfit.evaluate_context.EvaluateContext.to_record`
+document for each candidate context. The callback step is stored as
+``record["root"]["fit"]["step"]``. The saved parameters and loss can be
+extracted from ``record["root"]["input"]`` and
+``record["root"]["fit"]["loss"]`` and later reused to seed a new optimization:
+
+.. code-block:: json
+
+    {
+      "format": "chemfit.evaluate_context",
+      "schema_version": 1,
+      "chemfit_version": "4.0.0",
+      "root": {
+        "input": {"epsilon": 0.7, "sigma": 1.0},
+        "output": 0.42,
+        "meta": {},
+        "status": "normal",
+        "path": "root",
+        "fit": {
+          "loss": 0.42,
+          "n_evals": 17,
+          "step": 5
+        },
+        "children": []
+      }
+    }
+
+``format`` identifies an evaluation-context document. ``schema_version``
+identifies its data contract, while ``chemfit_version`` identifies the ChemFit
+release that wrote it. Every child in ``children`` uses the context-node format
+documented in :ref:`evaluation-record-format` and has a stable record-local
+``path``.
 
 .. code-block:: python
 
@@ -370,11 +400,19 @@ tolerance. Metadata and checkpoint JSON files are written through temporary
 files and published atomically, so an interrupted write does not replace the
 previous complete file with partial JSON.
 
-Best-parameter checkpoints preserve the evaluation hierarchy of their
-incumbent. Alongside the root ``meta`` and ``quantities`` fields, their
-``children`` field contains recursive child summaries from the incumbent's
-``opt_context`` snapshot. This keeps metadata emitted by nested objective
-components associated with the saved best parameters.
+Both callbacks use the same versioned record structure. Best-parameter
+checkpoints serialize the incumbent's ``opt_context`` snapshot, preserving its
+complete evaluation hierarchy and the metadata emitted by nested objective
+components. Pass ``use_legacy_format=True`` to
+:class:`~chemfit.fitter_callbacks.CheckpointBestParameters` only when an
+existing consumer still requires the deprecated flat checkpoint structure.
+That legacy structure exposes ``step``, ``loss``, ``parameters``, ``meta``,
+``quantities``, and ``children`` directly at the document root and does not
+include schema or ChemFit version fields.
+
+With ``dont_overwrite=True``, the first checkpoint uses the requested path.
+Later checkpoints use ``_0``, ``_1``, and subsequent numeric suffixes without
+replacing an existing file.
 
 ----------------------------------
 SciPy backend

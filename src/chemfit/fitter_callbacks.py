@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import tempfile
+from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ import numpy as np
 from chemfit.abstract_objective_function import Skipped
 from chemfit.evaluate_context import NoOutput
 from chemfit.fitter import FitContext
+from chemfit.utils import next_free_path
 
 logger = logging.getLogger(__name__)
 
@@ -90,9 +92,9 @@ def _write_json_atomic(
     data: object,
     *,
     overwrite: bool = True,
-    skipkeys: bool = False,
 ) -> None:
     """Write JSON completely before exposing it at its destination path."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(
         dir=path.parent,
@@ -107,8 +109,8 @@ def _write_json_atomic(
                 data,
                 output_file,
                 indent=4,
-                skipkeys=skipkeys,
                 cls=NumpyEncoder,
+                allow_nan=True,
             )
             output_file.flush()
             os.fsync(output_file.fileno())
@@ -125,8 +127,47 @@ def _write_json_atomic(
         temp_path.unlink(missing_ok=True)
 
 
+def write_json_unique(path: Path, data: object) -> Path:
+    """Write to the next free path without replacing an existing file."""
+
+    while True:
+        write_path = next_free_path(path)
+        try:
+            _write_json_atomic(write_path, data, overwrite=False)
+        except FileExistsError:
+            # Another writer may have claimed the path after
+            # ``next_free_path`` checked it. Select a new path and retry.
+            continue
+        return write_path
+
+
+def fit_context_record(step: int, ctx: FitContext) -> dict[str, Any]:
+    """Return the persistent fitter record shared by callback writers."""
+
+    record = ctx.to_record()
+    fit = record["root"]["fit"]
+    if not isinstance(fit, MutableMapping):
+        msg = "FitContext.to_record() returned a non-mapping 'fit' section"
+        raise TypeError(msg)
+    fit["step"] = step
+    return record
+
+
+def legacy_checkpoint_record(step: int, ctx: FitContext) -> dict[str, Any]:
+    """Return the pre-``to_record`` best-parameter checkpoint shape."""
+
+    return {
+        "step": step,
+        "loss": ctx.loss,
+        "parameters": ctx.parameters,
+        "meta": ctx.meta,
+        "quantities": ctx.output if isinstance(ctx.output, dict) else None,
+        "children": [child.to_summary(recursive=True) for child in ctx.children],
+    }
+
+
 class SaveMetaData:
-    def __init__(self, output_folder: Path | str):
+    def __init__(self, output_folder: Path | str, use_legacy_format: bool = False):
         """
         Initialize a metadata-saving callback.
 
@@ -141,14 +182,19 @@ class SaveMetaData:
         """
         self.output_folder = Path(output_folder)
         self.output_folder.mkdir(parents=True, exist_ok=True)
+        self.use_legacy_format = use_legacy_format
 
     def __call__(self, step: int, ctxs: list[FitContext]):
         try:
             for ictx, ctx in enumerate(ctxs):
+                record = (
+                    legacy_checkpoint_record(step, ctx)
+                    if self.use_legacy_format
+                    else fit_context_record(step, ctx)
+                )
                 _write_json_atomic(
                     self.output_folder / f"step_{step}_ctx_{ictx}.json",
-                    ctx.to_summary(recursive=True),
-                    skipkeys=True,
+                    record,
                 )
         except Exception:
             logger.exception("Exception when trying to save metadata!")
@@ -172,7 +218,12 @@ class CheckpointBestParameters:
 
     """
 
-    def __init__(self, path: Path | str, dont_overwrite: bool = False):
+    def __init__(
+        self,
+        path: Path | str,
+        dont_overwrite: bool = False,
+        use_legacy_format: bool = False,
+    ):
         """
         Initialize the checkpoint callback.
 
@@ -182,13 +233,15 @@ class CheckpointBestParameters:
                 found.
             dont_overwrite: Whether to preserve earlier checkpoints by adding a
                 numeric suffix to each new checkpoint path.
+            use_legacy_format: Write the deprecated flat checkpoint structure
+                instead of the versioned ``FitContext.to_record()`` structure.
 
         """
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.best_loss = None
         self.dont_overwrite = dont_overwrite
-        self.counter = -1
+        self.use_legacy_format = use_legacy_format
 
     def __call__(self, step: int, ctxs: list[FitContext]):
         for ctx in ctxs:
@@ -197,42 +250,16 @@ class CheckpointBestParameters:
                 continue
 
             if self.best_loss is None or opt_context.loss < self.best_loss:
-                data = {
-                    "step": step,
-                    "loss": opt_context.loss,
-                    "parameters": opt_context.parameters,
-                    "meta": opt_context.meta,
-                    "quantities": (
-                        opt_context.output
-                        if isinstance(opt_context.output, dict)
-                        else None
-                    ),
-                    "children": [
-                        child.to_summary(recursive=True)
-                        for child in opt_context.children
-                    ],
-                }
-
-                write_out_path = self.path
+                record = (
+                    legacy_checkpoint_record(step, opt_context)
+                    if self.use_legacy_format
+                    else fit_context_record(step, opt_context)
+                )
                 if self.dont_overwrite:
-                    next_counter = self.counter + 1
-                    while True:
-                        write_out_path = self.path.with_name(
-                            f"{self.path.stem}_{next_counter}{self.path.suffix}"
-                        )
-                        try:
-                            _write_json_atomic(
-                                write_out_path,
-                                data,
-                                overwrite=False,
-                            )
-                            break
-                        except FileExistsError:
-                            next_counter += 1
-                    self.counter = next_counter
+                    write_out_path = write_json_unique(self.path, record)
                 else:
-                    _write_json_atomic(write_out_path, data)
-                    self.counter += 1
+                    write_out_path = self.path
+                    _write_json_atomic(write_out_path, record)
 
                 # Update in-memory state only after the durable checkpoint is
                 # published, so a failed write can be retried on the next call.

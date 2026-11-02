@@ -177,6 +177,8 @@ The context can be used to record additional information during evaluation:
 
 ---------------------------
 
+.. _evaluation-record-format:
+
 Persisting evaluation records
 =============================
 

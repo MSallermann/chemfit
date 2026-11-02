@@ -28,7 +28,9 @@ def test_save_metadata_includes_nested_summaries(tmp_path: Path):
     SaveMetaData(tmp_path)(0, [ctx])
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
-    assert saved["children"][0]["meta"] == {"marker": "child"}
+    assert saved["format"] == "chemfit.evaluate_context"
+    assert saved["root"]["fit"]["step"] == 0
+    assert saved["root"]["children"][0]["meta"] == {"marker": "child"}
 
 
 def test_checkpoint_includes_nested_metadata_from_the_best_evaluation(
@@ -49,10 +51,11 @@ def test_checkpoint_includes_nested_metadata_from_the_best_evaluation(
     CheckpointBestParameters(path)(0, [ctx])
 
     saved = json.loads(path.read_text())
-    assert saved["loss"] == 1.0
-    assert saved["parameters"] == {"x": 1.0}
-    assert saved["children"][0]["meta"] == {"stage": "quantity"}
-    assert saved["children"][0]["children"][0]["meta"] == {"source": "simulation"}
+    root = saved["root"]
+    assert root["fit"] == {"loss": 1.0, "n_evals": 0, "step": 0}
+    assert root["input"] == {"x": 1.0}
+    assert root["children"][0]["meta"] == {"stage": "quantity"}
+    assert root["children"][0]["children"][0]["meta"] == {"source": "simulation"}
 
 
 def test_save_metadata_serializes_numpy_scalars_and_skipped_outputs(tmp_path: Path):
@@ -69,11 +72,20 @@ def test_save_metadata_serializes_numpy_scalars_and_skipped_outputs(tmp_path: Pa
     SaveMetaData(tmp_path)(0, [ctx])
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
-    assert saved["output"] == 1.25
-    assert saved["children"][0]["output"] == [
+    root = saved["root"]
+    assert root["output"] == 1.25
+    assert root["children"][0]["output"] == [
         4,
-        {"skipped": True, "reason": None},
-        {"skipped": True, "reason": "ValueError: unavailable"},
+        {"__type__": "skipped", "reason": None},
+        {
+            "__type__": "skipped",
+            "reason": {
+                "__type__": "exception",
+                "module": "builtins",
+                "class": "ValueError",
+                "message": "unavailable",
+            },
+        },
     ]
 
 
@@ -87,13 +99,38 @@ def test_checkpoint_dont_overwrite_uses_next_available_path(tmp_path: Path):
         1, [make_context(loss=1.0, x=1.0)]
     )
 
-    first = json.loads((tmp_path / "best_0.json").read_text())
-    second = json.loads((tmp_path / "best_1.json").read_text())
+    first = json.loads(path.read_text())
+    second = json.loads((tmp_path / "best_0.json").read_text())
 
-    assert first["loss"] == 2.0
-    assert first["parameters"] == {"x": 2.0}
-    assert second["loss"] == 1.0
-    assert second["parameters"] == {"x": 1.0}
+    assert first["root"]["fit"]["loss"] == 2.0
+    assert first["root"]["input"] == {"x": 2.0}
+    assert second["root"]["fit"]["loss"] == 1.0
+    assert second["root"]["input"] == {"x": 1.0}
+
+
+def test_callbacks_write_the_same_record_shape(tmp_path: Path):
+    ctx = make_context(loss=1.0, x=2.0)
+
+    SaveMetaData(tmp_path / "meta")(3, [ctx])
+    CheckpointBestParameters(tmp_path / "best.json")(3, [ctx])
+
+    metadata = json.loads((tmp_path / "meta" / "step_3_ctx_0.json").read_text())
+    checkpoint = json.loads((tmp_path / "best.json").read_text())
+    assert metadata == checkpoint
+
+
+def test_checkpoint_can_write_legacy_format(tmp_path: Path):
+    path = tmp_path / "best.json"
+
+    CheckpointBestParameters(path, use_legacy_format=True)(
+        4, [make_context(loss=1.0, x=2.0)]
+    )
+
+    saved = json.loads(path.read_text())
+    assert saved["step"] == 4
+    assert saved["loss"] == 1.0
+    assert saved["parameters"] == {"x": 2.0}
+    assert "schema_version" not in saved
 
 
 def test_save_metadata_failure_preserves_previous_file(
@@ -107,7 +144,7 @@ def test_save_metadata_failure_preserves_previous_file(
     output_path = tmp_path / "step_0_ctx_0.json"
     original = output_path.read_text(encoding="utf-8")
 
-    ctx.meta["value"] = object()
+    ctx.meta["value"] = {1: "non-string key"}
     with caplog.at_level(logging.ERROR):
         callback(0, [ctx])
 
@@ -123,12 +160,12 @@ def test_checkpoint_failure_preserves_previous_file_and_best_loss(tmp_path: Path
 
     unserializable = make_context(loss=1.0, x=1.0)
     assert unserializable.opt_context is not None
-    unserializable.opt_context.input = {"value": object()}
-    with pytest.raises(TypeError, match="JSON serializable"):
+    unserializable.opt_context.input = {1: "non-string key"}
+    with pytest.raises(TypeError, match="Non-string dictionary key"):
         callback(1, [unserializable])
 
     saved = json.loads(path.read_text(encoding="utf-8"))
-    assert saved["loss"] == 2.0
-    assert saved["parameters"] == {"x": 2.0}
+    assert saved["root"]["fit"]["loss"] == 2.0
+    assert saved["root"]["input"] == {"x": 2.0}
     assert callback.best_loss == 2.0
     assert list(tmp_path.glob(".*.tmp")) == []
