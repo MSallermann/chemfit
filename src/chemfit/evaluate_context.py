@@ -93,6 +93,30 @@ class EvaluateContext:
             ]
         return summary
 
+    def to_record(self, *, strict: bool = False) -> dict[str, Any]:
+        """
+        Return a versioned, JSON-compatible record of this evaluation.
+
+        The record contains the complete child hierarchy and can be passed
+        directly to ``json.dumps(..., allow_nan=False)``. Configuration,
+        shared resources, and temporary state are intentionally omitted.
+
+        Args:
+            strict: Raise a descriptive serialization error for unsupported
+                values. If ``False``, replace them with explicit tagged
+                representations.
+
+        Returns:
+            Self-contained record intended for persistent inspection and
+            analysis. Records do not reconstruct executable contexts.
+
+        """
+        # The serializer imports EvaluateContext for traversal, so defer this
+        # reverse dependency until the method is called.
+        from chemfit.context_serialization import context_to_record  # noqa: PLC0415
+
+        return context_to_record(self, strict=strict)
+
     def record_sections(self) -> Mapping[str, Any]:
         """
         Return additional named sections for persistent serialization.

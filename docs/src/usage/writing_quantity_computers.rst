@@ -675,7 +675,11 @@ A skipped child's context remains at ``NO_OUTPUT`` because its lifecycle never
 runs. Completed and failed children store their finalized value or exception
 in ``ctx.output``. There is no separate exception field.
 
-Use ``ctx.to_summary(recursive=True)`` for a serializable nested summary.
+Use ``ctx.to_summary(recursive=True)`` for lightweight inspection of the
+current Python state. Use ``ctx.to_record()`` when a versioned,
+JSON-compatible representation is needed for persistent storage or external
+analysis.
+
 Executor and MPI backends return input, output, children, and metadata state
 from atomic workers; ``temp`` and mutations to process-local ``shared`` state
 are not transported back.
