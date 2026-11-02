@@ -203,6 +203,8 @@ See the [fitting documentation](https://chemfit.readthedocs.io/en/main/src/usage
 
 ChemFit retains inputs, outputs, metadata, failures, and nested evaluations in evaluation contexts.
 
+[ChemFit Dashboard](https://github.com/MSallermann/chemfit_dashboard) provides an interactive desktop application for exploring and visualizing serialized contexts, investigating failures, plotting recorded values, and extracting data for further analysis.
+
 [Evaluation hooks](https://chemfit.readthedocs.io/en/main/src/usage/objective_hooks.html) can add instrumentation such as timing, unique evaluation IDs, logging, or application-specific diagnostics without changing the simulation or loss implementation.
 
 # Limitations and alternatives

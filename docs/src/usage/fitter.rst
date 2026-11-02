@@ -358,6 +358,10 @@ new optimization:
         initial_observations=loaded_observations,
     )
 
+The resulting context files can also be opened with `ChemFit Dashboard
+<https://github.com/MSallermann/chemfit_dashboard>`__ to explore evaluations,
+compare recorded values, and investigate failures interactively.
+
 This enables:
 
 - approximate continuation of interrupted runs

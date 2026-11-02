@@ -147,6 +147,12 @@ In simple use cases, you do not need to interact with the context explicitly.
 However, it becomes useful when you want to inspect results or record additional
 information.
 
+For interactive inspection, `ChemFit Dashboard
+<https://github.com/MSallermann/chemfit_dashboard>`__ can open serialized
+contexts and collections of contexts. It provides views of the nested
+evaluation hierarchy and data flow, along with tools for searching, plotting,
+failure analysis, and data extraction.
+
 Example
 ---------
 

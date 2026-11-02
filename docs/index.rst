@@ -108,6 +108,9 @@ applies the loss function. The original quantity computer is unchanged.
     and to collect metadata during execution. In most cases, you do not need
     to interact with it directly.
 
+    Serialized contexts can be explored interactively with `ChemFit Dashboard
+    <https://github.com/MSallermann/chemfit_dashboard>`__.
+
     For more details, see :ref:`concepts`.
 
 ====================
