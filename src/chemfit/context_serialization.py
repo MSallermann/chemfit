@@ -84,6 +84,9 @@ def serialize_context(
         if k in RESERVED_RECORD_SECTION_KEYS:
             msg = f"Custom context record section contains reserved key: {k}"
             raise ContextSerializationError(msg)
+        if not isinstance(k, str):
+            msg = f"Custom context record section keys must be strings. Got {k}"
+            raise ContextSerializationError(msg)
 
     return {
         "input": serialize_value(
@@ -198,8 +201,14 @@ def serialize_value(  # noqa: PLR0911, PLR0912
 
     if isinstance(value, np.generic):
         item = value.item()
+        # fallback for numpy scalars which cannot be
+        # converted to python float e.g longdouble
         if isinstance(item, np.generic):
-            item = float(value) if isinstance(value, np.floating) else str(value)
+            return {
+                "__type__": "numpy_scalar",
+                "dtype": str(value.dtype),
+                "value": str(value),
+            }
         return serialize_value(item, path, strict=strict)
 
     if isinstance(value, np.ndarray):
