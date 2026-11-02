@@ -10,9 +10,10 @@ from chemfit.abstract_objective_function import (
     Skipped,
     StructuralComponent,
 )
+from chemfit.sentinel import CopyStableSentinel
 
 
-class Root_:  # noqa: N801
+class Root_(CopyStableSentinel):  # noqa: N801
     """Sentinel denoting the caller-supplied input to the root component."""
 
 

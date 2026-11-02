@@ -4,7 +4,7 @@ import copy
 import pickle
 from types import SimpleNamespace
 
-from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext
+from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext, NoOutput
 
 
 def test_defaults():
@@ -20,6 +20,18 @@ def test_defaults():
     assert vars(ctx.temp) == {}
     assert vars(ctx.config) == {}
     assert vars(ctx.shared) == {}
+
+
+def test_no_output_is_an_identity_stable_sentinel():
+    assert NoOutput() is NO_OUTPUT
+    assert copy.copy(NO_OUTPUT) is NO_OUTPUT
+    assert copy.deepcopy(NO_OUTPUT) is NO_OUTPUT
+
+    ctx = EvaluateContext()
+    copied = copy.deepcopy(ctx)
+
+    assert copied.output is NO_OUTPUT
+    assert copied.to_record()["root"]["status"] == "no_output"
 
 
 def test_spawn_ctx_copies_config_but_shares_resources():
