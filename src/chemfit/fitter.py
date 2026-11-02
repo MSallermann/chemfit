@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, Generic, cast, overload
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
-from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
@@ -22,6 +21,7 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.scheduling import DirectScheduler, EvaluationRequest, PreparedSchedule
 from chemfit.utils import check_params_near_bounds
+from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -96,6 +96,10 @@ class FitContext(EvaluateContext):
         if (opt_context_state := state["opt_context"]) is not None:
             self.opt_context = FitContext()
             self.opt_context.apply_result_state(opt_context_state)
+
+    def record_sections(self) -> Mapping[str, Any]:
+        """Add scalar optimization state to the persistent context record."""
+        return {"fit": {"loss": self.loss, "n_evals": self.n_evals}}
 
 
 CallbackT = Callable[[int, list[FitContext]], None]
