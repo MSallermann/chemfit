@@ -232,17 +232,23 @@ A schema-version-1 document has this outer structure:
 
 ``schema_version`` identifies the record contract and changes only when that
 contract changes. It is independent of ``chemfit_version``, which identifies
-the ChemFit release that produced the record. Every node has a deterministic
-record-local ``path`` such as ``[]``, ``[1]``, or ``[1,0]``. Child
-order and existing ``chemfit.structure`` metadata are preserved. A
-:class:`~chemfit.fitter.FitContext` additionally includes ``loss`` and
-``n_evals`` under a ``fit`` section. Its runtime
+the ChemFit release that produced the record. ``context_type`` identifies the
+kind of context: ``"generic"`` for ordinary
+:class:`~chemfit.evaluate_context.EvaluateContext` instances, ``"fit"`` for
+:class:`~chemfit.fitter.FitContext` instances, and ``null`` for synthetic
+``not_recorded`` placeholders. Context subclasses can define their own type by
+overriding the public ``record_type`` class attribute.
+
+Every node has a deterministic record-local ``path`` such as ``[]``, ``[1]``,
+or ``[1, 0]``. Child order and existing ``chemfit.structure`` metadata are
+preserved. A :class:`~chemfit.fitter.FitContext` additionally includes ``loss``
+and ``n_evals`` under a ``fit`` section. Its runtime
 ``opt_context`` snapshot is intentionally omitted; serialize that context
 directly when a persistent record of the best evaluation is needed.
 
 An actual context's status is derived from its stored output:
 
-- ``normal`` means the output is any ordinary value, including ``None``.
+- ``success`` means the output is any ordinary value, including ``None``.
 - ``exception`` means the output is an exception.
 - ``skipped`` means the output is a
   :class:`~chemfit.abstract_objective_function.Skipped` value.

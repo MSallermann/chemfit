@@ -51,6 +51,10 @@ class EvaluateContext:
         declaration order. Contexts describe the evaluation hierarchy only;
         execution dependencies belong to the compiled call graph.
 
+        The public ``record_type`` class attribute defines the ``context_type``
+        written by :meth:`to_record`. Subclasses can override it to define
+        their own record type.
+
         Args:
             config:
                 Optional child-local evaluation configuration. This

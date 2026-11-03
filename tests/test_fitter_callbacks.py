@@ -29,7 +29,6 @@ def test_save_metadata_includes_nested_summaries(tmp_path: Path):
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
     assert saved["format"] == "chemfit.evaluate_context"
-    assert saved["root"]["fit"]["step"] == 0
     assert saved["root"]["children"][0]["meta"] == {"marker": "child"}
 
 
@@ -52,7 +51,7 @@ def test_checkpoint_includes_nested_metadata_from_the_best_evaluation(
 
     saved = json.loads(path.read_text())
     root = saved["root"]
-    assert root["fit"] == {"loss": 1.0, "n_evals": 0, "step": 0}
+    assert root["fit"] == {"loss": 1.0, "n_evals": 0}
     assert root["input"] == {"x": 1.0}
     assert root["children"][0]["meta"] == {"stage": "quantity"}
     assert root["children"][0]["children"][0]["meta"] == {"source": "simulation"}
@@ -127,7 +126,6 @@ def test_checkpoint_can_write_legacy_format(tmp_path: Path):
     )
 
     saved = json.loads(path.read_text())
-    assert saved["step"] == 4
     assert saved["loss"] == 1.0
     assert saved["parameters"] == {"x": 2.0}
     assert "schema_version" not in saved
