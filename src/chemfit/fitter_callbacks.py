@@ -295,8 +295,13 @@ class SaveTrajectory:
         best_loss = self.best_loss
 
         for slot, ctx in enumerate(ctxs):
-            improved = ctx.loss is not None and (
-                best_loss is None or ctx.loss < best_loss
+            record_ctx = ctx.opt_context if self.only_improvements else ctx
+
+            if record_ctx is None:
+                continue
+
+            improved = record_ctx.loss is not None and (
+                best_loss is None or record_ctx.loss < best_loss
             )
 
             if not self.only_improvements or improved:
@@ -305,14 +310,14 @@ class SaveTrajectory:
                         {
                             "step": step,
                             "slot": slot,
-                            "record": ctx.to_record(),
+                            "record": record_ctx.to_record(),
                         },
                         allow_nan=False,
                     )
                 )
 
             if improved:
-                best_loss = ctx.loss
+                best_loss = record_ctx.loss
 
         if not lines:
             return
