@@ -203,7 +203,9 @@ See the [fitting documentation](https://chemfit.readthedocs.io/en/main/src/usage
 
 ChemFit evaluation contexts retain inputs, outputs, metadata, errors, and nested component evaluations. `EvaluateContext.to_record()` converts this information into a versioned, JSON-compatible format suitable for persistent storage and downstream analysis.
 
-The built-in `SaveMetaData` and `CheckpointBestParameters` callbacks can save these records automatically during optimization. Records include structural component paths, execution status, and typed representations of exceptional values.
+ChemFit provides `SaveTrajectory` for recording optimization trajectories in append-only JSONL files. Each entry contains a versioned evaluation record together with its optimizer step and candidate slot. Trajectories can include all recorded evaluations or only improvements.
+
+`CheckpointBestParameters` separately maintains a checkpoint of the best solution, while `SaveMetaData` remains available for writing individual JSON files.
 
 ChemFit also provides a formal JSON Schema and `validate_record()` for validating saved records.
 

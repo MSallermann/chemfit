@@ -328,14 +328,14 @@ These implement common patterns such as:
 
 .. code-block:: python
 
-    from chemfit.fitter_callbacks import (
+    from chemfit import (
         CheckpointBestParameters,
-        SaveMetaData,
+        SaveTrajectory,
         log_progress,
     )
 
     fitter.register_callback(log_progress, n_steps=10)
-    fitter.register_callback(SaveMetaData("meta"), n_steps=20)
+    fitter.register_callback(SaveTrajectory("trajectory.jsonl"), n_steps=1)
     fitter.register_callback(CheckpointBestParameters("best.json"), n_steps=5)
 
 Saving and replaying evaluations

@@ -179,19 +179,20 @@ def test_checkpoint_failure_preserves_previous_file_and_best_loss(tmp_path: Path
         (
             False,
             [
-                (0, 0, 2.0),
-                (0, 1, 1.0),
-                (1, 0, 3.0),
-                (1, 1, 0.5),
-                (2, 0, 4.0),
+                (0, 0, 2.0, 2.0),
+                (0, 1, 1.0, 1.0),
+                (1, 0, 3.0, 3.0),
+                (1, 1, 0.5, 0.5),
+                (2, 0, 4.0, 4.0),
             ],
         ),
         (
             True,
             [
-                (0, 0, 2.0),
-                (0, 1, 1.0),
-                (1, 1, 0.5),
+                (0, 0, 2.0, 2.0),
+                (0, 1, 1.0, 1.0),
+                (1, 0, 0.75, 7.5),
+                (1, 1, 0.5, 0.5),
             ],
         ),
     ],
@@ -199,14 +200,29 @@ def test_checkpoint_failure_preserves_previous_file_and_best_loss(tmp_path: Path
 def test_save_trajectory(
     tmp_path: Path,
     only_improvements: bool,
-    expected: list[tuple[int, int, float]],
+    expected: list[tuple[int, int, float, float]],
 ):
     path = tmp_path / "trajectory.jsonl"
     callback = SaveTrajectory(path, only_improvements=only_improvements)
 
     callback(0, [make_context(2.0, 2.0), make_context(1.0, 1.0)])
-    callback(1, [make_context(3.0, 3.0), make_context(0.5, 0.5)])
-    callback(2, [make_context(4.0, 4.0)])
+
+    # Current evaluation is worse than the retained best evaluation.
+    ctx = make_context(3.0, 3.0)
+    assert ctx.opt_context is not None
+    ctx.opt_context.loss = 0.75
+    ctx.opt_context.input = {"x": 7.5}
+
+    callback(1, [ctx, make_context(0.5, 0.5)])
+
+    # The retained best is equal to the previous global minimum.
+    # This should not produce another improvement record.
+    ctx = make_context(4.0, 4.0)
+    assert ctx.opt_context is not None
+    ctx.opt_context.loss = 0.5
+    ctx.opt_context.input = {"x": 0.5}
+
+    callback(2, [ctx])
     callback(3, [])
 
     entries = [
@@ -214,7 +230,12 @@ def test_save_trajectory(
     ]
 
     assert [
-        (entry["step"], entry["slot"], entry["record"]["root"]["fit"]["loss"])
+        (
+            entry["step"],
+            entry["slot"],
+            entry["record"]["root"]["fit"]["loss"],
+            entry["record"]["root"]["input"]["x"],
+        )
         for entry in entries
     ] == expected
 
