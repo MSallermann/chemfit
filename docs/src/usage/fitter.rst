@@ -349,7 +349,7 @@ with the ``initial_observations`` argument of
 It writes one versioned :meth:`~chemfit.evaluate_context.EvaluateContext.to_record`
 document for each candidate context. A
 :class:`~chemfit.fitter.FitContext` record includes a ``fit`` section containing
-``loss`` and ``n_evals``. :class:`~chemfit.fitter_callbacks.SaveMetaData`.
+``loss`` and ``n_evals``.
 The saved parameters and loss can be extracted from ``record["root"]["input"]`` and
 ``record["root"]["fit"]["loss"]`` and later reused to seed a new optimization:
 
@@ -368,7 +368,7 @@ The saved parameters and loss can be extracted from ``record["root"]["input"]`` 
         "path": [],
         "fit": {
           "loss": 0.42,
-          "n_evals": 17,
+          "n_evals": 17
         },
         "children": []
       }
