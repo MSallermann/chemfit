@@ -183,7 +183,7 @@ Persisting evaluation records
 =============================
 
 Use :meth:`~chemfit.evaluate_context.EvaluateContext.to_record` to create a
-versioned, self-contained representation of a completed evaluation. The
+versioned, self-contained representation of an evaluation. The
 result contains only JSON-compatible values and can be written without a
 custom encoder:
 
@@ -263,11 +263,11 @@ unknown.
 
 The value converter preserves JSON-compatible scalar and mapping values and
 supports lists, tuples, NumPy scalars and arrays, exceptions, ``NO_OUTPUT``,
-and :class:`~chemfit.abstract_objective_function.Skipped`. Non-finite floats
-become the strings ``"NaN"``, ``"Infinity"``, and ``"-Infinity"``; other
-special values use explicit ``__type__`` tags. A user mapping that already
-contains ``__type__`` is wrapped in a tagged mapping representation, so it
-cannot be confused with a serializer marker. Mapping keys must be strings.
+and :class:`~chemfit.abstract_objective_function.Skipped`.
+Non-finite floats and other special values use explicit ``__type__`` tags.
+A user mapping that already contains ``__type__`` is wrapped in a tagged
+mapping representation, so it cannot be confused with a serializer marker.
+Mapping keys must be strings.
 
 Serialization is permissive by default: unsupported objects are retained as
 bounded, explicitly tagged representations. Use ``ctx.to_record(strict=True)``
@@ -280,6 +280,14 @@ shared resources, and temporary state, and ChemFit does not currently provide
 a ``from_record()`` operation. `ChemFit Dashboard
 <https://github.com/MSallermann/chemfit_dashboard>`__ can be used to explore,
 visualize, search, plot, and extract data from saved records.
+
+Schema
+--------
+
+The complete specification is available in the `EvaluateContext JSON Schema v1
+<https://github.com/MSallermann/chemfit/blob/main/src/chemfit/schemas/evaluate_context_v1.json>`_.
+
+:func:`~chemfit.context_serialization.validate_record` can be used to validate records against it.
 
 ---------------------------
 
