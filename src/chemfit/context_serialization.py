@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import math
 from collections.abc import Mapping
+from functools import lru_cache
 from importlib.metadata import version
+from importlib.resources import files
 from typing import Any
 
 import numpy as np
+from jsonschema import Draft202012Validator
 
 from chemfit.abstract_objective_function import Skipped
 from chemfit.evaluate_context import (
@@ -61,13 +65,15 @@ def type_name(value: object) -> str:
 
 
 def serialize_context(
-    context: EvaluateContext, *, path: list[str] | None = None, strict: bool = False
+    context: EvaluateContext,
+    *,
+    path: list[int] | None = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """Serialize one context and its ordered child hierarchy."""
 
-    # Default path is "root"
     if path is None:
-        path = ["root"]
+        path = []
 
     # Status field
     if context.output is NO_OUTPUT:
@@ -77,7 +83,7 @@ def serialize_context(
     elif isinstance(context.output, Skipped):
         status = "skipped"
     else:
-        status = "normal"
+        status = "success"
 
     record_sections = context.record_sections()
     for k in record_sections:
@@ -89,6 +95,7 @@ def serialize_context(
             raise ContextSerializationError(msg)
 
     return {
+        "context_type": context.record_type,
         "input": serialize_value(
             context.input,
             path=[*path, "input"],
@@ -105,7 +112,7 @@ def serialize_context(
             strict=strict,
         ),
         "status": status,
-        "path": ".".join(path),
+        "path": path,
         **{
             k: serialize_value(
                 v,
@@ -120,16 +127,23 @@ def serialize_context(
 
 def serialize_children(
     context: EvaluateContext,
-    path: list[str],
+    path: list[int],
     *,
     strict: bool,
 ) -> list[dict[str, Any]]:
-    """Serialize recorded children or known, entirely missing declared slots."""
+    """
+    Serialize recorded children or known, entirely missing declared slots.
+
+    IMPORTANT: serialize_children() assumes that structural contexts contain
+    either all their immediate children or none of them, which matches the current
+    lifecycle semantics. If those change, the function has to be adapted.
+    """
+
     # Structural evaluation links all immediate children at once, in declaration
     # order. A nonempty list is therefore already complete and positionally stable.
     if context.children:
         return [
-            serialize_context(child, path=[*path, str(index)], strict=strict)
+            serialize_context(child, path=[*path, index], strict=strict)
             for index, child in enumerate(context.children)
         ]
 
@@ -152,11 +166,12 @@ def serialize_children(
 
     return [
         {
+            "context_type": None,
             "input": {_TYPE_TAG_KEY: "no_output"},
             "output": {_TYPE_TAG_KEY: "no_output"},
             "meta": {},
             "status": "not_recorded",
-            "path": ".".join([*path, str(index)]),
+            "path": [*path, index],
             "children": [],
         }
         for index in indices
@@ -164,7 +179,7 @@ def serialize_children(
 
 
 def serialize_value(  # noqa: PLR0911, PLR0912
-    value: Any, path: list[str], *, strict: bool
+    value: Any, path: list[str | int], *, strict: bool
 ) -> Any:
     """
     Convert one runtime value into its unambiguous JSON-compatible form.
@@ -172,12 +187,14 @@ def serialize_value(  # noqa: PLR0911, PLR0912
     ``path`` is propagated into errors and tagged nested values.
     """
 
+    # Use tagged values for float in case of nan,+inf,-inf
     if isinstance(value, float):
         if math.isnan(value):
-            return "NaN"
+            return {_TYPE_TAG_KEY: "float", "value": "nan"}
         if math.isinf(value):
-            return "Infinity" if value > 0 else "-Infinity"
+            return {_TYPE_TAG_KEY: "float", "value": "inf" if value > 0 else "-inf"}
 
+    # Use the plain value if possible
     if value is None or isinstance(value, (bool, int, str, float)):
         return value
 
@@ -200,9 +217,11 @@ def serialize_value(  # noqa: PLR0911, PLR0912
         }
 
     if isinstance(value, np.generic):
+        # try to get the underlying item
         item = value.item()
-        # fallback for numpy scalars which cannot be
-        # converted to python float e.g longdouble
+
+        # if the underlying item is still a np.generic,
+        # we use a fallback as a tagged value
         if isinstance(item, np.generic):
             return {
                 "__type__": "numpy_scalar",
@@ -217,6 +236,7 @@ def serialize_value(  # noqa: PLR0911, PLR0912
             path,
             strict=strict,
         )
+
     if isinstance(value, Mapping):
         return serialize_mapping(
             value,
@@ -233,7 +253,7 @@ def serialize_value(  # noqa: PLR0911, PLR0912
 
     if strict:
         python_type = type_name(value)
-        message = f"Cannot serialize value at {'.'.join(path)}: unsupported type {python_type}"
+        message = f"Cannot serialize value at {path}: unsupported type {python_type}"
         raise ContextSerializationError(message)
 
     return {
@@ -245,7 +265,7 @@ def serialize_value(  # noqa: PLR0911, PLR0912
 
 def serialize_sequence(
     value: list[Any] | tuple[Any, ...],
-    path: list[str],
+    path: list[str | int],
     *,
     strict: bool,
 ) -> list[Any]:
@@ -254,7 +274,7 @@ def serialize_sequence(
     return [
         serialize_value(
             item,
-            path=[*path, str(index)],
+            path=[*path, index],
             strict=strict,
         )
         for index, item in enumerate(value)
@@ -263,7 +283,7 @@ def serialize_sequence(
 
 def serialize_mapping(
     value: Mapping[str, Any],
-    path: list[str],
+    path: list[str | int],
     *,
     strict: bool,
 ) -> dict[str, Any]:
@@ -292,7 +312,7 @@ def serialize_mapping(
 
 def bounded_repr(value: object) -> str:
     """Return a defensive, size-bounded representation of an unsupported value."""
-    max_length = 200
+    max_length: int = 200
     try:
         representation = repr(value)
     except Exception as error:
@@ -300,3 +320,20 @@ def bounded_repr(value: object) -> str:
     if len(representation) <= max_length:
         return representation
     return f"{representation[: max_length - 3]}..."
+
+
+@lru_cache(maxsize=1)
+def _record_schema() -> dict:
+    path = files("chemfit").joinpath("schemas/evaluate_context_v1.json")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@lru_cache(maxsize=1)
+def _validator():
+    schema = _record_schema()
+    return Draft202012Validator(schema)
+
+
+def validate_record(record: dict) -> None:
+    validator = _validator()
+    return validator.validate(record)
