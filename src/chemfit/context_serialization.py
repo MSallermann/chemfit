@@ -335,5 +335,7 @@ def _validator():
 
 
 def validate_record(record: dict) -> None:
+    """Validate a record against the official JSON schema."""
+
     validator = _validator()
     return validator.validate(record)

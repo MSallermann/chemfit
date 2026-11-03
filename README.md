@@ -201,7 +201,11 @@ See the [fitting documentation](https://chemfit.readthedocs.io/en/main/src/usage
 
 # Evaluation data and instrumentation
 
-ChemFit retains inputs, outputs, metadata, failures, and nested evaluations in evaluation contexts.
+ChemFit evaluation contexts retain inputs, outputs, metadata, errors, and nested component evaluations. `EvaluateContext.to_record()` converts this information into a versioned, JSON-compatible format suitable for persistent storage and downstream analysis.
+
+The built-in `SaveMetaData` and `CheckpointBestParameters` callbacks can save these records automatically during optimization. Records include structural component paths, execution status, and typed representations of exceptional values.
+
+ChemFit also provides a formal JSON Schema and `validate_record()` for validating saved records.
 
 [Evaluation hooks](https://chemfit.readthedocs.io/en/main/src/usage/objective_hooks.html) can add instrumentation such as timing, unique evaluation IDs, logging, or application-specific diagnostics without changing the simulation or loss implementation.
 

@@ -142,7 +142,7 @@ class EvaluateContext:
         Overrides should preserve sections returned by ``super()`` so multiple
         levels of context specialization compose cleanly.
 
-        NOTE: None of the keys in RESERVED_RECORD_SECTIONS may be used.
+        NOTE: None of the keys in RESERVED_RECORD_SECTION_KEYS may be used.
         """
         return {}
 
