@@ -338,82 +338,134 @@ These implement common patterns such as:
     fitter.register_callback(SaveTrajectory("trajectory.jsonl"), n_steps=1)
     fitter.register_callback(CheckpointBestParameters("best.json"), n_steps=5)
 
-Saving and replaying evaluations
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Recording optimization trajectories
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The :class:`~chemfit.fitter_callbacks.SaveMetaData` callback pairs naturally
-with the ``initial_observations`` argument of
-:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` or
-:py:meth:`~chemfit.fitter.Fitter.fit_nevergrad`.
+:class:`~chemfit.fitter_callbacks.SaveTrajectory` records evaluation
+contexts in an append-only JSON Lines (JSONL) file. Each line contains
+one versioned evaluation record together with the optimizer step and
+candidate slot at which it was recorded.
 
-It writes one versioned :meth:`~chemfit.evaluate_context.EvaluateContext.to_record`
-document for each candidate context. A
-:class:`~chemfit.fitter.FitContext` record includes a ``fit`` section containing
-``loss`` and ``n_evals``.
-The saved parameters and loss can be extracted from ``record["root"]["input"]`` and
-``record["root"]["fit"]["loss"]`` and later reused to seed a new optimization:
+.. code-block:: python
+
+    from chemfit import SaveTrajectory
+
+    fitter.register_callback(
+        SaveTrajectory("trajectory.jsonl"),
+        n_steps=1,
+    )
+
+Each JSONL entry has the following structure (formatted here for
+readability):
 
 .. code-block:: json
 
     {
-      "format": "chemfit.evaluate_context",
-      "schema_version": 1,
-      "chemfit_version": "4.0.0",
-      "root": {
-        "context_type": "fit",
-        "input": {"epsilon": 0.7, "sigma": 1.0},
-        "output": 0.42,
-        "meta": {},
-        "status": "success",
-        "path": [],
-        "fit": {
-          "loss": 0.42,
-          "n_evals": 17
-        },
-        "children": []
+      "step": 10,
+      "slot": 0,
+      "record": {
+        "format": "chemfit.evaluate_context",
+        "schema_version": 1,
+        "chemfit_version": "4.0.0",
+        "root": {
+          "context_type": "fit",
+          "input": {"epsilon": 0.7},
+          "output": 0.42,
+          "meta": {},
+          "status": "success",
+          "path": [],
+          "fit": {"loss": 0.42, "n_evals": 17},
+          "children": []
+        }
       }
     }
 
-``format`` identifies an evaluation-context document. ``schema_version``
-identifies its data contract, while ``chemfit_version`` identifies the ChemFit
-release that wrote it. Every child in ``children`` uses the context-node format
-documented in :ref:`evaluation-record-format` and has a stable record-local
-``path``.
+The ``record`` field contains the unmodified output of
+:meth:`~chemfit.evaluate_context.EvaluateContext.to_record`.
+The ``step`` and ``slot`` fields describe when and where the record
+was collected; they are not part of the evaluation record itself.
+See :ref:`evaluation-record-format` for the complete record specification.
+
+By default, ``SaveTrajectory`` saves the current evaluation context
+for every candidate slot whenever the callback runs.
+
+To record only improvements to the best observed loss, use:
 
 .. code-block:: python
 
-    result = chemfit.fit_nevergrad(
-        objective,
-        initial=initial,
-        budget=100,
-        initial_observations=loaded_observations,
+    fitter.register_callback(
+        SaveTrajectory("improvements.jsonl", only_improvements=True),
+        n_steps=1,
     )
 
-This enables:
+In this mode, the callback uses each slot's ``opt_context``, which
+retains its best evaluation. Only evaluations improving the global
+best loss previously recorded by the callback are appended.
 
-- approximate continuation of interrupted runs
-- warm-starting optimization
-- reuse of expensive evaluations
+The callback interval determines when evaluations are inspected.
+Consequently, the trajectory does not necessarily include every
+evaluation or every intermediate improvement. The recorded ``step``
+is the callback step, not necessarily the step at which a retained
+best evaluation originally occurred.
 
-In contrast, :class:`~chemfit.fitter_callbacks.CheckpointBestParameters`
-stores only the best solution and is primarily intended for fault
-tolerance. Metadata and checkpoint JSON files are written through temporary
-files and published atomically, so an interrupted write does not replace the
-previous complete file with partial JSON.
+The output filename must end in ``.jsonl`` unless
+``force_suffix=True`` is specified.
 
-Both callbacks use the same versioned record structure. Best-parameter
-checkpoints serialize the incumbent's ``opt_context`` snapshot, preserving its
-complete evaluation hierarchy and the metadata emitted by nested objective
-components. Pass ``use_legacy_format=True`` to
-:class:`~chemfit.fitter_callbacks.CheckpointBestParameters` only when an
-existing consumer still requires the deprecated flat checkpoint structure.
-That legacy structure exposes ``step``, ``loss``, ``parameters``, ``meta``,
-``quantities``, and ``children`` directly at the document root and does not
-include schema or ChemFit version fields.
+Reading trajectories
+--------------------
 
-With ``dont_overwrite=True``, the first checkpoint uses the requested path.
-Later checkpoints use ``_0``, ``_1``, and subsequent numeric suffixes without
-replacing an existing file.
+JSONL files can be processed incrementally using Python's standard
+library:
+
+.. code-block:: python
+
+    import json
+
+    from chemfit.context_serialization import validate_record
+
+    with open("trajectory.jsonl", encoding="utf-8") as f:
+        for line in f:
+            entry = json.loads(line)
+            record = entry["record"]
+
+            validate_record(record)
+
+            parameters = record["root"]["input"]
+            loss = record["root"]["fit"]["loss"]
+
+The bundled JSON Schema validates individual evaluation records,
+not the surrounding JSONL entries.
+
+Saved parameter/loss pairs can also be extracted for use with
+``initial_observations`` in
+:func:`chemfit.fit_nevergrad() <chemfit.api.fit_nevergrad>` or
+:meth:`~chemfit.fitter.Fitter.fit_nevergrad`.
+This supports warm-starting optimization and reusing previously
+evaluated parameter sets. It does not restore the optimizer's
+internal state.
+
+Individual records and checkpoints
+----------------------------------
+
+:class:`~chemfit.fitter_callbacks.SaveMetaData` remains available
+for saving individual JSON files, one per candidate slot and callback
+invocation. For collecting optimization trajectories, prefer
+:class:`~chemfit.fitter_callbacks.SaveTrajectory`.
+
+:class:`~chemfit.fitter_callbacks.CheckpointBestParameters` serves
+a different purpose: it maintains a checkpoint of the best solution
+observed during optimization. It serializes the retained
+``opt_context`` snapshot, including nested evaluation metadata.
+
+Checkpoint files are written atomically, so an interrupted write
+does not replace the previous complete checkpoint with partial JSON.
+
+With ``dont_overwrite=True``, earlier checkpoints are preserved
+using numbered filename suffixes.
+
+For compatibility with older consumers,
+``CheckpointBestParameters`` also supports ``use_legacy_format=True``,
+which writes the deprecated flat checkpoint representation.
 
 ----------------------------------
 SciPy backend
