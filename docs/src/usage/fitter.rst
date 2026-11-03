@@ -359,11 +359,12 @@ extracted from ``record["root"]["input"]`` and
       "schema_version": 1,
       "chemfit_version": "4.0.0",
       "root": {
+        "context_type": "fit",
         "input": {"epsilon": 0.7, "sigma": 1.0},
         "output": 0.42,
         "meta": {},
-        "status": "normal",
-        "path": "root",
+        "status": "success",
+        "path": [],
         "fit": {
           "loss": 0.42,
           "n_evals": 17,

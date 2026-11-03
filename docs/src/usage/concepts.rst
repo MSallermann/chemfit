@@ -220,11 +220,12 @@ A schema-version-1 document has this outer structure:
       "schema_version": 1,
       "chemfit_version": "4.0.0",
       "root": {
+        "context_type": "generic",
         "input": {"epsilon": 0.5},
         "output": -12.3,
         "meta": {"runtime": 1.25},
-        "status": "normal",
-        "path": "root",
+        "status": "success",
+        "path": [],
         "children": []
       }
     }
@@ -232,7 +233,7 @@ A schema-version-1 document has this outer structure:
 ``schema_version`` identifies the record contract and changes only when that
 contract changes. It is independent of ``chemfit_version``, which identifies
 the ChemFit release that produced the record. Every node has a deterministic
-record-local ``path`` such as ``root``, ``root.1``, or ``root.1.0``. Child
+record-local ``path`` such as ``[]``, ``[1]``, or ``[1,0]``. Child
 order and existing ``chemfit.structure`` metadata are preserved. A
 :class:`~chemfit.fitter.FitContext` additionally includes ``loss`` and
 ``n_evals`` under a ``fit`` section. Its runtime
