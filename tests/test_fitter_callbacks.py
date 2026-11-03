@@ -29,7 +29,7 @@ def test_save_metadata_includes_nested_summaries(tmp_path: Path):
     ctx.children.append(child)
     child.meta["marker"] = "child"
 
-    SaveMetaData(tmp_path)(0, [ctx])
+    SaveMetaData(tmp_path, use_legacy_format=False)(0, [ctx])
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
     assert saved["format"] == "chemfit.evaluate_context"
@@ -72,7 +72,7 @@ def test_save_metadata_serializes_numpy_scalars_and_skipped_outputs(tmp_path: Pa
     )
     ctx.children.append(child)
 
-    SaveMetaData(tmp_path)(0, [ctx])
+    SaveMetaData(tmp_path, use_legacy_format=False)(0, [ctx])
 
     saved = json.loads((tmp_path / "step_0_ctx_0.json").read_text())
     root = saved["root"]
@@ -114,7 +114,7 @@ def test_checkpoint_dont_overwrite_uses_next_available_path(tmp_path: Path):
 def test_callbacks_write_the_same_record_shape(tmp_path: Path):
     ctx = make_context(loss=1.0, x=2.0)
 
-    SaveMetaData(tmp_path / "meta")(3, [ctx])
+    SaveMetaData(tmp_path / "meta", use_legacy_format=False)(3, [ctx])
     CheckpointBestParameters(tmp_path / "best.json")(3, [ctx])
 
     metadata = json.loads((tmp_path / "meta" / "step_3_ctx_0.json").read_text())
@@ -139,7 +139,7 @@ def test_save_metadata_failure_preserves_previous_file(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ):
-    callback = SaveMetaData(tmp_path)
+    callback = SaveMetaData(tmp_path, use_legacy_format=False)
     ctx = FitContext()
     ctx.meta["value"] = "complete"
     callback(0, [ctx])
