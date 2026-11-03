@@ -165,6 +165,11 @@ class SaveMetaData:
                 written. The directory is created if it does not
                 already exist.
 
+        .. note::
+            This callback is retained for backward compatibility.
+            For recording optimization trajectories, prefer
+            :class:`SaveTrajectory`
+
         """
         self.output_folder = Path(output_folder)
         self.output_folder.mkdir(parents=True, exist_ok=True)
@@ -253,3 +258,66 @@ class CheckpointBestParameters:
                 logger.info(
                     f"New best loss {opt_context.loss} written to {write_out_path}"
                 )
+
+
+class SaveTrajectory:
+    def __init__(
+        self,
+        output_file: Path | str,
+        only_improvements: bool = False,
+        force_suffix: bool = False,
+    ):
+        """
+        Initialize a trajectory saving callback.
+
+        Args:
+            output_file: File path where the trajectory will be saved in jsonl format
+
+        """
+
+        self.output_file = Path(output_file)
+
+        if self.output_file.suffix != ".jsonl" and not force_suffix:
+            msg = f"Use `.jsonl` as output file suffix. You are using `{self.output_file.suffix}`. Set `force_suffix=True` to override."
+            raise ValueError(msg)
+
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        self.only_improvements = only_improvements
+        self.best_loss: float | None = None
+
+    def __call__(self, step: int, ctxs: list[FitContext]):
+        """Append the current evaluation records."""
+
+        if len(ctxs) == 0:
+            return
+
+        lines = []
+        best_loss = self.best_loss
+
+        for slot, ctx in enumerate(ctxs):
+            improved = ctx.loss is not None and (
+                best_loss is None or ctx.loss < best_loss
+            )
+
+            if not self.only_improvements or improved:
+                lines.append(
+                    json.dumps(
+                        {
+                            "step": step,
+                            "slot": slot,
+                            "record": ctx.to_record(),
+                        },
+                        allow_nan=False,
+                    )
+                )
+
+            if improved:
+                best_loss = ctx.loss
+
+        if not lines:
+            return
+
+        with self.output_file.open("a", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+        self.best_loss = best_loss
