@@ -271,6 +271,10 @@ class SaveTrajectory:
 
         Args:
             output_file: File path where the trajectory will be saved in jsonl format
+            only_improvements:
+                If true, contexts are only recorded if they improve on the global minimum
+                loss seen so far by this `SaveTrajectory` instance
+            force_suffix: set to `True` to use non `.jsonl` suffixes in the output file
 
         """
 
