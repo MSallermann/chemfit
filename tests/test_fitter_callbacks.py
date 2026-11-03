@@ -8,7 +8,11 @@ import pytest
 
 from chemfit.abstract_objective_function import Skipped
 from chemfit.fitter import FitContext
-from chemfit.fitter_callbacks import CheckpointBestParameters, SaveMetaData
+from chemfit.fitter_callbacks import (
+    CheckpointBestParameters,
+    SaveMetaData,
+    SaveTrajectory,
+)
 
 
 def make_context(loss: float, x: float) -> FitContext:
@@ -167,3 +171,56 @@ def test_checkpoint_failure_preserves_previous_file_and_best_loss(tmp_path: Path
     assert saved["root"]["input"] == {"x": 2.0}
     assert callback.best_loss == 2.0
     assert list(tmp_path.glob(".*.tmp")) == []
+
+
+@pytest.mark.parametrize(
+    ("only_improvements", "expected"),
+    [
+        (
+            False,
+            [
+                (0, 0, 2.0),
+                (0, 1, 1.0),
+                (1, 0, 3.0),
+                (1, 1, 0.5),
+                (2, 0, 4.0),
+            ],
+        ),
+        (
+            True,
+            [
+                (0, 0, 2.0),
+                (0, 1, 1.0),
+                (1, 1, 0.5),
+            ],
+        ),
+    ],
+)
+def test_save_trajectory(
+    tmp_path: Path,
+    only_improvements: bool,
+    expected: list[tuple[int, int, float]],
+):
+    path = tmp_path / "trajectory.jsonl"
+    callback = SaveTrajectory(path, only_improvements=only_improvements)
+
+    callback(0, [make_context(2.0, 2.0), make_context(1.0, 1.0)])
+    callback(1, [make_context(3.0, 3.0), make_context(0.5, 0.5)])
+    callback(2, [make_context(4.0, 4.0)])
+    callback(3, [])
+
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert [
+        (entry["step"], entry["slot"], entry["record"]["root"]["fit"]["loss"])
+        for entry in entries
+    ] == expected
+
+    for entry in entries:
+        assert entry["record"]["format"] == "chemfit.evaluate_context"
+        assert entry["record"]["schema_version"] == 1
+        assert "step" not in entry["record"]["root"]["fit"]
+
+    assert callback.best_loss == 0.5
