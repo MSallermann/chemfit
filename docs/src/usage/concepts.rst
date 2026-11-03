@@ -177,6 +177,126 @@ The context can be used to record additional information during evaluation:
 
 ---------------------------
 
+.. _evaluation-record-format:
+
+Persisting evaluation records
+=============================
+
+Use :meth:`~chemfit.evaluate_context.EvaluateContext.to_record` to create a
+versioned, self-contained representation of an evaluation. The
+result contains only JSON-compatible values and can be written without a
+custom encoder:
+
+.. code-block:: python
+
+    import json
+
+    record = ctx.to_record()
+    with open("evaluation.json", "w") as output_file:
+        json.dump(record, output_file, indent=2, allow_nan=False)
+
+The context APIs serve different purposes:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Method
+     - Purpose
+   * - ``to_summary()``
+     - Lightweight inspection of the current Python state.
+   * - ``to_record()``
+     - Versioned, JSON-compatible representation for persistent storage and
+       external analysis.
+   * - ``to_result_state()``
+     - Internal result synchronization between workers and the coordinator.
+
+A schema-version-1 document has this outer structure:
+
+.. code-block:: json
+
+    {
+      "format": "chemfit.evaluate_context",
+      "schema_version": 1,
+      "chemfit_version": "4.0.0",
+      "root": {
+        "context_type": "generic",
+        "input": {"epsilon": 0.5},
+        "output": -12.3,
+        "meta": {"runtime": 1.25},
+        "status": "success",
+        "path": [],
+        "children": []
+      }
+    }
+
+``schema_version`` identifies the record contract and changes only when that
+contract changes. It is independent of ``chemfit_version``, which identifies
+the ChemFit release that produced the record. ``context_type`` identifies the
+kind of context: ``"generic"`` for ordinary
+:class:`~chemfit.evaluate_context.EvaluateContext` instances, ``"fit"`` for
+:class:`~chemfit.fitter.FitContext` instances, and ``null`` for synthetic
+``not_recorded`` placeholders. Context subclasses can define their own type by
+overriding the public ``record_type`` class attribute.
+
+Every node has a deterministic record-local ``path`` such as ``[]``, ``[1]``,
+or ``[1, 0]``. Child order and existing ``chemfit.structure`` metadata are
+preserved. A :class:`~chemfit.fitter.FitContext` additionally includes ``loss``
+and ``n_evals`` under a ``fit`` section. Its runtime
+``opt_context`` snapshot is intentionally omitted; serialize that context
+directly when a persistent record of the best evaluation is needed.
+
+An actual context's status is derived from its stored output:
+
+- ``success`` means the output is any ordinary value, including ``None``.
+- ``exception`` means the output is an exception.
+- ``skipped`` means the output is a
+  :class:`~chemfit.abstract_objective_function.Skipped` value.
+- ``no_output`` means the output is ``NO_OUTPUT``. Because skipped child
+  outcomes are not always retained in contexts, this status may include
+  skipped evaluations.
+- ``not_recorded`` is used only for synthetic placeholders when
+  ``chemfit.structure`` declares children but evaluation stopped before their
+  contexts were created.
+
+Structural components create all immediate child contexts in declaration
+order before running any child, so a failed child does not shift the paths of
+later children. If an entered structural scope has no child contexts at all,
+``to_record()`` uses its existing ``chemfit.structure`` declaration to add a
+placeholder for each known child position. Placeholders do not modify the
+runtime context and do not invent deeper descendants whose structure is
+unknown.
+
+The value converter preserves JSON-compatible scalar and mapping values and
+supports lists, tuples, NumPy scalars and arrays, exceptions, ``NO_OUTPUT``,
+and :class:`~chemfit.abstract_objective_function.Skipped`.
+Non-finite floats and other special values use explicit ``__type__`` tags.
+A user mapping that already contains ``__type__`` is wrapped in a tagged
+mapping representation, so it cannot be confused with a serializer marker.
+Mapping keys must be strings.
+
+Serialization is permissive by default: unsupported objects are retained as
+bounded, explicitly tagged representations. Use ``ctx.to_record(strict=True)``
+to raise a descriptive error containing the record path instead. Values and
+the context child hierarchy must not contain reference cycles.
+
+Records are intended for inspection and analysis, not for reconstructing an
+executable context or resuming an optimization. They omit configuration,
+shared resources, and temporary state, and ChemFit does not currently provide
+a ``from_record()`` operation. `ChemFit Dashboard
+<https://github.com/MSallermann/chemfit_dashboard>`__ can be used to explore,
+visualize, search, plot, and extract data from saved records.
+
+Schema
+--------
+
+The complete specification is available in the `EvaluateContext JSON Schema v1
+<https://github.com/MSallermann/chemfit/blob/main/src/chemfit/schemas/evaluate_context_v1.json>`_.
+
+:func:`~chemfit.context_serialization.validate_record` can be used to validate records against it.
+
+---------------------------
+
 Context hierarchy
 =================
 

@@ -641,6 +641,8 @@ def _fit_nevergrad_with_fitter(
     callbacks: Sequence[tuple[CallbackT, int]] | None,
     parametrization: Mapping[str, object] | None,
     initial_observations: Iterable[tuple[ParamsT, float | None]] | None,
+    swallow_exceptions: bool,
+    log_exceptions: bool,
 ) -> FitResult[ParamsT]:
     """Run one high-level fit using an objective or prepared schedule."""
 
@@ -648,6 +650,8 @@ def _fit_nevergrad_with_fitter(
         objective_function=objective,
         initial_params=initial,
         bounds=bounds,
+        swallow_exceptions=swallow_exceptions,
+        log_exceptions=log_exceptions,
     )
 
     if callbacks is not None:
@@ -689,6 +693,8 @@ def fit_nevergrad(
     callbacks: Sequence[tuple[CallbackT, int]] | None = None,
     parametrization: Mapping[str, object] | None = None,
     initial_observations: Iterable[tuple[ParamsT, float | None]] | None = None,
+    swallow_exceptions: bool = False,
+    log_exceptions: bool = True,
 ) -> FitResult[ParamsT]:
     """
     Fit an objective with Nevergrad through ChemFit's recommended interface.
@@ -739,6 +745,9 @@ def fit_nevergrad(
             pairs used to seed Nevergrad before live optimization. Entries
             outside ``bounds`` are skipped. Replayed observations do not
             consume ``budget`` or trigger callbacks.
+        swallow_exceptions: Whether exception in the objective function should
+            be swallowed (as opposed to being re-raised)
+        log_exceptions: Whether exceptions should be logged
 
     Returns:
         A :class:`FitResult` containing Nevergrad's recommendation and the
@@ -855,6 +864,8 @@ def fit_nevergrad(
             callbacks=callbacks,
             parametrization=parametrization,
             initial_observations=initial_observations,
+            swallow_exceptions=swallow_exceptions,
+            log_exceptions=log_exceptions,
         )
 
     if executor is not None and scheduler is not None:
@@ -885,6 +896,8 @@ def fit_nevergrad(
                 callbacks=callbacks,
                 parametrization=parametrization,
                 initial_observations=initial_observations,
+                swallow_exceptions=swallow_exceptions,
+                log_exceptions=log_exceptions,
             )
         scheduler = ExecutorGraphScheduler(
             executor_factory=lambda: ThreadPoolExecutor(
@@ -905,4 +918,6 @@ def fit_nevergrad(
             callbacks=callbacks,
             parametrization=parametrization,
             initial_observations=initial_observations,
+            swallow_exceptions=swallow_exceptions,
+            log_exceptions=log_exceptions,
         )

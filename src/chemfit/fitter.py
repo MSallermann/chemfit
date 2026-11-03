@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Callable, Mapping
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast, overload
 
 import nevergrad as ng
 import numpy as np
@@ -36,6 +36,8 @@ ParametersT = TypeVar("ParametersT", bound=Mapping[str, Any], default=dict[str, 
 
 
 class FitContext(EvaluateContext):
+    record_type: ClassVar[str] = "fit"
+
     def __init__(self):
         """
         Initialize fitter-specific evaluation state.
@@ -97,6 +99,10 @@ class FitContext(EvaluateContext):
             self.opt_context = FitContext()
             self.opt_context.apply_result_state(opt_context_state)
 
+    def record_sections(self) -> Mapping[str, Any]:
+        """Add scalar optimization state to the persistent context record."""
+        return {"fit": {"loss": self.loss, "n_evals": self.n_evals}}
+
 
 CallbackT = Callable[[int, list[FitContext]], None]
 
@@ -128,6 +134,27 @@ def _sanitize_loss(value: object, value_bad_params: float) -> float:
         return float(value_bad_params)
 
     return loss
+
+
+def _detach_exception_tracebacks(exception: BaseException) -> None:
+    """Release frames retained by an exception and its explicit chains."""
+
+    pending = [exception]
+    seen: set[int] = set()
+
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
+        seen.add(identity)
+
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+
+        current.__traceback__ = None
 
 
 class Fitter(Generic[ParametersT]):
@@ -299,11 +326,17 @@ class Fitter(Generic[ParametersT]):
             if not self.swallow_exceptions:
                 raise outcome
 
-            return self._record_loss(
-                parameters=parameters,
-                value=float("nan"),
-                ctx=ctx,
-            )
+            try:
+                return self._record_loss(
+                    parameters=parameters,
+                    value=float("nan"),
+                    ctx=ctx,
+                )
+            finally:
+                # Contexts retain swallowed exceptions for inspection and
+                # serialization. Their tracebacks would otherwise retain the
+                # complete evaluation stack, including optimizer locals.
+                _detach_exception_tracebacks(outcome)
 
         return self._record_loss(
             parameters=parameters,

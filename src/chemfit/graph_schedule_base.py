@@ -28,6 +28,7 @@ from chemfit.scheduling import (
     PreparedScheduleBase,
     Scheduler,
 )
+from chemfit.sentinel import CopyStableSentinel
 
 InputT = TypeVar("InputT")
 
@@ -43,7 +44,7 @@ class BatchState(SimpleNamespace):
     """
 
 
-class _Pending:
+class _Pending(CopyStableSentinel):
     """
     Sentinel for pending evaluations.
 
@@ -64,7 +65,7 @@ class _Pending:
 PENDING = _Pending()
 
 
-class _Running:
+class _Running(CopyStableSentinel):
     """
     Mark an atomic node that has been submitted but has not completed.
 

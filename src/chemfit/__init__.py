@@ -39,6 +39,7 @@ from chemfit.fitter import FitContext, Fitter
 from chemfit.fitter_callbacks import (
     CheckpointBestParameters,
     SaveMetaData,
+    SaveTrajectory,
     log_progress,
 )
 from chemfit.graph_component import GraphBuilder
@@ -71,6 +72,7 @@ __all__ = [
     "PreparedSchedule",
     "QuantityComputer",
     "SaveMetaData",
+    "SaveTrajectory",
     "Scheduler",
     "SerialGraphSchedule",
     "SerialGraphScheduler",

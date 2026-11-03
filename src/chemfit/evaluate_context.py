@@ -1,17 +1,37 @@
 from __future__ import annotations
 
 import copy
+
+# Keep Mapping available for runtime annotation introspection of the public API.
+from collections.abc import Mapping  # noqa: TC003
+from importlib import import_module
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
+
+from chemfit.sentinel import CopyStableSentinel
 
 
-class NoOutput: ...
+class NoOutput(CopyStableSentinel): ...
 
 
 NO_OUTPUT = NoOutput()
 
+# subclasses may not use any of these keys for their custom `record_sections``
+RESERVED_RECORD_SECTION_KEYS = (
+    "context_type",
+    "input",
+    "output",
+    "meta",
+    "status",
+    "children",
+    "path",
+    "step",
+)
+
 
 class EvaluateContext:
+    record_type: ClassVar[str] = "generic"
+
     def __init__(
         self,
         config: SimpleNamespace | None = None,
@@ -30,6 +50,10 @@ class EvaluateContext:
         Nested component invocations are recorded in ``children`` in
         declaration order. Contexts describe the evaluation hierarchy only;
         execution dependencies belong to the compiled call graph.
+
+        The public ``record_type`` class attribute defines the ``context_type``
+        written by :meth:`to_record`. Subclasses can override it to define
+        their own record type.
 
         Args:
             config:
@@ -86,6 +110,45 @@ class EvaluateContext:
                 child.to_summary(recursive=True) for child in self.children
             ]
         return summary
+
+    def to_record(self, *, strict: bool = False) -> dict[str, Any]:
+        """
+        Return a versioned, JSON-compatible record of this evaluation.
+
+        The record contains the complete child hierarchy and can be passed
+        directly to ``json.dumps(..., allow_nan=False)``. Configuration,
+        shared resources, and temporary state are intentionally omitted.
+
+        Args:
+            strict: Raise a descriptive serialization error for unsupported
+                values. If ``False``, replace them with explicit tagged
+                representations.
+
+        Returns:
+            Self-contained record intended for persistent inspection and
+            analysis. Records do not reconstruct executable contexts.
+
+        """
+        # The serializer imports EvaluateContext for traversal, so defer this
+        # reverse dependency until the method is called.
+        context_serialization = import_module("chemfit.context_serialization")
+
+        return context_serialization.context_to_record(self, strict=strict)
+
+    def record_sections(self) -> Mapping[str, Any]:
+        """
+        Return additional named sections for persistent serialization.
+
+        Context subclasses should override this method when they own state
+        that belongs in ``to_record()``. Each mapping key becomes a top-level
+        section on that context node.
+
+        Overrides should preserve sections returned by ``super()`` so multiple
+        levels of context specialization compose cleanly.
+
+        NOTE: None of the keys in RESERVED_RECORD_SECTION_KEYS may be used.
+        """
+        return {}
 
     def _set_defaults(
         self, config: SimpleNamespace | None, shared: SimpleNamespace | None

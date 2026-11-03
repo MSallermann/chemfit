@@ -4,11 +4,12 @@ description = "A framework for concurrent simulation-based parameter optimizatio
 version = "4.0.0"
 readme = "README.md"
 dependencies = [
-    "numpy < 2.4.0",     # Nevergrad is not compatible with the newest numpy deprecations (see https://github.com/facebookresearch/nevergrad/issues/1707)
+    "numpy < 2.4.0",            # Nevergrad is not compatible with the newest numpy deprecations (see https://github.com/facebookresearch/nevergrad/issues/1707)
     "scipy",
     "ase",
     "nevergrad",
     "pydictnest",
+    "jsonschema >= 4.18",
     "typing_extensions >= 4.4",
 ]
 requires-python = ">= 3.10"
@@ -25,7 +26,7 @@ mpi = ["mpi4py"]
 test = ["pytest", "loky"]
 
 [tool.setuptools.package-data]
-chemfit = ["py.typed"]
+chemfit = ["py.typed", "schemas/*.json"]
 
 [tool.pyright]
 include = ["src/chemfit"]
