@@ -6,7 +6,7 @@ import copy
 from collections.abc import Mapping  # noqa: TC003
 from importlib import import_module
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 from chemfit.sentinel import CopyStableSentinel
 
@@ -18,6 +18,7 @@ NO_OUTPUT = NoOutput()
 
 # subclasses may not use any of these keys for their custom `record_sections``
 RESERVED_RECORD_SECTION_KEYS = (
+    "context_type",
     "input",
     "output",
     "meta",
@@ -29,6 +30,8 @@ RESERVED_RECORD_SECTION_KEYS = (
 
 
 class EvaluateContext:
+    record_type: ClassVar[str] = "generic"
+
     def __init__(
         self,
         config: SimpleNamespace | None = None,

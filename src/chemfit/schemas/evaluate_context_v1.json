@@ -1,0 +1,306 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "title": "ChemFit EvaluateContext Record v1",
+    "description": "Persistent, JSON-compatible representation of a ChemFit evaluation context hierarchy.",
+    "type": "object",
+    "required": [
+        "format",
+        "schema_version",
+        "chemfit_version",
+        "root"
+    ],
+    "properties": {
+        "format": {
+            "const": "chemfit.evaluate_context"
+        },
+        "schema_version": {
+            "const": 1
+        },
+        "chemfit_version": {
+            "type": "string"
+        },
+        "root": {
+            "$ref": "#/$defs/context"
+        }
+    },
+    "additionalProperties": false,
+    "$defs": {
+        "context": {
+            "description": "An actual context or a synthetic placeholder for a declared, unrecorded child.",
+            "type": "object",
+            "required": [
+                "context_type",
+                "input",
+                "output",
+                "meta",
+                "status",
+                "path",
+                "children"
+            ],
+            "properties": {
+                "context_type": {
+                    "type": [
+                        "string",
+                        "null"
+                    ]
+                },
+                "input": {
+                    "$ref": "#/$defs/value"
+                },
+                "output": {
+                    "$ref": "#/$defs/value"
+                },
+                "meta": {
+                    "$ref": "#/$defs/value"
+                },
+                "status": {
+                    "enum": [
+                        "success",
+                        "exception",
+                        "skipped",
+                        "no_output",
+                        "not_recorded"
+                    ]
+                },
+                "path": {
+                    "type": "array",
+                    "items": {
+                        "type": "integer",
+                        "minimum": 0
+                    }
+                },
+                "children": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/context"
+                    }
+                }
+            },
+            "additionalProperties": {
+                "$ref": "#/$defs/value"
+            },
+            "if": {
+                "properties": {
+                    "status": {
+                        "const": "not_recorded"
+                    }
+                },
+                "required": [
+                    "status"
+                ]
+            },
+            "then": {
+                "properties": {
+                    "context_type": {
+                        "type": "null"
+                    }
+                }
+            },
+            "else": {
+                "properties": {
+                    "context_type": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "value": {
+            "description": "A JSON-compatible value, including ChemFit tagged representations.",
+            "anyOf": [
+                {
+                    "type": [
+                        "null",
+                        "boolean",
+                        "number",
+                        "string"
+                    ]
+                },
+                {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/$defs/value"
+                    }
+                },
+                {
+                    "$ref": "#/$defs/plain_mapping"
+                },
+                {
+                    "$ref": "#/$defs/tagged_value"
+                }
+            ]
+        },
+        "plain_mapping": {
+            "description": "A user mapping without the reserved discriminator key.",
+            "type": "object",
+            "not": {
+                "required": [
+                    "__type__"
+                ]
+            },
+            "additionalProperties": {
+                "$ref": "#/$defs/value"
+            }
+        },
+        "tagged_value": {
+            "oneOf": [
+                {
+                    "$ref": "#/$defs/no_output"
+                },
+                {
+                    "$ref": "#/$defs/skipped"
+                },
+                {
+                    "$ref": "#/$defs/exception"
+                },
+                {
+                    "$ref": "#/$defs/nonfinite_float"
+                },
+                {
+                    "$ref": "#/$defs/numpy_scalar"
+                },
+                {
+                    "$ref": "#/$defs/unsupported"
+                },
+                {
+                    "$ref": "#/$defs/escaped_mapping"
+                }
+            ]
+        },
+        "no_output": {
+            "type": "object",
+            "required": [
+                "__type__"
+            ],
+            "properties": {
+                "__type__": {
+                    "const": "no_output"
+                }
+            },
+            "additionalProperties": false
+        },
+        "skipped": {
+            "type": "object",
+            "required": [
+                "__type__",
+                "reason"
+            ],
+            "properties": {
+                "__type__": {
+                    "const": "skipped"
+                },
+                "reason": {
+                    "$ref": "#/$defs/value"
+                }
+            },
+            "additionalProperties": false
+        },
+        "exception": {
+            "type": "object",
+            "required": [
+                "__type__",
+                "module",
+                "class",
+                "message"
+            ],
+            "properties": {
+                "__type__": {
+                    "const": "exception"
+                },
+                "module": {
+                    "type": "string"
+                },
+                "class": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": false
+        },
+        "nonfinite_float": {
+            "type": "object",
+            "required": [
+                "__type__",
+                "value"
+            ],
+            "properties": {
+                "__type__": {
+                    "const": "float"
+                },
+                "value": {
+                    "enum": [
+                        "nan",
+                        "inf",
+                        "-inf"
+                    ]
+                }
+            },
+            "additionalProperties": false
+        },
+        "numpy_scalar": {
+            "type": "object",
+            "required": [
+                "__type__",
+                "dtype",
+                "value"
+            ],
+            "properties": {
+                "__type__": {
+                    "const": "numpy_scalar"
+                },
+                "dtype": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "string"
+                }
+            },
+            "additionalProperties": false
+        },
+        "unsupported": {
+            "type": "object",
+            "required": [
+                "__type__",
+                "python_type",
+                "repr"
+            ],
+            "properties": {
+                "__type__": {
+                    "const": "unsupported"
+                },
+                "python_type": {
+                    "type": "string"
+                },
+                "repr": {
+                    "type": "string",
+                    "maxLength": 200
+                }
+            },
+            "additionalProperties": false
+        },
+        "escaped_mapping": {
+            "description": "An escaped user dictionary that originally contained a __type__ key.",
+            "type": "object",
+            "required": [
+                "__type__",
+                "value"
+            ],
+            "properties": {
+                "__type__": {
+                    "const": "mapping"
+                },
+                "value": {
+                    "type": "object",
+                    "required": [
+                        "__type__"
+                    ],
+                    "additionalProperties": {
+                        "$ref": "#/$defs/value"
+                    }
+                }
+            },
+            "additionalProperties": false
+        }
+    }
+}

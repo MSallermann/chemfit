@@ -6,7 +6,7 @@ import math
 import time
 from collections.abc import Callable, Mapping
 from numbers import Real
-from typing import TYPE_CHECKING, Any, Generic, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast, overload
 
 import nevergrad as ng
 import numpy as np
@@ -36,6 +36,8 @@ ParametersT = TypeVar("ParametersT", bound=Mapping[str, Any], default=dict[str, 
 
 
 class FitContext(EvaluateContext):
+    record_type: ClassVar[str] = "fit"
+
     def __init__(self):
         """
         Initialize fitter-specific evaluation state.
