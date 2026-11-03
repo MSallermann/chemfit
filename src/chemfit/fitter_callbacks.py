@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import tempfile
-from collections.abc import MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -140,18 +139,6 @@ def write_json_unique(path: Path, data: object) -> Path:
         return write_path
 
 
-def fit_context_record(step: int, ctx: FitContext) -> dict[str, Any]:
-    """Return the persistent fitter record shared by callback writers."""
-
-    record = ctx.to_record()
-    fit = record["root"]["fit"]
-    if not isinstance(fit, MutableMapping):
-        msg = "FitContext.to_record() returned a non-mapping 'fit' section"
-        raise TypeError(msg)
-    fit["step"] = step
-    return record
-
-
 def legacy_checkpoint_record(step: int, ctx: FitContext) -> dict[str, Any]:
     """Return the pre-``to_record`` best-parameter checkpoint shape."""
 
@@ -189,7 +176,7 @@ class SaveMetaData:
                 record = (
                     legacy_checkpoint_record(step, ctx)
                     if self.use_legacy_format
-                    else fit_context_record(step, ctx)
+                    else ctx.to_record()
                 )
                 _write_json_atomic(
                     self.output_folder / f"step_{step}_ctx_{ictx}.json",
@@ -252,7 +239,7 @@ class CheckpointBestParameters:
                 record = (
                     legacy_checkpoint_record(step, opt_context)
                     if self.use_legacy_format
-                    else fit_context_record(step, opt_context)
+                    else opt_context.to_record()
                 )
                 if self.dont_overwrite:
                     write_out_path = write_json_unique(self.path, record)
