@@ -141,7 +141,6 @@ def write_json_unique(path: Path, data: object) -> Path:
 
 def legacy_checkpoint_record(step: int, ctx: FitContext) -> dict[str, Any]:
     """Return the pre-``to_record`` best-parameter checkpoint shape."""
-
     return {
         "step": step,
         "loss": ctx.loss,
@@ -153,7 +152,7 @@ def legacy_checkpoint_record(step: int, ctx: FitContext) -> dict[str, Any]:
 
 
 class SaveMetaData:
-    def __init__(self, output_folder: Path | str, use_legacy_format: bool = False):
+    def __init__(self, output_folder: Path | str, use_legacy_format: bool = True):
         """
         Initialize a metadata-saving callback.
 
@@ -179,7 +178,7 @@ class SaveMetaData:
         try:
             for ictx, ctx in enumerate(ctxs):
                 record = (
-                    legacy_checkpoint_record(step, ctx)
+                    ctx.to_summary(recursive=True)
                     if self.use_legacy_format
                     else ctx.to_record()
                 )
