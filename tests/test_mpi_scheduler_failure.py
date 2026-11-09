@@ -160,8 +160,8 @@ def test_shutdown_does_not_cancel_pending_worker_batch_result() -> None:
     )
 
     state = mpi_schedule._WorkerProtocolState()  # noqa: SLF001
-    schedule._send_worker_result(result, state)  # noqa: SLF001
-    schedule._finish_worker_shutdown(state)  # noqa: SLF001
+    schedule._send_worker_result(result, state)
+    schedule._finish_worker_shutdown(state)
     assert schedule.comm.sent == [
         (mpi_schedule._ShutdownAcknowledgement(), 0, mpi_schedule._CONTROL_TAG)  # noqa: SLF001
     ]
@@ -175,7 +175,7 @@ def test_task_dispatch_retains_nonblocking_command_send() -> None:
     schedule.size = 2
     schedule.max_tasks_per_message = 8
     schedule.target_batches_per_worker = 8
-    schedule._last_command_sequence = {1: 0}  # noqa: SLF001
+    schedule._last_command_sequence = {1: 0}
     task = mpi_schedule.NodeTask(
         run_id=0,
         node_id=0,
@@ -188,7 +188,7 @@ def test_task_dispatch_retains_nonblocking_command_send() -> None:
     batch_state.command_sends = {}
     batch_state.idle_workers = mpi_schedule.deque([1])
 
-    schedule._dispatch_available(batch_state)  # noqa: SLF001
+    schedule._dispatch_available(batch_state)
 
     assert batch_state.pending_tasks == mpi_schedule.deque()
     assert batch_state.in_flight == {1: (task,)}
@@ -221,13 +221,13 @@ def test_worker_loop_consumes_task_prefetched_during_result_send() -> None:
 
     def send_result(result: object, state: Any) -> None:
         if result == mpi_schedule._BatchCompletion((first_task,)):  # noqa: SLF001
-            schedule._record_worker_batch(  # noqa: SLF001
+            schedule._record_worker_batch(
                 state,
                 mpi_schedule._EvaluateBatch((second_task,), 2),  # noqa: SLF001
                 prefetch=True,
             )
         else:
-            schedule._record_worker_shutdown(  # noqa: SLF001
+            schedule._record_worker_shutdown(
                 state,
                 mpi_schedule._Shutdown(2),  # noqa: SLF001
             )
@@ -235,10 +235,10 @@ def test_worker_loop_consumes_task_prefetched_during_result_send() -> None:
     def acknowledge_shutdown() -> None:
         acknowledgements.append(None)
 
-    schedule._next_worker_command = next_command  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._evaluate_worker_task = evaluate_task  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._send_worker_result = send_result  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._acknowledge_shutdown = acknowledge_shutdown  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._next_worker_command = next_command  # type: ignore[method-assign]
+    schedule._evaluate_worker_task = evaluate_task  # type: ignore[method-assign]
+    schedule._send_worker_result = send_result  # type: ignore[method-assign]
+    schedule._acknowledge_shutdown = acknowledge_shutdown  # type: ignore[method-assign]
 
     schedule.worker_loop()
 
@@ -268,9 +268,9 @@ def test_worker_interrupt_is_reported_before_shutdown_acknowledgement() -> None:
     def acknowledge_shutdown() -> None:
         acknowledgements.append(None)
 
-    schedule._next_worker_command = next_command  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._report_worker_failure = report_failure  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._acknowledge_shutdown = acknowledge_shutdown  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._next_worker_command = next_command  # type: ignore[method-assign]
+    schedule._report_worker_failure = report_failure  # type: ignore[method-assign]
+    schedule._acknowledge_shutdown = acknowledge_shutdown  # type: ignore[method-assign]
 
     schedule.worker_loop()
 
@@ -333,10 +333,10 @@ def test_shutdown_fence_retires_eager_command_after_protocol_error() -> None:
         return task
 
     schedule.comm = ProtocolComm()
-    schedule._next_worker_command = (  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._next_worker_command = (  # type: ignore[method-assign]
         lambda: mpi_schedule._EvaluateBatch((first_task,), 1)  # noqa: SLF001
     )
-    schedule._evaluate_worker_task = evaluate_task  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._evaluate_worker_task = evaluate_task  # type: ignore[method-assign]
 
     schedule.worker_loop()
 
@@ -373,18 +373,18 @@ def test_shutdown_cleanup_preserves_primary_failure() -> None:
             return message
 
     schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
-    schedule._closed = False  # noqa: SLF001
+    schedule._closed = False
     schedule.rank = 0
     schedule.size = 2
     schedule.comm = ShutdownDrainComm()
-    schedule._workers_released = False  # noqa: SLF001
-    schedule._last_command_sequence = {1: 0}  # noqa: SLF001
+    schedule._workers_released = False
+    schedule._last_command_sequence = {1: 0}
     primary = RuntimeError("primary scheduling failure")
 
-    schedule._close_after_catastrophic_failure(primary)  # noqa: SLF001
+    schedule._close_after_catastrophic_failure(primary)
 
     assert schedule.closed
-    assert schedule._workers_released  # noqa: SLF001
+    assert schedule._workers_released
     assert schedule.comm.messages == []
     if hasattr(primary, "__notes__"):
         assert "Unexpected MPI message" in "\n".join(primary.__notes__)
