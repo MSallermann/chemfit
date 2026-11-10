@@ -737,8 +737,9 @@ def fit_nevergrad(
         scheduler: Scheduler used as the execution backend instead of the
             built-in scheduler.
         callbacks: ``(callback, n_steps)`` pairs. Each callback receives the
-            completed optimizer step and candidate-slot contexts at that
-            interval and once for a final partial interval.
+            completed optimizer step and contexts for candidate slots evaluated
+            since its previous invocation, and runs once for a final partial
+            interval.
         parametrization: Optional nested mapping of explicit Nevergrad
             parameter objects. It may replace selected leaves of ``initial``.
         initial_observations: Previously evaluated ``(parameters, loss)``

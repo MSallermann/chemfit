@@ -148,6 +148,26 @@ def test_callbacks_run_on_intervals_and_the_final_partial_step():
     assert calls == [2, 3]
 
 
+def test_callbacks_receive_only_slots_evaluated_since_their_last_call():
+    calls = []
+    fitter = Fitter(square, initial_params={"x": 1.0})
+    fitter.register_callback(
+        lambda step, contexts: calls.append(
+            (step, [context.slot for context in contexts])
+        ),
+        n_steps=2,
+    )
+    fitter.init(batch_size=4)
+
+    fitter.evaluate({"x": 3.0}, context_index=3)
+    fitter.step()
+    fitter.evaluate({"x": 1.0}, context_index=1)
+    fitter.step()
+    fitter.finish()
+
+    assert calls == [(2, [1, 3])]
+
+
 @pytest.mark.parametrize("value", [math.nan, math.inf, "not-a-number"])
 def test_non_finite_or_non_numeric_results_use_the_penalty(value):
     fitter = Fitter(lambda _parameters: value, initial_params={"x": 1.0})

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
 from pydictnest import flatten_dict
 
 if TYPE_CHECKING:
@@ -42,14 +43,12 @@ def merge_quantities(
 
 def next_free_path(base: Path) -> Path:
     """
-    If `path/to/base.ext` does not exist, return `path/to/base.ext`.
+    Return the first unused numbered variant of ``base``.
 
-    Otherwise, attempt `path/to/base_0.ext`, `path/to/base_1.ext`, etc. until finding a non-existent Path, then return that.
+    For example, ``path/to/base.ext`` produces ``path/to/base_0.ext``, then
+    ``path/to/base_1.ext``, regardless of whether the unsuffixed path exists.
     """
     base = Path(base)
-
-    if not base.exists():
-        return base
 
     i = 0
     while True:

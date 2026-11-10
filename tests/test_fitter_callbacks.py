@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 from chemfit.abstract_objective_function import Skipped
-from chemfit.fitter import FitContext
+from chemfit.fitter import FitContext, Fitter
 from chemfit.fitter_callbacks import (
     CheckpointBestParameters,
     SaveMetaData,
@@ -18,6 +18,7 @@ from chemfit.fitter_callbacks import (
 def make_context(loss: float, x: float) -> FitContext:
     ctx = FitContext()
     ctx.loss = loss
+    ctx.n_evals = 1
     ctx.input = {"x": x}
     ctx.opt_context = copy.deepcopy(ctx)
     return ctx
@@ -51,11 +52,11 @@ def test_checkpoint_includes_nested_metadata_from_the_best_evaluation(
     ctx.input = {"x": 99.0}
 
     path = tmp_path / "best.json"
-    CheckpointBestParameters(path)(0, [ctx])
+    CheckpointBestParameters(path, use_legacy_format=False)(0, [ctx])
 
     saved = json.loads(path.read_text())
     root = saved["root"]
-    assert root["fit"] == {"loss": 1.0, "n_evals": 0}
+    assert root["fit"] == {"loss": 1.0, "n_evals": 1}
     assert root["input"] == {"x": 1.0}
     assert root["children"][0]["meta"] == {"stage": "quantity"}
     assert root["children"][0]["children"][0]["meta"] == {"source": "simulation"}
@@ -102,34 +103,34 @@ def test_checkpoint_dont_overwrite_uses_next_available_path(tmp_path: Path):
         1, [make_context(loss=1.0, x=1.0)]
     )
 
-    first = json.loads(path.read_text())
-    second = json.loads((tmp_path / "best_0.json").read_text())
+    first = json.loads((tmp_path / "best_0.json").read_text())
+    second = json.loads((tmp_path / "best_1.json").read_text())
 
-    assert first["root"]["fit"]["loss"] == 2.0
-    assert first["root"]["input"] == {"x": 2.0}
-    assert second["root"]["fit"]["loss"] == 1.0
-    assert second["root"]["input"] == {"x": 1.0}
+    assert first["loss"] == 2.0
+    assert first["parameters"] == {"x": 2.0}
+    assert second["loss"] == 1.0
+    assert second["parameters"] == {"x": 1.0}
+    assert not path.exists()
 
 
 def test_callbacks_write_the_same_record_shape(tmp_path: Path):
     ctx = make_context(loss=1.0, x=2.0)
 
     SaveMetaData(tmp_path / "meta", use_legacy_format=False)(3, [ctx])
-    CheckpointBestParameters(tmp_path / "best.json")(3, [ctx])
+    CheckpointBestParameters(tmp_path / "best.json", use_legacy_format=False)(3, [ctx])
 
     metadata = json.loads((tmp_path / "meta" / "step_3_ctx_0.json").read_text())
     checkpoint = json.loads((tmp_path / "best.json").read_text())
     assert metadata == checkpoint
 
 
-def test_checkpoint_can_write_legacy_format(tmp_path: Path):
+def test_checkpoint_defaults_to_legacy_format(tmp_path: Path):
     path = tmp_path / "best.json"
 
-    CheckpointBestParameters(path, use_legacy_format=True)(
-        4, [make_context(loss=1.0, x=2.0)]
-    )
+    CheckpointBestParameters(path)(4, [make_context(loss=1.0, x=2.0)])
 
     saved = json.loads(path.read_text())
+    assert saved["step"] == 4
     assert saved["loss"] == 1.0
     assert saved["parameters"] == {"x": 2.0}
     assert "schema_version" not in saved
@@ -157,7 +158,7 @@ def test_save_metadata_failure_preserves_previous_file(
 
 def test_checkpoint_failure_preserves_previous_file_and_best_loss(tmp_path: Path):
     path = tmp_path / "best.json"
-    callback = CheckpointBestParameters(path)
+    callback = CheckpointBestParameters(path, use_legacy_format=False)
     callback(0, [make_context(loss=2.0, x=2.0)])
 
     unserializable = make_context(loss=1.0, x=1.0)
@@ -245,3 +246,35 @@ def test_save_trajectory(
         assert "step" not in entry["record"]["root"]["fit"]
 
     assert callback.best_loss == 0.5
+
+
+def test_save_trajectory_skips_unchanged_batch_slots(tmp_path: Path):
+    path = tmp_path / "trajectory.jsonl"
+    callback = SaveTrajectory(path)
+    fitter = Fitter(lambda parameters: parameters["x"], initial_params={"x": 0.0})
+    fitter.register_callback(callback, n_steps=1)
+    fitter.init(batch_size=4)
+
+    fitter.evaluate([{"x": float(x)} for x in range(4)])
+    fitter.step()
+    fitter.evaluate([{"x": 4.0}])
+    fitter.step()
+    fitter.finish()
+
+    entries = [
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [(entry["step"], entry["slot"]) for entry in entries] == [
+        (1, 0),
+        (1, 1),
+        (1, 2),
+        (1, 3),
+        (2, 0),
+    ]
+    assert [entry["record"]["root"]["input"]["x"] for entry in entries] == [
+        0.0,
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+    ]
