@@ -273,6 +273,7 @@ During optimization, ChemFit uses
 with optimization-specific fields:
 
 - ``n_evals``: number of evaluations
+- ``slot``: candidate-slot index assigned by the fitter
 - ``opt_context``: a deep-copied snapshot of the complete best evaluation,
   including its inputs, outputs, metadata, and recursive child contexts.
 
@@ -297,7 +298,9 @@ Each callback has the form:
 
 Callbacks are invoked every ``n_steps`` completed optimizer steps. At the end
 of a fit, each callback is also invoked if the final step did not fall exactly
-on its requested interval.
+on its requested interval. The context list contains only slots evaluated
+since that callback's previous invocation. Each context's ``slot`` attribute
+contains its original candidate-slot index.
 
 .. code-block:: python
 
@@ -387,7 +390,8 @@ was collected; they are not part of the evaluation record itself.
 See :ref:`evaluation-record-format` for the complete record specification.
 
 By default, ``SaveTrajectory`` saves the current evaluation context
-for every candidate slot whenever the callback runs.
+for every candidate slot that has received a new evaluation since the
+previous callback. Unused slots in a partial batch are not recorded again.
 
 To record only improvements to the best observed loss, use:
 
@@ -461,11 +465,13 @@ Checkpoint files are written atomically, so an interrupted write
 does not replace the previous complete checkpoint with partial JSON.
 
 With ``dont_overwrite=True``, earlier checkpoints are preserved
-using numbered filename suffixes.
+using numbered filename suffixes starting at ``_0``. The unsuffixed path is
+not used in this mode.
 
-For compatibility with older consumers,
-``CheckpointBestParameters`` also supports ``use_legacy_format=True``,
-which writes the deprecated flat checkpoint representation.
+For compatibility with older consumers, ``CheckpointBestParameters`` writes
+the flat checkpoint representation by default. Pass
+``use_legacy_format=False`` to opt in to the versioned evaluation-record
+structure.
 
 ----------------------------------
 SciPy backend

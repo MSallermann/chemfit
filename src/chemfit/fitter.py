@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Any, ClassVar, Generic, cast, overload
 import nevergrad as ng
 import numpy as np
 import numpy.typing as npt
-from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 from scipy.optimize import OptimizeResult, minimize
 from typing_extensions import TypeVar
 
@@ -22,6 +21,7 @@ from chemfit.abstract_objective_function import (
 )
 from chemfit.scheduling import DirectScheduler, EvaluationRequest, PreparedSchedule
 from chemfit.utils import check_params_near_bounds
+from pydictnest import flatten_dict, has_nested, keys_nested, unflatten_dict
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -51,6 +51,7 @@ class FitContext(EvaluateContext):
         self.loss: float | None = None
         self.n_evals: int = 0
         self.opt_context: FitContext | None = None
+        self.slot: int | None = None
 
     @property
     def parameters(self) -> Any:
@@ -258,7 +259,7 @@ class Fitter(Generic[ParametersT]):
 
         self.contexts: list[FitContext] = []
 
-        self.callbacks: list[tuple[Callable[[int, list[FitContext]], None], int]] = []
+        self.callbacks: list[tuple[CallbackT, int, set[int]]] = []
 
     def _close_schedule(self) -> None:
         """Close and discard an internally created schedule, if any."""
@@ -351,8 +352,8 @@ class Fitter(Generic[ParametersT]):
         The callback is invoked after every ``n_steps`` completed optimizer
         steps and once at the end of the fit if the final step does not fall
         exactly on the requested interval. The callback receives the number
-        of completed optimizer steps and the list of `FitContext`
-        instances used by the fitter.
+        of completed optimizer steps and the `FitContext` instances for slots
+        evaluated since that callback's previous invocation.
 
         Args:
             func (Callable[[int, list[FitContext]], None]):
@@ -365,7 +366,7 @@ class Fitter(Generic[ParametersT]):
             msg = "n_steps must be at least 1"
             raise ValueError(msg)
 
-        self.callbacks.append((func, n_steps))
+        self.callbacks.append((func, n_steps, set()))
 
     def _dispatch_callbacks(self, final: bool = False) -> None:
         """Dispatch callbacks due at the current completed optimizer step."""
@@ -373,10 +374,14 @@ class Fitter(Generic[ParametersT]):
         if self._session_step == 0:
             return
 
-        for callback, n_steps in self.callbacks:
+        for callback, n_steps, pending_slots in self.callbacks:
             due = self._session_step % n_steps == 0
             if (not final and due) or (final and not due):
-                callback(self._session_step, self.contexts)
+                active_contexts = [
+                    self.contexts[slot] for slot in sorted(pending_slots)
+                ]
+                pending_slots.clear()
+                callback(self._session_step, active_contexts)
 
     def _hook_pre_fit(self):
         """Run bookkeeping steps before starting an optimization."""
@@ -458,6 +463,10 @@ class Fitter(Generic[ParametersT]):
         self.contexts = (
             [FitContext() for _ in range(batch_size)] if contexts is None else contexts
         )
+        for slot, ctx in enumerate(self.contexts):
+            ctx.slot = slot
+        for _callback, _n_steps, pending_slots in self.callbacks:
+            pending_slots.clear()
 
     @overload
     def evaluate(
@@ -495,6 +504,7 @@ class Fitter(Generic[ParametersT]):
 
         if is_single:
             batch = [cast("ParametersT", dict(parameters))]
+            context_indices = [context_index]
             contexts = [self.contexts[context_index]]
         else:
             batch = parameters
@@ -508,6 +518,7 @@ class Fitter(Generic[ParametersT]):
             if len(batch) == 0:
                 return []
 
+            context_indices = list(range(len(batch)))
             contexts = self.contexts[: len(batch)]
 
         requests = [
@@ -541,6 +552,12 @@ class Fitter(Generic[ParametersT]):
                     ctx=ctx,
                 )
             )
+
+        # Each callback owns its pending-slot set because callbacks may run at
+        # different intervals. The fitter, which schedules the evaluations,
+        # therefore decides exactly which contexts each callback receives.
+        for _callback, _n_steps, pending_slots in self.callbacks:
+            pending_slots.update(context_indices)
 
         if is_single:
             return losses[0]

@@ -50,8 +50,9 @@ def log_progress(step: int, ctxs: list[FitContext]):
     best_params: dict | None = {}
     best_loss: float | None = None
     for ictx, ctx in enumerate(ctxs):
+        slot = ictx if ctx.slot is None else ctx.slot
         opt_context = ctx.opt_context
-        logger.info(f"  Context {ictx}")
+        logger.info(f"  Context {slot}")
         logger.info(f"    Opt loss   = {opt_context.loss if opt_context else None}")
         logger.info(
             f"    Opt params = {opt_context.parameters if opt_context else None}"
@@ -177,13 +178,14 @@ class SaveMetaData:
     def __call__(self, step: int, ctxs: list[FitContext]):
         try:
             for ictx, ctx in enumerate(ctxs):
+                slot = ictx if ctx.slot is None else ctx.slot
                 record = (
                     ctx.to_summary(recursive=True)
                     if self.use_legacy_format
                     else ctx.to_record()
                 )
                 _write_json_atomic(
-                    self.output_folder / f"step_{step}_ctx_{ictx}.json",
+                    self.output_folder / f"step_{step}_ctx_{slot}.json",
                     record,
                 )
         except Exception:
@@ -212,7 +214,7 @@ class CheckpointBestParameters:
         self,
         path: Path | str,
         dont_overwrite: bool = False,
-        use_legacy_format: bool = False,
+        use_legacy_format: bool = True,
     ):
         """
         Initialize the checkpoint callback.
@@ -223,8 +225,10 @@ class CheckpointBestParameters:
                 found.
             dont_overwrite: Whether to preserve earlier checkpoints by adding a
                 numeric suffix to each new checkpoint path.
-            use_legacy_format: Write the deprecated flat checkpoint structure
-                instead of the versioned ``FitContext.to_record()`` structure.
+            use_legacy_format: Write the flat checkpoint structure used by
+                earlier ChemFit releases. This remains the default for
+                compatibility. Set to ``False`` to write the versioned
+                ``FitContext.to_record()`` structure.
 
         """
         self.path = Path(path)
@@ -297,7 +301,8 @@ class SaveTrajectory:
         lines = []
         best_loss = self.best_loss
 
-        for slot, ctx in enumerate(ctxs):
+        for callback_index, ctx in enumerate(ctxs):
+            slot = callback_index if ctx.slot is None else ctx.slot
             record_ctx = ctx.opt_context if self.only_improvements else ctx
 
             if record_ctx is None:
