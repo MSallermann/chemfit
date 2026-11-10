@@ -453,8 +453,8 @@ Individual records and checkpoints
 
 :class:`~chemfit.fitter_callbacks.SaveMetaData` remains available
 for saving individual JSON files, one per candidate slot and callback
-invocation. For collecting optimization trajectories, prefer
-:class:`~chemfit.fitter_callbacks.SaveTrajectory`.
+invocation. For collecting optimization trajectories, the recommended
+approach is :class:`~chemfit.fitter_callbacks.SaveTrajectory`.
 
 :class:`~chemfit.fitter_callbacks.CheckpointBestParameters` serves
 a different purpose: it maintains a checkpoint of the best solution
@@ -466,7 +466,8 @@ does not replace the previous complete checkpoint with partial JSON.
 
 With ``dont_overwrite=True``, earlier checkpoints are preserved
 using numbered filename suffixes starting at ``_0``. The unsuffixed path is
-not used in this mode.
+not used in this mode. For retaining a history of improvements, the
+recommended approach is ``SaveTrajectory(..., only_improvements=True)``.
 
 For compatibility with older consumers, ``CheckpointBestParameters`` writes
 the flat checkpoint representation by default. Pass

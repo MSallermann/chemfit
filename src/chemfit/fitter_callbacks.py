@@ -203,6 +203,8 @@ class CheckpointBestParameters:
 
     If ``dont_overwrite`` is ``True``, each new best solution is written to a
     new file by inserting a numeric suffix into ``path``.
+    NOTE: instead of using ``dont_overwrite=True`` it is strongly recommended
+    to use ``SaveTrajectory`` with ``only_improvements`` instead.
 
     This callback is useful for long-running optimizations, as it allows
     recovery of the best solution even if the optimization process
