@@ -253,6 +253,9 @@ class MPIGraphSchedule(GraphScheduleBase):
         self.comm = comm
         self.rank = comm.Get_rank()
         self.size = comm.Get_size()
+        if self.size < 2:
+            msg = "MPIGraphScheduler requires at least two MPI ranks"
+            raise ValueError(msg)
         self.max_tasks_per_message = max_tasks_per_message
         self.target_batches_per_worker = target_batches_per_worker
         self._workers_released = False
@@ -540,18 +543,6 @@ class MPIGraphSchedule(GraphScheduleBase):
         self._ensure_coordinator()
         self._ensure_batch_state(batch_state)
 
-        if self.size == 1:
-            if not batch_state.pending_tasks:
-                msg = "No queued MPI tasks to complete"
-                raise MPIWorkerError(msg)
-            task = batch_state.pending_tasks.popleft()
-            if not batch_state.pending_tasks:
-                batch_state.dispatch_batch_size = None
-                batch_state.dispatch_tail_started = False
-            completion = self._evaluate_worker_task(task, capture_context_state=False)
-            self._assert_batch_state(batch_state)
-            return (completion,)
-
         in_flight: dict[int, tuple[NodeTask, ...]] = batch_state.in_flight
         if not in_flight:
             msg = "No MPI tasks are in flight"
@@ -806,7 +797,7 @@ class MPIGraphSchedule(GraphScheduleBase):
 
     def release_workers(self) -> None:
         """Request shutdown and wait until every worker has stopped safely."""
-        if self.rank != 0 or self.size <= 1 or self._workers_released:
+        if self.rank != 0 or self._workers_released:
             return
 
         requests = [

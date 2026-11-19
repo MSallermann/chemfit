@@ -390,34 +390,32 @@ def test_shutdown_cleanup_preserves_primary_failure() -> None:
         assert "Unexpected MPI message" in "\n".join(primary.__notes__)
 
 
+@pytest.mark.skipif(MPI.COMM_WORLD.Get_size() < 2, reason="requires MPI workers")
 def test_concurrent_mpi_evaluation_is_rejected() -> None:
     """One prepared MPI schedule owns at most one active batch."""
-
-    class SingleRankComm:
-        def Get_rank(self) -> int:  # noqa: N802
-            return 0
-
-        def Get_size(self) -> int:  # noqa: N802
-            return 1
 
     @component()
     def identity(value: int) -> int:
         return value
 
-    schedule = mpi_schedule.MPIGraphScheduler(comm=SingleRankComm()).prepare(identity)
-    first = schedule.evaluate_many(
-        [
-            EvaluationRequest(1, EvaluateContext()),
-            EvaluationRequest(2, EvaluateContext()),
-        ]
-    )
-    assert next(first).value == 1
+    with mpi_schedule.MPIGraphScheduler().prepare(identity) as schedule:
+        if schedule.rank != 0:
+            schedule.worker_loop()
+            return
 
-    concurrent = schedule.evaluate_many([EvaluationRequest(3, EvaluateContext())])
-    with pytest.raises(RuntimeError, match="Concurrent evaluation"):
-        next(concurrent)
+        first = schedule.evaluate_many(
+            [
+                EvaluationRequest(1, EvaluateContext()),
+                EvaluationRequest(2, EvaluateContext()),
+            ]
+        )
+        assert next(first).value == 1
 
-    assert [result.value for result in first] == [2]
+        concurrent = schedule.evaluate_many([EvaluationRequest(3, EvaluateContext())])
+        with pytest.raises(RuntimeError, match="Concurrent evaluation"):
+            next(concurrent)
+
+        assert [result.value for result in first] == [2]
 
 
 @pytest.mark.skipif(MPI.COMM_WORLD.Get_size() < 2, reason="requires MPI workers")

@@ -210,5 +210,6 @@ Poor scaling
    balancing.
 
 Single-rank launch
-   With only rank zero in the communicator, the MPI schedule evaluates leaf
-   tasks locally. At least two ranks are required for distributed execution.
+   MPI graph scheduling requires at least two ranks. Use
+   :class:`~chemfit.graph_schedule_base.SerialGraphScheduler` for local serial
+   graph execution.

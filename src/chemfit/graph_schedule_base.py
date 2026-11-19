@@ -1094,7 +1094,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                 )
                 runs.append(EvaluationRun(index=idx, state=eval_state))
 
-            tasks_in_flight = 0
+            outstanding_task_count = 0
             remaining_runs = len(runs)
 
             # Every run is initially dirty exactly once. After this pass, an
@@ -1111,10 +1111,10 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
 
             if initial_tasks:
                 self.submit_tasks(initial_tasks, batch_state)
-                tasks_in_flight += len(initial_tasks)
+                outstanding_task_count += len(initial_tasks)
 
             while remaining_runs:
-                if not tasks_in_flight:
+                if not outstanding_task_count:
                     # Every changed run has already had its ready queue drained.
                     # With no backend work left, an unfinished graph is malformed
                     # or cyclic rather than waiting for another batch-wide scan.
@@ -1125,7 +1125,7 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                 if not completions:
                     msg = "Backend returned no task completions."
                     raise GraphScheduleError(msg)
-                if len(completions) > tasks_in_flight:
+                if len(completions) > outstanding_task_count:
                     msg = "Backend returned more completions than tasks in flight."
                     raise GraphScheduleError(msg)
 
@@ -1135,13 +1135,13 @@ class GraphScheduleBase(PreparedScheduleBase[InputT, OutputT_co]):
                 # downstream submission or result emission. No unrelated run is
                 # inspected here.
                 for completion in completions:
-                    tasks_in_flight -= 1
+                    outstanding_task_count -= 1
                     run = self.apply_completion(completion, runs)
 
                     tasks = self.advance_run(run)
                     if tasks:
                         self.submit_tasks(tasks, batch_state)
-                        tasks_in_flight += len(tasks)
+                        outstanding_task_count += len(tasks)
 
                     result = self.result_if_complete(run)
                     if result is not None:

@@ -545,6 +545,7 @@ def test_invalid_batching_options_are_rejected(name: str, option: object) -> Non
         mpi_schedule.MPIGraphScheduler(**options)
 
 
+@pytest.mark.skipif(MPI.COMM_WORLD.Get_size() < 2, reason="requires MPI workers")
 def test_numerical_results_match_across_batch_sizes() -> None:
     @component()
     def delayed_offset(value: int, *, increment: int, delay: float) -> int:
