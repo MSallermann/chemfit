@@ -57,13 +57,9 @@ reference_energies = {
 }
 
 objective = chemfit.combine(
-    chemfit.ase_quantity(
-        Atoms("Ar2", positions=[(0, 0, 0), (distance, 0, 0)])
-    )
+    chemfit.ase_quantity(Atoms("Ar2", positions=[(0, 0, 0), (distance, 0, 0)]))
     .with_calculator(
-        lambda p, atoms, ctx: LennardJones(
-            epsilon=p["epsilon"], sigma=1.0, rc=100.0
-        )
+        lambda p, atoms, ctx: LennardJones(epsilon=p["epsilon"], sigma=1.0, rc=100.0)
     )
     .with_loss(
         lambda q, target: (q["energy"] - target) ** 2,
