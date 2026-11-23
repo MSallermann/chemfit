@@ -101,18 +101,16 @@ def make_schedule(
 ) -> Any:
     """Make a protocol-only schedule without requiring a component graph."""
     schedule = object.__new__(mpi_schedule.MPIGraphSchedule)
-    schedule._closed = False  # noqa: SLF001
+    schedule._closed = False
     schedule.comm = comm
     schedule.rank = 0
     schedule.size = comm.size
     schedule.max_tasks_per_message = max_tasks_per_message
     schedule.target_batches_per_worker = target_batches_per_worker
-    schedule._poisoned = False  # noqa: SLF001
-    schedule._evaluation_active = False  # noqa: SLF001
-    schedule._workers_released = False  # noqa: SLF001
-    schedule._last_command_sequence = dict.fromkeys(  # noqa: SLF001
-        range(1, schedule.size), 0
-    )
+    schedule._poisoned = False
+    schedule._evaluation_active = False
+    schedule._workers_released = False
+    schedule._last_command_sequence = dict.fromkeys(range(1, schedule.size), 0)
     return schedule
 
 
@@ -472,10 +470,10 @@ def test_worker_returns_ordinary_exception_alongside_other_results() -> None:
     def send(result: object, _state: object) -> None:
         sent.append(result)
 
-    schedule._next_worker_command = commands.popleft  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._evaluate_worker_task = evaluate  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._send_worker_result = send  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._acknowledge_shutdown = (  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._next_worker_command = commands.popleft  # type: ignore[method-assign]
+    schedule._evaluate_worker_task = evaluate  # type: ignore[method-assign]
+    schedule._send_worker_result = send  # type: ignore[method-assign]
+    schedule._acknowledge_shutdown = (  # type: ignore[method-assign]
         lambda: acknowledgements.append(None)
     )
 
@@ -517,12 +515,12 @@ def test_fatal_failure_aborts_rest_of_worker_batch() -> None:
             raise KeyboardInterrupt(msg)
         return make_completion(task)
 
-    schedule._next_worker_command = commands.popleft  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._evaluate_worker_task = evaluate  # type: ignore[method-assign]  # noqa: SLF001
-    schedule._report_worker_failure = (  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._next_worker_command = commands.popleft  # type: ignore[method-assign]
+    schedule._evaluate_worker_task = evaluate  # type: ignore[method-assign]
+    schedule._report_worker_failure = (  # type: ignore[method-assign]
         lambda exception, _state: failures.append(exception)
     )
-    schedule._acknowledge_shutdown = (  # type: ignore[method-assign]  # noqa: SLF001
+    schedule._acknowledge_shutdown = (  # type: ignore[method-assign]
         lambda: acknowledgements.append(None)
     )
 

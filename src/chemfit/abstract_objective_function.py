@@ -14,7 +14,7 @@ from chemfit.evaluate_context import NO_OUTPUT, EvaluateContext, NoOutput
 class PreEvaluationHook(Protocol):
     """Callback that runs before a component evaluation."""
 
-    def pre_eval(self, ctx: EvaluateContext, /) -> None | Any:
+    def pre_eval(self, ctx: EvaluateContext, /) -> Any | None:
         """Run before the component evaluation."""
         ...
 
@@ -49,7 +49,7 @@ class Component(Generic[InputT_contra, OutputT_co]):
     def __init__(self) -> None:
         """Initialize a generic component."""
 
-        self.pre_eval_hooks: list[Callable[[EvaluateContext], None | OutputT_co]] = []
+        self.pre_eval_hooks: list[Callable[[EvaluateContext], OutputT_co | None]] = []
         self.post_eval_hooks: list[Callable[[EvaluateContext], None]] = []
         self._context_configurator: (
             Callable[Concatenate[EvaluateContext, ...], None] | None
@@ -161,7 +161,7 @@ class Component(Generic[InputT_contra, OutputT_co]):
         self,
         *,
         hook: EvaluationHook | None = None,
-        pre: Callable[[EvaluateContext], None | OutputT_co] | None = None,
+        pre: Callable[[EvaluateContext], OutputT_co | None] | None = None,
         post: Callable[[EvaluateContext], None] | None = None,
         recursive: bool = False,
     ) -> Self:
@@ -250,14 +250,14 @@ class Component(Generic[InputT_contra, OutputT_co]):
         input_: InputT_contra,
         /,
         ctx: EvaluateContext,
-    ) -> None | OutputT_co:
+    ) -> OutputT_co | None:
         ctx._reset_evaluation_state()  # noqa: SLF001
         self._apply_context_configurator(ctx)
         ctx.input = input_
 
         self._attach_context_metadata(ctx)
 
-        result: None | OutputT_co = None
+        result: OutputT_co | None = None
         for hook in self.pre_eval_hooks:
             r = hook(ctx)
             if r is not None:
